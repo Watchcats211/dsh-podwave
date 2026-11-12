@@ -63,12 +63,37 @@ const FFMPEG_EXTRA = isMac
     ? ['C:\\ffmpeg\\bin', 'C:\\Program Files\\ffmpeg\\bin', path.join(os.homedir(), 'ffmpeg', 'bin')]
     : ['/usr/bin', '/usr/local/bin', '/snap/bin']
 
+function findRuntimeTool(name) {
+  const root = path.join(os.homedir(), '.podwave', 'runtime', 'ffmpeg')
+  const exts = isWindows ? ['.exe'] : ['']
+  const stack = [root]
+  while (stack.length) {
+    const dir = stack.pop()
+    let entries = []
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        stack.push(full)
+      } else {
+        const base = entry.name.replace(/\.exe$/i, '')
+        if (base === name && exts.some((ext) => entry.name.toLowerCase().endsWith(ext))) return full
+      }
+    }
+  }
+  return null
+}
+
 export function ffmpegPath() {
-  return process.env.PODWAVE_FFMPEG || findExecutable('ffmpeg', FFMPEG_EXTRA)
+  return process.env.PODWAVE_FFMPEG || findExecutable('ffmpeg', FFMPEG_EXTRA) || findRuntimeTool('ffmpeg')
 }
 
 export function ffprobePath() {
-  return process.env.PODWAVE_FFPROBE || findExecutable('ffprobe', FFMPEG_EXTRA)
+  return process.env.PODWAVE_FFPROBE || findExecutable('ffprobe', FFMPEG_EXTRA) || findRuntimeTool('ffprobe')
 }
 
 export function venvDir() {

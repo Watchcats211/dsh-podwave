@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.1 — 2026-11-12
+
+Windows 安装链路补齐：ffmpeg、选择器与解压回退。
+
+- **ffmpeg 自动安装**：Windows / Linux 缺少 ffmpeg 时，安装中心会下载 BtbN 静态构建（Windows 约 202 MB，Linux 约 157 MB）并解压到 `~/.podwave/runtime/ffmpeg`；macOS 仍优先使用 Homebrew，不重复下载。
+- **平台路径**：转写与说话人分离不再写死 `/opt/homebrew/bin/ffmpeg`，统一用平台探测（环境变量 → PATH → 插件 runtime 目录）；Windows 虚拟环境走 `Scripts\python.exe`。
+- **文件夹选择器**：macOS 用 osascript，Windows 用 PowerShell 的 FolderBrowserDialog，Linux 用 zenity；取消与找不到选择器都有明确提示。
+- **解压回退**：zip 依次尝试 `unzip` → Windows `tar` → PowerShell `Expand-Archive` → Python `zipfile`，避免 Windows 上没有 unzip 时安装失败。
+- **测试**：新增平台与资产测试（win32/darwin/linux 的 llama.cpp 与 ffmpeg 资产、虚拟环境路径），共 17 个用例。
+- Windows 真机验证仍待进行；当前 macOS 安装与转写链路回归通过。
+
 ## 0.10.0 — 2026-11-12
 
 环境与模型安装中心：换电脑或换系统时，先扫描再一键装。

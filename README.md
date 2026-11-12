@@ -175,3 +175,9 @@ CI（GitHub Actions）在每次 push / PR 跑 `npm test` 与 `npm run build`。
 - 「一键安装」会准备 uv 与 Python 虚拟环境、安装 sherpa-onnx（MLX 平台额外装 mlx-qwen3-asr、mlx-lm）、下载 llama.cpp 预编译包和缺失模型，并在完成后列出每项内容与体积。
 - 模型保存在 `~/.podwave/models`，运行时在 `~/.podwave/runtime`；卸载插件不会删除这些文件。
 - 注意：Hy-MT2 1.25bit GGUF 是自定义量化，主线 llama.cpp 加载会报 `failed to read tensor data`，所以非 MLX 平台用 Q4_K_M。
+
+### Windows 需要准备什么
+
+- 安装中心会自动下载 ffmpeg（约 202 MB）、llama.cpp（约 25 MB）、SenseVoice（约 239 MB）与 Hy-MT2-Q4_K_M（约 1.1 GB），合计约 1.6 GB，建议预留 3 GB 磁盘。
+- Windows 10 及以上自带 `tar` 与 `powershell`，解压和文件夹选择器无需额外安装。
+- 首次安装完成后，设置页会列出每项下载内容与体积；模型在 `~/.podwave/models`，运行时在 `~/.podwave/runtime`。

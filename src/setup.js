@@ -7,8 +7,8 @@ import { spawn } from 'node:child_process'
 import { DATA_DIR } from './state.js'
 import { getSection, updateSection } from './config.js'
 import { getJob, upsertJob } from './jobs.js'
-import { CATALOG, LLAMA_BINARY, SOURCE_LABELS, artifactFor, llamaAsset, sourcesFor } from './catalog.js'
-import { downloadArtifact } from './downloader.js'
+import { CATALOG, FFMPEG_BINARY, LLAMA_BINARY, SOURCE_LABELS, artifactFor, ffmpegAsset, llamaAsset, sourcesFor } from './catalog.js'
+import { downloadArtifact, extractArchive } from './downloader.js'
 import { detectPlatform, findExecutable, ffmpegPath, ffprobePath, recommendEngine, venvDir, venvPython, isWindows } from './platform.js'
 
 const RUNTIME_DIR = path.join(DATA_DIR, 'runtime')
@@ -191,14 +191,15 @@ export function scan() {
   const components = []
   const push = (item) => components.push(item)
 
+  const ffAsset = ffmpegAsset(platform)
   push({
     id: 'ffmpeg',
     kind: 'tool',
     label: 'ffmpeg / ffprobe',
     required: true,
     ready: Boolean(ffmpegPath() && ffprobePath()),
-    detail: ffmpegPath() || '未找到（播放不受影响，转写与切块需要）',
-    bytes: 0,
+    detail: ffmpegPath() || (ffAsset ? '未找到，将下载静态构建' : '未找到；macOS 请先 brew install ffmpeg'),
+    bytes: ffAsset?.bytes || 0,
   })
   push({
     id: 'runtime',
@@ -271,7 +272,9 @@ export async function install({ source = 'auto' } = {}) {
   const engine = recommendEngine(platform)
   const artifacts = artifactFor(platform, engine)
   const targets = [artifacts.asr, artifacts.translate, artifacts.diarization].filter((artifact) => !modelState(artifact).ready)
-  const totalBytes = targets.reduce((sum, artifact) => sum + (artifact.approxBytes || 0), 0)
+  const ffAssetPending = !ffmpegPath() ? ffmpegAsset(platform) : null
+  const totalBytes =
+    targets.reduce((sum, artifact) => sum + (artifact.approxBytes || 0), 0) + (ffAssetPending?.bytes || 0)
   let doneBytes = 0
   const summary = []
   updateJob({ status: 'running', stage: '检查环境', progress: 0, bytes: 0, expected: totalBytes, summary: [] })
@@ -281,6 +284,30 @@ export async function install({ source = 'auto' } = {}) {
   }
 
   try {
+    // 0. ffmpeg（Windows / Linux 直接下载静态构建；macOS 优先用系统/Homebrew）
+    if (!ffmpegPath()) {
+      const ffAsset = ffmpegAsset(platform)
+      if (!ffAsset) {
+        throw new Error('没有找到 ffmpeg：macOS 请先运行 brew install ffmpeg，或把 ffmpeg/ffprobe 放进 PATH')
+      }
+      report({ stage: '下载 ffmpeg' })
+      await downloadArtifact(
+        {
+          id: 'ffmpeg',
+          dir: '../runtime/ffmpeg-download',
+          approxBytes: ffAsset.bytes,
+          source: { type: 'github-assets', assets: [{ url: ffAsset.url, file: ffAsset.file }] },
+        },
+        { sourceId: source, signal: current.signal, onProgress: () => {} },
+      )
+      const archive = path.join(RUNTIME_DIR, 'ffmpeg-download', ffAsset.file)
+      const target = path.join(RUNTIME_DIR, 'ffmpeg')
+      await fsp.mkdir(target, { recursive: true })
+      if (fs.existsSync(archive)) await extractArchive(archive, target)
+      doneBytes += ffAsset.bytes
+      summary.push({ id: 'ffmpeg', label: 'ffmpeg / ffprobe', bytes: ffAsset.bytes })
+    }
+
     // 1. Python 运行时
     if (!runtimeReady(platform)) {
       report({ stage: '安装 uv 与 Python 运行时' })
