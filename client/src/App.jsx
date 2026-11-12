@@ -87,6 +87,24 @@ function Cover({ item, size = 44, className = '' }) {
   )
 }
 
+function jobLabel(job) {
+  const pct = job.progress?.percent
+  const chunk = job.chunks?.total ? ` · ${job.chunks.done}/${job.chunks.total} 块` : ''
+  if (job.status === 'done') return `完成${job.lineCount ? ` · ${job.lineCount} 行` : ''}${job.language ? ` · ${job.language}` : ''}`
+  if (job.status === 'error' || job.status === 'interrupted') return job.error || '失败'
+  if (job.status === 'cancelled') return job.error || '已取消'
+  if (job.status === 'queued') return '排队中'
+  const stage =
+    job.stage === 'merging'
+      ? '合并字幕'
+      : job.stage === 'preparing'
+        ? '准备音频'
+        : job.stage === 'cancelling'
+          ? '正在取消'
+          : '转写中'
+  return `${stage}${pct != null ? ` ${pct}%` : ''}${chunk}`
+}
+
 function Icon({ name, size = 18 }) {
   const common = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' }
   switch (name) {
@@ -148,6 +166,12 @@ function Icon({ name, size = 18 }) {
         <svg {...common}>
           <path d="M4 9.5h3.2L12 6v12L7.2 14.5H4v-5Z" fill="currentColor" stroke="none" />
           <path d="m16 9.5 5 5M21 9.5l-5 5" />
+        </svg>
+      )
+    case 'tasks':
+      return (
+        <svg {...common}>
+          <path d="M4 6h.01M4 12h.01M4 18h.01M8 6h12M8 12h12M8 18h12" />
         </svg>
       )
     case 'check':
@@ -263,7 +287,7 @@ function AddFolderDialog({ onSubmit, onPick, onClose }) {
   )
 }
 
-function TranscriptPanel({ transcript, status, elapsed, error, position, onSeek, onClose, onStart, target, job, onChangeTarget, onOpenSettings, inline = false }) {
+function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onOpenSettings, inline = false }) {
   const bodyRef = useRef(null)
   const activeIndex = transcript?.lines?.findIndex((line) => position >= line.start && position < line.end) ?? -1
 
@@ -320,9 +344,15 @@ function TranscriptPanel({ transcript, status, elapsed, error, position, onSeek,
           ))
         ) : running ? (
           <div className="transcript-status">
-            正在转写… 已用 {Math.round((elapsed || 0) / 1000)} 秒
+            {status === 'queued' ? '排队中…' : stage === 'merging' ? '正在合并字幕…' : stage === 'preparing' ? '正在准备音频…' : '正在转写…'}
+            {progress?.percent != null ? ` ${progress.percent}%` : ''}
+            {chunks?.total ? ` · 第 ${Math.min(chunks.done + 1, chunks.total)}/${chunks.total} 块` : ''}
+            {' · 已用 ' + Math.round((elapsed || 0) / 1000) + ' 秒'}
+            {progress?.percent != null ? <span className="tx-progress"><span style={{ width: `${progress.percent}%` }} /></span> : null}
             <br />
-            长播客需要几分钟，先放着听也行，完成后会自动出现在这里。
+            <span className="tx-hint">长播客会自动切块转写；关掉面板也会继续跑，可在「任务」里看进度。</span>
+            <br />
+            {onCancel ? <button className="btn ghost" style={{ marginTop: 10 }} onClick={onCancel}>取消转写</button> : null}
           </div>
         ) : error ? (
           <div className="transcript-status">
@@ -429,6 +459,11 @@ export default function App() {
   const [trSettingsOpen, setTrSettingsOpen] = useState(false)
   const [navCollapsed, setNavCollapsed] = useState(false)
   const [dragging, setDragging] = useState(false)
+  const [txInfo, setTxInfo] = useState(null)
+  const [jobsOpen, setJobsOpen] = useState(false)
+  const [jobs, setJobs] = useState([])
+  const [batchMode, setBatchMode] = useState(false)
+  const [selected, setSelected] = useState([])
 
   const audioRef = useRef(null)
   const currentRef = useRef(null)
@@ -541,6 +576,7 @@ export default function App() {
         const state = await getJSON(`${API}/episodes/${current.id}/transcript`)
         if (cancelled) return
         setTxStatus(state.status)
+        setTxInfo(state.status === 'queued' || state.status === 'running' ? state : null)
         if (state.status === 'done' && state.transcript) {
           setTranscript(state.transcript)
         } else if (state.status === 'queued' || state.status === 'running') {
@@ -569,6 +605,7 @@ export default function App() {
         const state = await getJSON(`${API}/episodes/${id}/transcript`)
         if (cancelled) return
         setTxStatus(state.status)
+        setTxInfo(state.status === 'queued' || state.status === 'running' ? state : null)
         setTxElapsed(state.elapsedMs || 0)
         if (state.status === 'done' && state.transcript) {
           setTranscript(state.transcript)
@@ -605,6 +642,21 @@ export default function App() {
     }, 2000)
     return () => { cancelled = true; clearInterval(timer) }
   }, [trJob.status, trTarget, flash])
+
+  useEffect(() => {
+    let cancelled = false
+    const refresh = async () => {
+      try {
+        const data = await getJSON(`${API}/jobs`)
+        if (!cancelled) setJobs(data.items || [])
+      } catch {
+        /* 忽略轮询错误 */
+      }
+    }
+    refresh()
+    const timer = setInterval(refresh, 2500)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [])
 
   const saveProgress = useCallback((id, pos, dur, immediate = false) => {
     if (!id) return
@@ -643,6 +695,45 @@ export default function App() {
     }
     startTranscript()
   }, [transcript, txStatus, startTranscript])
+
+  const cancelTranscript = useCallback(async () => {
+    if (!currentRef.current) return
+    try {
+      await sendJSON(`${API}/episodes/${currentRef.current.id}/transcribe/cancel`, 'POST', {})
+      flash('正在取消转写…')
+    } catch (err) {
+      setTxError(err.message)
+    }
+  }, [flash])
+
+  const jobAction = useCallback(async (job, action) => {
+    try {
+      if (action === 'cancel') await sendJSON(`${API}/episodes/${job.episodeId}/transcribe/cancel`, 'POST', {})
+      else if (action === 'retry') await sendJSON(`${API}/episodes/${job.episodeId}/transcribe`, 'POST', { resume: true })
+      else if (action === 'clear') await sendJSON(`${API}/jobs`, 'DELETE', { key: job.key })
+    } catch {
+      /* 刷新列表即可看到最新状态 */
+    }
+    const data = await getJSON(`${API}/jobs`).catch(() => ({ items: [] }))
+    setJobs(data.items || [])
+  }, [])
+
+  const submitBatch = useCallback(async (ids) => {
+    const unique = [...new Set(ids)]
+    if (!unique.length) return
+    try {
+      const res = await sendJSON(`${API}/transcribe/batch`, 'POST', { ids: unique })
+      flash(`已排队 ${res.queued} 集${res.skipped ? `，跳过 ${res.skipped} 集` : ''}${res.errors?.length ? `，失败 ${res.errors.length} 集` : ''}`)
+      setSelected([])
+      setBatchMode(false)
+    } catch (err) {
+      flash(err.message)
+    }
+  }, [flash])
+
+  const toggleSelected = useCallback((id) => {
+    setSelected((prev) => (prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id]))
+  }, [])
 
   const refreshTranscript = useCallback(async () => {
     const id = currentRef.current?.id
@@ -699,6 +790,9 @@ export default function App() {
       return true
     })
   }, [ordered, query, view, progress])
+
+  const activeJobs = useMemo(() => jobs.filter((job) => job.status === 'queued' || job.status === 'running'), [jobs])
+  const unTranscribed = useMemo(() => visible.filter((item) => !item.hasTranscript), [visible])
 
   const continueList = useMemo(() => {
     return items
@@ -987,7 +1081,7 @@ export default function App() {
         <div className="brand">
           <span className="brand-mark"><Icon name="wave" size={20} /></span>
           <span className="brand-name">Podwave</span>
-          <span className="brand-version">0.3</span>
+          <span className="brand-version">0.4</span>
           <button className="icon-btn brand-collapse" title="收起侧边栏" onClick={toggleNav}>
             <Icon name="chevron-left" size={16} />
           </button>
@@ -1041,6 +1135,14 @@ export default function App() {
             <p className="subline">{subline}</p>
           </div>
           <div className="tools">
+            <button className={`tool-btn ${jobsOpen ? 'is-on' : ''}`} onClick={() => setJobsOpen((value) => !value)} title="转写任务">
+              <Icon name="tasks" size={16} />
+              <span>任务{activeJobs.length ? ` ${activeJobs.length}` : ''}</span>
+            </button>
+            <button className={`tool-btn ${batchMode ? 'is-on' : ''}`} onClick={() => { setBatchMode((value) => !value); setSelected([]) }} title="批量选择">
+              <Icon name="check" size={16} />
+              <span>选择</span>
+            </button>
             <label className="search">
               <Icon name="search" size={16} />
               <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索单集或节目" />
@@ -1052,6 +1154,18 @@ export default function App() {
             </select>
           </div>
         </header>
+
+        {batchMode ? (
+          <div className="batch-bar">
+            <span>已选 {selected.length} 集</span>
+            <button className="btn ghost" onClick={() => setSelected(visible.map((item) => item.id))}>全选当前</button>
+            <button className="btn ghost" disabled={!unTranscribed.length} onClick={() => submitBatch(unTranscribed.map((item) => item.id))}>
+              转写未转写的 {unTranscribed.length} 集
+            </button>
+            <button className="btn primary" disabled={!selected.length} onClick={() => submitBatch(selected)}>转写选中</button>
+            <button className="btn ghost" onClick={() => { setSelected([]); setBatchMode(false) }}>取消</button>
+          </div>
+        ) : null}
 
         {error ? (
           <div className="banner error" onClick={() => setError('')}>
@@ -1074,9 +1188,13 @@ export default function App() {
                 <p className="episode-stats">{fmtDuration(detailItem.duration)} · {fmtDate(detailItem.mtime)} · 已听 {Math.round(progressPct(detailItem))}%</p>
                 <div className="episode-actions">
                   <button className="btn primary" onClick={togglePlay}>{playing && current?.id === detailItem.id ? '暂停' : '播放'}</button>
-                  <button className="btn ghost" onClick={startTranscript} disabled={txStatus === 'queued' || txStatus === 'running'}>
-                    {transcript ? '重新转写' : txStatus === 'queued' || txStatus === 'running' ? '转写中…' : '转写字幕'}
-                  </button>
+                  {txStatus === 'queued' || txStatus === 'running' ? (
+                    <button className="btn ghost" onClick={cancelTranscript}>取消转写</button>
+                  ) : (
+                    <button className="btn ghost" onClick={startTranscript}>
+                      {transcript ? '重新转写' : '转写字幕'}
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="episode-right">
@@ -1084,7 +1202,12 @@ export default function App() {
                   inline
                   transcript={transcript}
                   status={txStatus}
+                  progress={txInfo?.progress}
+                  stage={txInfo?.stage}
+                  chunks={txInfo?.chunks}
+                  queued={txInfo?.queued}
                   elapsed={txElapsed}
+                  onCancel={cancelTranscript}
                   error={txError}
                   position={position}
                   onSeek={seekTo}
@@ -1145,17 +1268,22 @@ export default function App() {
                 return (
                   <button
                     key={item.id}
-                    className={`row ${active ? 'is-current' : ''} ${isFinished(item) ? 'is-finished' : ''}`}
-                    onClick={() => openEpisode(item, true)}
+                    className={`row ${active ? 'is-current' : ''} ${isFinished(item) ? 'is-finished' : ''} ${batchMode && selected.includes(item.id) ? 'is-selected' : ''}`}
+                    onClick={() => (batchMode ? toggleSelected(item.id) : openEpisode(item, true))}
                   >
                     <span className="col-index row-index">
-                      {active && playing ? <span className="playing-bars"><i /><i /><i /></span> : index + 1}
+                      {batchMode ? (
+                        selected.includes(item.id) ? <span className="row-check"><Icon name="check" size={14} /></span> : null
+                      ) : active && playing ? <span className="playing-bars"><i /><i /><i /></span> : index + 1}
                     </span>
                     <span className="row-main">
                       <Cover item={item} size={40} />
                       <span className="row-text">
                         <span className="row-title">{item.title}</span>
-                        <span className="row-meta">{item.artist}{item.album ? ` · ${item.album}` : ''} · {fmtDate(item.mtime)}</span>
+                        <span className="row-meta">
+                          {item.artist}{item.album ? ` · ${item.album}` : ''} · {fmtDate(item.mtime)}
+                          {item.hasTranscript ? <span className="row-badge">字幕</span> : null}
+                        </span>
                       </span>
                     </span>
                     <span className="col-duration row-duration">{fmtDuration(item.duration)}</span>
@@ -1176,7 +1304,12 @@ export default function App() {
         <TranscriptPanel
           transcript={transcript}
           status={txStatus}
+          progress={txInfo?.progress}
+          stage={txInfo?.stage}
+          chunks={txInfo?.chunks}
+          queued={txInfo?.queued}
           elapsed={txElapsed}
+          onCancel={cancelTranscript}
           error={txError}
           position={position}
           onSeek={seekTo}
@@ -1187,6 +1320,43 @@ export default function App() {
           onChangeTarget={changeTarget}
           onOpenSettings={() => setTrSettingsOpen(true)}
         />
+      ) : null}
+
+      {jobsOpen ? (
+        <section className="jobs-panel">
+          <header className="jobs-head">
+            <h3>转写任务</h3>
+            <button className="mini-link" onClick={() => setJobsOpen(false)}>关闭</button>
+          </header>
+          <div className="jobs-body">
+            {jobs.length === 0 ? (
+              <p className="jobs-empty">还没有任务。点「转写字幕」，或在下面批量转写未转写的单集。</p>
+            ) : (
+              jobs.map((job) => (
+                <div key={job.key} className={`job-row job-${job.status}`}>
+                  <div className="job-main">
+                    <span className="job-title">{job.episodeTitle || job.episodeId}</span>
+                    <span className="job-meta">{jobLabel(job)}</span>
+                    {job.status === 'running' && job.progress?.percent != null ? (
+                      <span className="job-bar"><span style={{ width: `${job.progress.percent}%` }} /></span>
+                    ) : null}
+                  </div>
+                  <div className="job-actions">
+                    {job.status === 'queued' || job.status === 'running' ? <button className="mini-link" onClick={() => jobAction(job, 'cancel')}>取消</button> : null}
+                    {job.status === 'error' || job.status === 'interrupted' || job.status === 'cancelled' ? <button className="mini-link" onClick={() => jobAction(job, 'retry')}>重试</button> : null}
+                    {['done', 'error', 'cancelled', 'interrupted'].includes(job.status) ? <button className="mini-link" onClick={() => jobAction(job, 'clear')}>清除</button> : null}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+          <footer className="jobs-foot">
+            <button className="btn primary" disabled={!unTranscribed.length} onClick={() => submitBatch(unTranscribed.map((item) => item.id))}>
+              转写当前视图未转写的 {unTranscribed.length} 集
+            </button>
+            <button className="btn ghost" disabled={!selected.length} onClick={() => submitBatch(selected)}>转写已选 {selected.length} 集</button>
+          </footer>
+        </section>
       ) : null}
 
       <footer className="player">

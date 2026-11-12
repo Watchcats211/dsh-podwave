@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0 — 2026-11-12
+
+P1：转写体验（任务面板、进度、取消/续跑、批量、热词）。
+
+- 新增任务面板：队列、阶段（准备 / 转写 / 合并）、百分比、分块进度与耗时；支持取消、重试、清除；2.5 秒自动刷新。
+- 进度与分块：长音频按 `chunkMinutes`（默认 15 分钟）用 ffmpeg 切块，逐块转写后合并时间戳；块级结果落盘。
+- 取消与续跑：详情页或任务面板可取消；再次启动时从已完成块继续，失败只重跑当前块。
+- 批量转写：列表页「选择」进入多选，批量排队；已有字幕的单集自动跳过。
+- 热词：设置 → 播客 → 转写，热词表会作为 `--context` 传给模型；分块时长可调（1–60 分钟）。
+- 新接口：`POST /api/episodes/:id/transcribe/cancel`、`POST /api/transcribe/batch`、`GET/PUT /api/transcribe/settings`、`DELETE /api/jobs`；`health` 版本 0.4.0。
+
 ## 0.3.0 — 2026-11-12
 
 P0：把配置、任务、字幕数据收成一套骨架（详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)）。
