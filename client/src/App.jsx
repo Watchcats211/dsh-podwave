@@ -224,6 +224,143 @@ function AddFolderDialog({ onSubmit, onClose }) {
   )
 }
 
+function TranscriptPanel({ transcript, status, elapsed, error, position, onSeek, onClose, onStart, target, translations, job, onChangeTarget, onOpenSettings }) {
+  const bodyRef = useRef(null)
+  const activeIndex = transcript?.segments?.findIndex((seg) => position >= seg.start && position < seg.end) ?? -1
+
+  useEffect(() => {
+    if (activeIndex < 0 || !bodyRef.current) return
+    const row = bodyRef.current.querySelector(`[data-seg="${activeIndex}"]`)
+    row?.scrollIntoView({ block: 'nearest' })
+  }, [activeIndex])
+
+  const running = status === 'queued' || status === 'running'
+
+  return (
+    <section className="transcript-panel">
+      <header className="transcript-head">
+        <h3>字幕</h3>
+        {transcript ? (
+          <span className="transcript-meta">
+            {transcript.language || '未知语言'} · {transcript.segments.length} 行
+          </span>
+        ) : null}
+        <div className="transcript-actions">
+          <select className="tr-select" value={target} onChange={(event) => onChangeTarget(event.target.value)} title="字幕对照">
+            <option value="">对照</option>
+            <option value="zh">中文对照</option>
+            <option value="en">English</option>
+          </select>
+          <button className="mini-link" onClick={onOpenSettings}>设置</button>
+          {transcript ? (
+            <>
+              <a className="mini-link" href={`${API}/episodes/${transcript.id}/transcript/export?format=srt`} download>SRT</a>
+              <a className="mini-link" href={`${API}/episodes/${transcript.id}/transcript/export?format=md`} download>Markdown</a>
+            </>
+          ) : null}
+          <button className="transcript-close" onClick={onClose} title="收起">×</button>
+        </div>
+      </header>
+      <div className="transcript-body" ref={bodyRef}>
+        {job?.status === 'running' ? <div className="tr-running">翻译中…</div> : null}
+        {job?.status === 'error' ? <div className="tr-running err">{job.error}</div> : null}
+        {transcript ? (
+          transcript.segments.map((seg, index) => (
+            <button
+              key={seg.id}
+              data-seg={index}
+              className={`seg-row ${index === activeIndex ? 'active' : ''}`}
+              onClick={() => onSeek(seg.start)}
+            >
+              <span className="seg-time">{fmtTime(seg.start)}</span>
+              <span className="seg-text">
+                {seg.text}
+                {translations?.[seg.id] ? <span className="seg-trans">{translations[seg.id]}</span> : null}
+              </span>
+            </button>
+          ))
+        ) : running ? (
+          <div className="transcript-status">
+            正在转写… 已用 {Math.round((elapsed || 0) / 1000)} 秒
+            <br />
+            长播客需要几分钟，先放着听也行，完成后会自动出现在这里。
+          </div>
+        ) : error ? (
+          <div className="transcript-status">
+            <span className="err">{error}</span>
+            <br />
+            <button className="btn ghost" style={{ marginTop: 10 }} onClick={onStart}>重试</button>
+          </div>
+        ) : (
+          <div className="transcript-status">
+            还没有转写这一集。
+            <br />
+            <button className="btn primary" style={{ marginTop: 10 }} onClick={onStart}>开始转写</button>
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function TranslateSettingsDialog({ config, onClose, onSave }) {
+  const [provider, setProvider] = useState(config?.provider || 'api')
+  const [apiKey, setApiKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const submit = async (event) => {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      await onSave({ provider, apiKey: apiKey || undefined })
+    } catch (err) {
+      setError(err.message)
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <form className="dialog" onSubmit={submit}>
+        <h2>翻译设置</h2>
+        <p className="dialog-hint">
+          目标语言在字幕面板里选。API 走 DeepSeek，本地模型是 {config?.localModel || 'Qwen3-8B-4bit'}。
+        </p>
+        <label className="field">
+          <span>翻译引擎</span>
+          <select value={provider} onChange={(event) => setProvider(event.target.value)}>
+            <option value="api">DeepSeek API</option>
+            <option value="local">本地模型</option>
+          </select>
+        </label>
+        {provider === 'api' ? (
+          <label className="field">
+            <span>API Key</span>
+            <input
+              type="password"
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+              placeholder={config?.apiKeyMasked || 'sk-...'}
+              spellCheck={false}
+            />
+          </label>
+        ) : (
+          <p className="dialog-hint">
+            {config?.localReady ? '本地模型已就绪。' : '本地模型还在下载或未安装，完成后可用。'}
+          </p>
+        )}
+        {error ? <div className="dialog-error">{error}</div> : null}
+        <div className="dialog-actions">
+          <button type="button" className="btn ghost" onClick={onClose}>取消</button>
+          <button type="submit" className="btn primary" disabled={busy}>保存</button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
 export default function App() {
   const [items, setItems] = useState([])
   const [folders, setFolders] = useState([])
@@ -241,6 +378,15 @@ export default function App() {
   const [addOpen, setAddOpen] = useState(false)
   const [error, setError] = useState('')
   const [toast, setToast] = useState('')
+  const [transcript, setTranscript] = useState(null)
+  const [txStatus, setTxStatus] = useState('none')
+  const [txElapsed, setTxElapsed] = useState(0)
+  const [txError, setTxError] = useState('')
+  const [subsOpen, setSubsOpen] = useState(false)
+  const [trConfig, setTrConfig] = useState(null)
+  const [trTarget, setTrTarget] = useState('')
+  const [trJob, setTrJob] = useState({ status: 'none' })
+  const [trSettingsOpen, setTrSettingsOpen] = useState(false)
 
   const audioRef = useRef(null)
   const currentRef = useRef(null)
@@ -314,6 +460,85 @@ export default function App() {
     return () => clearInterval(timer)
   }, [scan.running, loadLibrary])
 
+  useEffect(() => {
+    let cancelled = false
+    setTranscript(null)
+    setTxError('')
+    setTxElapsed(0)
+    if (!current?.id) {
+      setTxStatus('none')
+      return () => { cancelled = true }
+    }
+    ;(async () => {
+      try {
+        const state = await getJSON(`${API}/episodes/${current.id}/transcript`)
+        if (cancelled) return
+        setTxStatus(state.status)
+        if (state.status === 'done' && state.transcript) {
+          setTranscript(state.transcript)
+        } else if (state.status === 'queued' || state.status === 'running') {
+          setTxElapsed(state.elapsedMs || 0)
+        } else if (state.status === 'error') {
+          setTxError(state.error || '转写失败')
+        }
+      } catch (err) {
+        if (!cancelled) setTxError(err.message)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [current?.id])
+
+  useEffect(() => {
+    getJSON(`${API}/translate/settings`).then(setTrConfig).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (txStatus !== 'queued' && txStatus !== 'running') return
+    let cancelled = false
+    const timer = setInterval(async () => {
+      const id = currentRef.current?.id
+      if (!id) return
+      try {
+        const state = await getJSON(`${API}/episodes/${id}/transcript`)
+        if (cancelled) return
+        setTxStatus(state.status)
+        setTxElapsed(state.elapsedMs || 0)
+        if (state.status === 'done' && state.transcript) {
+          setTranscript(state.transcript)
+          setSubsOpen(true)
+          flash('转写完成')
+        } else if (state.status === 'error') {
+          setTxError(state.error || '转写失败')
+        }
+      } catch {
+        /* 轮询失败时继续等下一次 */
+      }
+    }, 2000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [txStatus, flash])
+
+  useEffect(() => {
+    if (trJob.status !== 'running') return
+    let cancelled = false
+    const timer = setInterval(async () => {
+      const id = currentRef.current?.id
+      if (!id) return
+      try {
+        const state = await getJSON(`${API}/episodes/${id}/translate?target=${trTarget}`)
+        if (cancelled) return
+        setTrJob(state)
+        if (state.status === 'done') {
+          const fresh = await getJSON(`${API}/episodes/${id}/transcript`)
+          if (!cancelled && fresh.transcript) setTranscript(fresh.transcript)
+          flash('翻译完成')
+        }
+      } catch {
+        /* 忽略轮询错误 */
+      }
+    }, 2000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [trJob.status, trTarget, flash])
+
   const saveProgress = useCallback((id, pos, dur, immediate = false) => {
     if (!id) return
     const now = Date.now()
@@ -327,6 +552,64 @@ export default function App() {
     setSettings((prev) => ({ ...prev, ...patch }))
     sendJSON(`${API}/settings`, 'PATCH', patch).catch(() => {})
   }, [])
+
+  const startTranscript = useCallback(async () => {
+    if (!currentRef.current) return
+    setTxError('')
+    setSubsOpen(true)
+    try {
+      const res = await sendJSON(`${API}/episodes/${currentRef.current.id}/transcribe`, 'POST', {})
+      setTxStatus(res.status || 'queued')
+    } catch (err) {
+      setTxError(err.message)
+    }
+  }, [])
+
+  const toggleSubs = useCallback(() => {
+    if (transcript) {
+      setSubsOpen((value) => !value)
+      return
+    }
+    if (txStatus === 'queued' || txStatus === 'running') {
+      setSubsOpen(true)
+      return
+    }
+    startTranscript()
+  }, [transcript, txStatus, startTranscript])
+
+  const refreshTranscript = useCallback(async () => {
+    const id = currentRef.current?.id
+    if (!id) return
+    const fresh = await getJSON(`${API}/episodes/${id}/transcript`)
+    if (fresh.transcript) setTranscript(fresh.transcript)
+  }, [])
+
+  const startTranslate = useCallback(async (target) => {
+    if (!currentRef.current?.id) return
+    setTrJob({ status: 'running' })
+    try {
+      const res = await sendJSON(`${API}/episodes/${currentRef.current.id}/translate`, 'POST', { target })
+      setTrJob(res)
+      if (res.status === 'done') {
+        await refreshTranscript()
+        flash('翻译完成')
+      }
+    } catch (err) {
+      setTrJob({ status: 'error', error: err.message })
+    }
+  }, [refreshTranscript, flash])
+
+  const changeTarget = useCallback(async (value) => {
+    setTrTarget(value)
+    if (!value) return
+    const existing = transcript?.translations?.[value]
+    if (existing && Object.keys(existing).length) {
+      setTrJob({ status: 'done' })
+      await refreshTranscript()
+      return
+    }
+    await startTranslate(value)
+  }, [transcript, startTranslate, refreshTranscript])
 
   const ordered = useMemo(() => {
     const list = [...items]
@@ -542,7 +825,7 @@ export default function App() {
         <div className="brand">
           <span className="brand-mark"><Icon name="wave" size={20} /></span>
           <span className="brand-name">Podwave</span>
-          <span className="brand-version">0.1</span>
+          <span className="brand-version">0.2</span>
         </div>
 
         <nav className="nav">
@@ -681,6 +964,24 @@ export default function App() {
         </section>
       </main>
 
+      {subsOpen && current ? (
+        <TranscriptPanel
+          transcript={transcript}
+          status={txStatus}
+          elapsed={txElapsed}
+          error={txError}
+          position={position}
+          onSeek={seekTo}
+          onClose={() => setSubsOpen(false)}
+          onStart={startTranscript}
+          target={trTarget}
+          translations={transcript?.translations?.[trTarget] || null}
+          job={trJob}
+          onChangeTarget={changeTarget}
+          onOpenSettings={() => setTrSettingsOpen(true)}
+        />
+      ) : null}
+
       <footer className="player">
         <div className="seek-wrap">
           <div className="seek-track">
@@ -723,6 +1024,15 @@ export default function App() {
           </div>
 
           <div className="player-right">
+            <button
+              className={`subs-btn ${subsOpen ? 'active' : ''}`}
+              onClick={toggleSubs}
+              disabled={!current}
+              title="字幕与转写"
+            >
+              <Icon name="wave" size={15} />
+              <span>{transcript ? '字幕' : txStatus === 'queued' || txStatus === 'running' ? '转写中' : '转写'}</span>
+            </button>
             <span className="time">{fmtTime(position)} / {fmtTime(duration)}</span>
             <button className="rate-btn" onClick={cycleRate} title="播放速度">{settings.rate}×</button>
             <button className="icon-btn" onClick={toggleMute} title="静音">
@@ -743,6 +1053,18 @@ export default function App() {
       </footer>
 
       {addOpen ? <AddFolderDialog onClose={() => setAddOpen(false)} onSubmit={addFolder} /> : null}
+      {trSettingsOpen ? (
+        <TranslateSettingsDialog
+          config={trConfig}
+          onClose={() => setTrSettingsOpen(false)}
+          onSave={async (patch) => {
+            const config = await sendJSON(`${API}/translate/settings`, 'PUT', patch)
+            setTrConfig(config)
+            setTrSettingsOpen(false)
+            flash('翻译设置已保存')
+          }}
+        />
+      ) : null}
       {toast ? <div className="toast">{toast}</div> : null}
 
       <audio

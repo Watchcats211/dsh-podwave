@@ -1,19 +1,28 @@
 # dsh-podwave
 
-DeepSeek Harness 的本地播客播放器插件。扫描你硬盘上的音频文件夹，在 DSH 侧栏里直接播放，自动记住进度，随时接着听。
+DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘上的播客，自动记住进度，并且能转写、显示双语字幕、导出 SRT / Markdown。
 
-不联网、不上传、不依赖订阅源——音频只从本地磁盘读取。
+音频只从本地磁盘读取，不上传、不联网、不依赖订阅源。转写与翻译默认跑在本机（Apple Silicon / MLX），也可以切到 DeepSeek API。
 
-![播客面板](docs/screenshot.png)
+![播客面板与双语字幕](docs/screenshot-0.2.png)
+
+## 功能
+
+- **本地播放**：扫描文件夹（递归 6 层，支持 `mp3 / m4a / m4b / aac / wav / flac / ogg / opus / weba / webm / wma`），自动读标题、艺术家、封面。
+- **续播**：进度每 4 秒保存，切集 / 暂停 / 关闭时立即保存；重开从上次位置继续。
+- **转写**：本地 Qwen3-ASR-1.7B-8bit，带词级时间戳；按停顿与标点切成字幕行。
+- **双语字幕**：点「字幕」打开面板，选「中文对照 / English」，只翻译另一种语言的行；点字幕行可以跳到对应时间。
+- **导出**：SRT 或 Markdown。
+- **快捷键**：`空格` 播放/暂停，`← / →` ±15 秒，`↑ / ↓` 上/下一集，`/` 搜索。
 
 ## 安装
 
 需要 DeepSeek Harness `>=0.2.1-rc.5`。
 
-从 [Releases](https://github.com/Watchcats211/dsh-podwave/releases) 下载 `dsh-podwave-0.1.0.tgz`，然后：
+从 [Releases](https://github.com/Watchcats211/dsh-podwave/releases) 下载最新的 `dsh-podwave-*.tgz`，然后：
 
 ```bash
-dsh plugin --profile desktop add file:/path/to/dsh-podwave-0.1.0.tgz
+dsh plugin --profile desktop add file:/path/to/dsh-podwave-0.2.3.tgz
 ```
 
 也可以直接从源码目录装：
@@ -22,26 +31,46 @@ dsh plugin --profile desktop add file:/path/to/dsh-podwave-0.1.0.tgz
 dsh plugin --profile desktop add file:/path/to/dsh-podwave
 ```
 
-装完重启 DSH（或在已运行的桌面端刷新），侧栏会出现「播客」。
+装完刷新 DSH，侧栏出现「播客」。
+
+## 转写与翻译（可选）
+
+播放器本身不需要额外依赖。要用转写 / 翻译，需要在本机准备 MLX 运行时：
+
+```bash
+uv venv ~/.podwave/runtime/.venv --python 3.12
+~/.podwave/runtime/.venv/bin/python -m pip install "mlx-qwen3-asr==0.4.4" mlx-lm
+
+hf download mlx-community/Qwen3-ASR-1.7B-8bit --local-dir ~/.podwave/models/qwen3-asr-1.7b-8bit
+hf download mlx-community/Qwen3-8B-4bit --local-dir ~/.podwave/models/qwen3-8b-4bit
+```
+
+- 转写模型约 2.3 GB，翻译模型约 4.3 GB；只做播放可以都不装。
+- 翻译可以不用本地模型：字幕面板 →「设置」→ 选 DeepSeek API，填 API key（默认 `api.deepseek.com` / `deepseek-chat`）。
+- 字幕面板 →「设置」里切换引擎；目标语言在字幕面板的「对照」下拉里选。
 
 ## 用法
 
-- **添加文件夹**：点面板里的 `+`，选择存放播客的目录。会递归扫描 6 层，识别 `mp3 / m4a / m4b / aac / wav / flac / ogg / opus / weba / webm / wma`。
-- **播放**：点单集即可；进度每 4 秒自动保存，切集、暂停、关闭时也会立即保存。刷新或重开 DSH 后从上次位置继续。
-- **快捷键**：`空格` 播放/暂停，`← / →` 后退/前进 15 秒，`↑ / ↓` 上一个/下一个单集，`/` 聚焦搜索。
-- **倍速**：0.75× – 2× 循环；音量与静音在播放条右侧。
+- **添加文件夹**：面板左上 `+`。扫描在后台进行，状态显示在底部。
+- **播放 / 续播**：点单集；刷新或重开 DSH 后接着上次位置。
+- **转写**：点播放条右侧「转写」，完成后自动打开字幕面板。长播客需要时间（M4 上大约 5–10 倍实时速度）。
+- **翻译**：字幕面板右上「对照」选目标语言；已有译文会直接显示，没有就自动开始翻。
+- **删除文件夹**：侧栏文件夹右侧 `×`，会移除该目录下的单集记录。
 
-数据保存在 `~/.podwave/`：`state.json`（文件夹、进度、设置）和 `covers/`（从音频标签提取的封面）。
+数据保存在 `~/.podwave/`：`state.json`、`covers/`、`transcripts/`、`translate.json`、`models/`、`runtime/`。
 
 ## 结构
 
 ```
-src/host.js       注册 /podwave/api/*：state、episodes、audio（Range）、cover、progress、settings
-src/state.js      状态读写（~/.podwave/state.json，原子写）
-src/library.js    媒体库扫描（music-metadata 读取标题/艺术家/时长/封面）
-client/src/       React 面板（App.jsx、plugin.jsx、styles.css）
-build.mjs         PostCSS 作用域前缀 + esbuild 打包为 DSH client bundle
-cordis.patch.yml  插件加载声明
+src/host.js                /podwave/api/*：播放器、转写、翻译、字幕导出
+src/state.js               状态读写（~/.podwave/state.json，原子写）
+src/library.js             媒体库扫描（music-metadata）
+src/transcribe.js          MLX Qwen3-ASR 调用、队列、字幕分行与导出
+src/translate.js           翻译任务（DeepSeek API / 本地 MLX Qwen3）
+scripts/translate_local.py 本地翻译脚本（mlx_lm）
+client/src/                React 面板（App.jsx、plugin.jsx、styles.css）
+build.mjs                  PostCSS 作用域前缀 + esbuild 打包为 DSH client bundle
+cordis.patch.yml           插件加载声明
 ```
 
 ## 开发
@@ -49,21 +78,27 @@ cordis.patch.yml  插件加载声明
 ```bash
 npm install
 npm run build          # 产物 dist/client.js
-```
 
-用独立测试 profile 调试（不影响 desktop）：
-
-```bash
+# 独立测试 profile（不影响 desktop）
 dsh podwave-test --from-default-profile web --no-open --port 4790
 dsh plugin --profile podwave-test add file:$PWD
 ```
 
+## 限制
+
+- 还没有 RSS / 在线流订阅，只播放本地文件。
+- 说话人分离暂未接入（`mlx-qwen3-asr` 的 `--diarize` 依赖 pyannote + HF token）；字幕目前不分说话人。
+- 转写是「事后整段」模式，不是真流式；播放中可以先听，转写完成后字幕会出现在面板里。
+- 本地翻译是 8B 4bit 模型，长句质量不如 API；重要内容建议用 DeepSeek API 翻。
+
 ## 路线图
 
-- [ ] 转写：本地 MLX Qwen3-ASR（中英混合），词级时间戳
-- [ ] 说话人分离（sherpa-onnx）
-- [ ] 实时字幕与中英对照翻译
-- [ ] 导出 SRT / Markdown
+- [x] 转写：本地 MLX Qwen3-ASR（中英混合），词级时间戳
+- [x] 双语字幕：本地 Qwen3-8B / DeepSeek API
+- [x] 导出 SRT / Markdown
+- [ ] 说话人分离与说话人标签
+- [ ] 跟播预转写（边播边出字幕）
+- [ ] RSS / 在线播客订阅
 
 ## License
 

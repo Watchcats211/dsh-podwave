@@ -23,6 +23,17 @@ import {
   getScanState,
   scanLibrary,
 } from './library.js'
+import {
+  deleteTranscript,
+  getTranscriptionState,
+  readTranscript,
+  runtimeInfo,
+  startTranscription,
+  stopAll,
+  toMarkdown,
+  toSRT,
+} from './transcribe.js'
+import { getTranslationState, publicConfig, saveConfig, startTranslation } from './translate.js'
 
 export const name = 'dsh-podwave'
 
@@ -132,7 +143,7 @@ async function route(ctx, req, res) {
   const method = req.method || 'GET'
 
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.1.0' })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.2.1', transcribe: runtimeInfo() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -198,6 +209,71 @@ async function route(ctx, req, res) {
     return sendFile(req, res, episode.file, 'no-store')
   }
 
+  const transcriptMatch = /^api\/episodes\/([^/]+)\/transcript$/.exec(routePath)
+  if (transcriptMatch) {
+    const id = decodeURIComponent(transcriptMatch[1])
+    if (!getEpisode(id)) return json(res, 404, { error: '单集不存在' })
+    if (method === 'GET') return json(res, 200, await getTranscriptionState(id))
+    if (method === 'DELETE') {
+      const ok = await deleteTranscript(id)
+      return ok ? json(res, 200, { ok: true }) : json(res, 409, { error: '正在转写，完成后再试' })
+    }
+  }
+
+  const transcribeMatch = /^api\/episodes\/([^/]+)\/transcribe$/.exec(routePath)
+  if (transcribeMatch && method === 'POST') {
+    const episode = getEpisode(decodeURIComponent(transcribeMatch[1]))
+    if (!episode) return json(res, 404, { error: '单集不存在' })
+    const body = await readJson(req)
+    const result = await startTranscription(episode, { force: Boolean(body?.force) })
+    return json(res, 200, result)
+  }
+
+  const transcriptExportMatch = /^api\/episodes\/([^/]+)\/transcript\/export$/.exec(routePath)
+  if (transcriptExportMatch && method === 'GET') {
+    const id = decodeURIComponent(transcriptExportMatch[1])
+    const transcript = await readTranscript(id)
+    if (!transcript) return json(res, 404, { error: '还没有转写' })
+    const format = (url.searchParams.get('format') || 'srt').toLowerCase()
+    const markdown = format === 'md' || format === 'markdown'
+    res.statusCode = 200
+    res.setHeader('content-type', 'text/plain; charset=utf-8')
+    res.setHeader('content-disposition', `attachment; filename="podwave-${id}.${markdown ? 'md' : 'srt'}"`)
+    res.setHeader('cache-control', 'no-store')
+    return res.end(markdown ? toMarkdown(transcript) : toSRT(transcript))
+  }
+
+  if (routePath === 'api/translate/settings') {
+    if (method === 'GET') return json(res, 200, publicConfig())
+    if (method === 'PUT') {
+      const body = await readJson(req)
+      const patch = {}
+      if (body?.provider === 'api' || body?.provider === 'local') patch.provider = body.provider
+      if (body?.target === 'zh' || body?.target === 'en') patch.target = body.target
+      if (typeof body?.apiKey === 'string') patch.apiKey = body.apiKey.trim()
+      if (typeof body?.apiBase === 'string' && body.apiBase.trim()) patch.apiBase = body.apiBase.trim()
+      if (typeof body?.apiModel === 'string' && body.apiModel.trim()) patch.apiModel = body.apiModel.trim()
+      saveConfig(patch)
+      return json(res, 200, publicConfig())
+    }
+  }
+
+  const translateMatch = /^api\/episodes\/([^/]+)\/translate$/.exec(routePath)
+  if (translateMatch) {
+    const id = decodeURIComponent(translateMatch[1])
+    if (!getEpisode(id)) return json(res, 404, { error: '单集不存在' })
+    if (method === 'GET') {
+      const target = url.searchParams.get('target') === 'en' ? 'en' : 'zh'
+      return json(res, 200, await getTranslationState(id, target))
+    }
+    if (method === 'POST') {
+      const body = await readJson(req)
+      const target = body?.target === 'en' ? 'en' : 'zh'
+      const provider = body?.provider === 'local' ? 'local' : body?.provider === 'api' ? 'api' : undefined
+      return json(res, 200, await startTranslation(id, { target, provider }))
+    }
+  }
+
   const progressMatch = /^api\/progress\/([^/]+)$/.exec(routePath)
   if (progressMatch && method === 'PUT') {
     const episode = getEpisode(decodeURIComponent(progressMatch[1]))
@@ -259,5 +335,6 @@ export default {
         }),
       'dsh-podwave: /podwave routes',
     )
+    ctx.effect(() => () => stopAll(), 'dsh-podwave: stop transcription workers')
   },
 }
