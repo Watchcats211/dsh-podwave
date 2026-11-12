@@ -1,6 +1,7 @@
 import React from 'react'
 import css from './styles.prefixed.css'
 import App from './App.jsx'
+import SettingsPage from './SettingsPage.jsx'
 
 function PodcastIcon({ size = 16 }) {
   return (
@@ -29,6 +30,12 @@ function apply(ctx) {
     ctx.slots.register(
       { name: 'sidebar.panellist', id: 'podwave', order: 8, label: () => '播客' },
       PodcastIcon,
+    ),
+  )
+  ctx.slots.inject('settings.section', () =>
+    ctx.slots.register(
+      { name: 'settings.section', id: 'podwave', order: 40, label: () => '播客' },
+      SettingsPage,
     ),
   )
 }

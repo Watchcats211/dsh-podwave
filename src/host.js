@@ -29,11 +29,13 @@ import {
   readTranscript,
   runtimeInfo,
   startTranscription,
+  TRANSCRIPTS_DIR,
   stopAll,
   toMarkdown,
   toSRT,
 } from './transcribe.js'
 import { getTranslationState, publicConfig, saveConfig, startTranslation } from './translate.js'
+import { listModels, loadModelConfig, saveModelConfig } from './models.js'
 
 export const name = 'dsh-podwave'
 
@@ -143,7 +145,7 @@ async function route(ctx, req, res) {
   const method = req.method || 'GET'
 
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.2.1', transcribe: runtimeInfo() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.2.5', transcribe: runtimeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -241,6 +243,55 @@ async function route(ctx, req, res) {
     res.setHeader('content-disposition', `attachment; filename="podwave-${id}.${markdown ? 'md' : 'srt'}"`)
     res.setHeader('cache-control', 'no-store')
     return res.end(markdown ? toMarkdown(transcript) : toSRT(transcript))
+  }
+
+  if (routePath === 'api/models') {
+    if (method === 'GET') return json(res, 200, { config: loadModelConfig(), models: listModels(), transcribe: runtimeInfo(), translate: publicConfig() })
+    if (method === 'PUT') {
+      const body = await readJson(req)
+      const available = new Set(listModels().filter((model) => model.ready).map((model) => model.name))
+      const patch = {}
+      if (typeof body?.asrModel === 'string' && available.has(body.asrModel)) patch.asrModel = body.asrModel
+      if (typeof body?.translateModel === 'string' && available.has(body.translateModel)) patch.translateModel = body.translateModel
+      if (!Object.keys(patch).length) return json(res, 400, { error: '没有可用的模型' })
+      const config = saveModelConfig(patch)
+      return json(res, 200, { config, models: listModels(), transcribe: runtimeInfo(), translate: publicConfig() })
+    }
+  }
+
+  if (method === 'GET' && routePath === 'api/history') {
+    const items = []
+    let files = []
+    try {
+      files = fs.readdirSync(TRANSCRIPTS_DIR).filter((file) => file.endsWith('.json'))
+    } catch {
+      files = []
+    }
+    for (const file of files) {
+      const id = file.replace(/\.json$/, '')
+      const transcript = await readTranscript(id)
+      if (!transcript) continue
+      const episode = getEpisode(id)
+      let completedAt = null
+      try {
+        completedAt = (await stat(path.join(TRANSCRIPTS_DIR, file))).mtimeMs
+      } catch {
+        completedAt = null
+      }
+      items.push({
+        id,
+        title: episode?.title || transcript.title || id,
+        artist: episode?.artist || '',
+        duration: episode?.duration || null,
+        language: transcript.language || null,
+        segments: Array.isArray(transcript.segments) ? transcript.segments.length : 0,
+        translations: Object.keys(transcript.translations || {}).filter((key) => key !== '_provider'),
+        provider: transcript.translations?._provider || null,
+        completedAt,
+      })
+    }
+    items.sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0))
+    return json(res, 200, { items })
   }
 
   if (routePath === 'api/translate/settings') {

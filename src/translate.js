@@ -7,12 +7,12 @@ import { fileURLToPath } from 'node:url'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { DATA_DIR } from './state.js'
 import { readTranscript } from './transcribe.js'
+import { loadModelConfig, modelDir } from './models.js'
 
 const TRANSCRIPTS_DIR = path.join(DATA_DIR, 'transcripts')
 const CONFIG_PATH = path.join(DATA_DIR, 'translate.json')
 const PYTHON = path.join(DATA_DIR, 'runtime', '.venv', 'bin', 'python')
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'translate_local.py')
-const LOCAL_MODEL = path.join(DATA_DIR, 'models', 'qwen3-8b-4bit')
 
 const DEFAULTS = {
   provider: 'api',
@@ -39,8 +39,15 @@ export function saveConfig(patch) {
   return next
 }
 
+export function currentLocalModel() {
+  const name = loadModelConfig().translateModel
+  const dir = modelDir(name)
+  return { name, dir, ready: fs.existsSync(path.join(dir, 'model.safetensors')) }
+}
+
 export function publicConfig() {
   const config = loadConfig()
+  const local = currentLocalModel()
   return {
     provider: config.provider,
     target: config.target,
@@ -48,8 +55,8 @@ export function publicConfig() {
     apiModel: config.apiModel,
     apiKeyMasked: config.apiKey ? `${config.apiKey.slice(0, 3)}****${config.apiKey.slice(-4)}` : '',
     hasApiKey: Boolean(config.apiKey),
-    localModel: path.basename(LOCAL_MODEL),
-    localReady: fs.existsSync(path.join(LOCAL_MODEL, 'model.safetensors')),
+    localModel: local.name,
+    localReady: local.ready,
   }
 }
 
@@ -121,7 +128,7 @@ async function translateWithLocal(lines, target) {
   await writeFile(
     input,
     JSON.stringify({
-      model_dir: LOCAL_MODEL,
+      model_dir: currentLocalModel().dir,
       target,
       items: lines.map((line) => ({ id: line.id, text: line.text })),
     }),
@@ -163,7 +170,7 @@ export async function startTranslation(episodeId, { target = 'zh', provider } = 
   const transcript = await readTranscript(episodeId)
   if (!transcript) throw Object.assign(new Error('先转写这一集'), { status: 409 })
   if (useProvider === 'api' && !config.apiKey) throw Object.assign(new Error('还没有填 DeepSeek API key'), { status: 400 })
-  if (useProvider === 'local' && !fs.existsSync(path.join(LOCAL_MODEL, 'model.safetensors'))) {
+  if (useProvider === 'local' && !currentLocalModel().ready) {
     throw Object.assign(new Error('本地翻译模型还没下载好'), { status: 503 })
   }
 

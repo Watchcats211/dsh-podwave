@@ -15,6 +15,7 @@ DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘�
 - **双语字幕**：点「字幕」打开面板，选「中文对照 / English」，只翻译另一种语言的行；点字幕行可以跳到对应时间。
 - **导出**：SRT 或 Markdown。
 - **快捷键**：`空格` 播放/暂停，`← / →` ±15 秒，`↑ / ↓` 上/下一集，`/` 搜索。
+- **设置页**：DSH 设置 → 播客，可以看已完成的转写历史、配置 DeepSeek API、选择转写与翻译模型。
 
 ## 安装
 
@@ -23,7 +24,7 @@ DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘�
 从 [Releases](https://github.com/Watchcats211/dsh-podwave/releases) 下载最新的 `dsh-podwave-*.tgz`，然后：
 
 ```bash
-dsh plugin --profile desktop add file:/path/to/dsh-podwave-0.2.4.tgz
+dsh plugin --profile desktop add file:/path/to/dsh-podwave-0.2.5.tgz
 ```
 
 也可以直接从源码目录装：
@@ -50,6 +51,14 @@ hf download mlx-community/Qwen3-8B-4bit --local-dir ~/.podwave/models/qwen3-8b-4
 - 翻译可以不用本地模型：字幕面板 →「设置」→ 选 DeepSeek API，填 API key（默认 `api.deepseek.com` / `deepseek-chat`）。
 - 字幕面板 →「设置」里切换引擎；目标语言在字幕面板的「对照」下拉里选。
 
+## 设置
+
+DSH 设置 →「播客」：
+
+- **历史记录**：所有已完成转写的单集（时长、语言、行数、已翻语言、完成时间）。
+- **API 与翻译引擎**：DeepSeek API 地址 / 模型 / API Key，或切到本地模型。
+- **模型**：在 `~/.podwave/models/` 下已就绪的模型里选转写模型（ASR）与翻译模型。
+
 ## 用法
 
 - **添加文件夹**：面板左上 `+`。扫描在后台进行，状态显示在底部。
@@ -68,8 +77,9 @@ src/state.js               状态读写（~/.podwave/state.json，原子写）
 src/library.js             媒体库扫描（music-metadata）
 src/transcribe.js          MLX Qwen3-ASR 调用、队列、字幕分行与导出
 src/translate.js           翻译任务（DeepSeek API / 本地 MLX Qwen3）
+src/models.js              模型目录扫描与选择（~/.podwave/models.json）
 scripts/translate_local.py 本地翻译脚本（mlx_lm）
-client/src/                React 面板（App.jsx、plugin.jsx、styles.css）
+client/src/                React 面板（App.jsx、SettingsPage.jsx、plugin.jsx、styles.css）
 build.mjs                  PostCSS 作用域前缀 + esbuild 打包为 DSH client bundle
 cordis.patch.yml           插件加载声明
 ```

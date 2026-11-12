@@ -5,12 +5,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { DATA_DIR } from './state.js'
+import { loadModelConfig, modelDir } from './models.js'
 
 export const TRANSCRIPTS_DIR = path.join(DATA_DIR, 'transcripts')
 const WORK_DIR = path.join(TRANSCRIPTS_DIR, '.work')
 const RUNTIME_DIR = path.join(DATA_DIR, 'runtime')
 const CLI = path.join(RUNTIME_DIR, '.venv', 'bin', 'mlx-qwen3-asr')
-const MODEL_DIR = path.join(DATA_DIR, 'models', 'qwen3-asr-1.7b-8bit')
 
 const jobs = new Map() // episodeId -> job
 const queue = []
@@ -21,11 +21,19 @@ function transcriptPath(id) {
   return path.join(TRANSCRIPTS_DIR, `${id}.json`)
 }
 
+export function currentAsrModel() {
+  const name = loadModelConfig().asrModel
+  const dir = modelDir(name)
+  return { name, dir, ready: fs.existsSync(path.join(dir, 'model.safetensors')) }
+}
+
 export function runtimeInfo() {
+  const model = currentAsrModel()
   return {
     installed: fs.existsSync(CLI),
-    modelReady: fs.existsSync(path.join(MODEL_DIR, 'model.safetensors')),
-    model: MODEL_DIR,
+    modelReady: model.ready,
+    model: model.dir,
+    modelName: model.name,
     cli: CLI,
   }
 }
@@ -66,7 +74,7 @@ async function runJob({ episode, job }) {
     await mkdir(work, { recursive: true })
     const args = [
       episode.file,
-      '--model', MODEL_DIR,
+      '--model', currentAsrModel().dir,
       '--output-dir', work,
       '--output-format', 'json',
       '--timestamps',
