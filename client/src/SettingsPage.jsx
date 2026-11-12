@@ -29,6 +29,14 @@ function fmtDuration(value) {
   return `${m} 分钟`
 }
 
+function fmtBytes(value) {
+  const bytes = Number(value) || 0
+  if (!bytes) return '0 B'
+  if (bytes < 1024 ** 2) return `${Math.round(bytes / 1024)} KB`
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
+  return `${(bytes / 1024 ** 3).toFixed(1)} GB`
+}
+
 function fmtDate(ms) {
   if (!ms) return ''
   const date = new Date(ms)
@@ -44,6 +52,9 @@ export default function SettingsPage() {
   const [trConfig, setTrConfig] = useState(null)
   const [uiSettings, setUiSettings] = useState({ showSidebarPanel: true })
   const [importConfig, setImportConfig] = useState({ mode: 'copy', orphans: 0, orphanBytes: 0 })
+  const [setup, setSetup] = useState(null)
+  const [setupSource, setSetupSource] = useState('auto')
+  const [setupBusy, setSetupBusy] = useState(false)
   const [hotwords, setHotwords] = useState('')
   const [chunkMinutes, setChunkMinutes] = useState(15)
   const [diarize, setDiarize] = useState(true)
@@ -62,14 +73,17 @@ export default function SettingsPage() {
 
   const load = useCallback(async () => {
     try {
-      const [historyData, modelsData, trData, uiData, txData, importData] = await Promise.all([
+      const [historyData, modelsData, trData, uiData, txData, importData, setupData] = await Promise.all([
         getJSON(`${API}/history`),
         getJSON(`${API}/models`),
         getJSON(`${API}/translate/settings`),
         getJSON(`${API}/ui-settings`),
         getJSON(`${API}/transcribe/settings`),
         getJSON(`${API}/import/settings`),
+        getJSON(`${API}/setup`),
       ])
+      setSetup(setupData)
+      if (setupData?.job?.status === 'running') setSetupBusy(true)
       setImportConfig({ mode: importData.mode || 'copy', orphans: importData.orphans || 0, orphanBytes: importData.orphanBytes || 0 })
       setUiSettings({ showSidebarPanel: uiData?.showSidebarPanel !== false })
       setHotwords((txData.hotwords || []).join(' '))
@@ -95,6 +109,43 @@ export default function SettingsPage() {
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    if (!setupBusy && setup?.job?.status !== 'running') return
+    const timer = window.setInterval(async () => {
+      try {
+        const data = await getJSON(`${API}/setup`)
+        setSetup(data)
+        if (data.job?.status !== 'running') setSetupBusy(false)
+      } catch {
+        // 安装中轮询失败不打断界面
+      }
+    }, 2500)
+    return () => window.clearInterval(timer)
+  }, [setupBusy, setup?.job?.status])
+
+  const startSetup = async () => {
+    setError('')
+    setSetupBusy(true)
+    try {
+      await sendJSON(`${API}/setup/install`, 'POST', { source: setupSource })
+      const data = await getJSON(`${API}/setup`)
+      setSetup(data)
+      flash('开始安装')
+    } catch (err) {
+      setSetupBusy(false)
+      setError(err.message)
+    }
+  }
+
+  const cancelSetupJob = async () => {
+    try {
+      await sendJSON(`${API}/setup/cancel`, 'POST', {})
+      flash('已请求取消')
+    } catch (err) {
+      setError(err.message)
+    }
+  }
 
   const flash = (text) => {
     setMessage(text)
@@ -226,6 +277,70 @@ export default function SettingsPage() {
 
       {error ? <div className="banner error" onClick={() => setError('')}>{error}</div> : null}
       {message ? <div className="settings-message">{message}</div> : null}
+
+
+      <section className="settings-card">
+        <h2>环境与模型</h2>
+        <p className="settings-hint">换电脑或换系统时，先扫描本机缺什么；模型下载支持国际与国内两条线路，安装完会列出下载内容与体积。</p>
+        {setup ? (
+          <>
+            <p className="setup-platform">
+              {setup.platform?.osLabel} · {setup.platform?.arch} · {setup.platform?.memoryGB}GB 内存 · {setup.platform?.gpu} · 推荐：{setup.engine?.label}
+            </p>
+            <ul className="setup-components">
+              {(setup.components || []).map((item) => (
+                <li key={item.id} className={item.ready ? 'setup-component ready' : 'setup-component'}>
+                  <span className="setup-dot" />
+                  <span className="setup-component-label">{item.label}</span>
+                  <span className="setup-component-detail">{item.detail}</span>
+                  {!item.ready && item.bytes ? <span className="setup-component-size">{fmtBytes(item.bytes)}</span> : null}
+                </li>
+              ))}
+            </ul>
+            <div className="settings-fields">
+              <label className="field-row">
+                <span>下载线路</span>
+                <select value={setupSource} onChange={(event) => setSetupSource(event.target.value)}>
+                  <option value="auto">自动测速</option>
+                  <option value="intl">国际（Hugging Face / GitHub）</option>
+                  <option value="cn">国内（hf-mirror / gh-proxy / ModelScope）</option>
+                </select>
+              </label>
+            </div>
+            <p className="settings-hint">预计下载 {fmtBytes(setup.downloadBytes)}，安装到 ~/.podwave/models。</p>
+            <div className="settings-actions">
+              <button className="settings-btn" disabled={setupBusy || setup.job?.status === 'running'} onClick={startSetup}>
+                {setupBusy || setup.job?.status === 'running' ? '安装中…' : '一键安装'}
+              </button>
+              {setup.job?.status === 'running' ? (
+                <button className="settings-btn ghost" onClick={cancelSetupJob}>取消</button>
+              ) : null}
+            </div>
+            {setup.job ? (
+              <div className="setup-job">
+                <div className="setup-job-line">
+                  <span>{setup.job.stage || setup.job.status}</span>
+                  <span>{setup.job.progress || 0}% · {fmtBytes(setup.job.bytes)} / {fmtBytes(setup.job.expected)}</span>
+                </div>
+                <div className="setup-progress"><span style={{ width: `${setup.job.progress || 0}%` }} /></div>
+                {setup.job.error ? <p className="settings-empty">失败：{setup.job.error}</p> : null}
+                {setup.job.status === 'done' && (!setup.job.summary || !setup.job.summary.length) ? (
+                  <p className="settings-empty">所有组件已就绪，没有需要下载的内容。</p>
+                ) : null}
+                {Array.isArray(setup.job.summary) && setup.job.summary.length ? (
+                  <ul className="setup-summary">
+                    {setup.job.summary.map((item) => (
+                      <li key={item.id}>{item.label} · {fmtBytes(item.bytes)}{item.source ? ` · ${item.source}` : ''}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <p className="settings-empty">正在扫描本机…</p>
+        )}
+      </section>
 
       <section className="settings-card">
         <h2>历史记录</h2>

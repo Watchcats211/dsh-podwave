@@ -4,3 +4,5 @@ node_modules/
 .env
 client/src/styles.prefixed.css
 *.tgz
+__pycache__/
+*.pyc

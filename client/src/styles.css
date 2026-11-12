@@ -1181,3 +1181,77 @@ select:focus-visible {
   top: 0;
   z-index: 2;
 }
+
+/* 环境与模型安装 */
+.setup-platform {
+  margin: 2px 0 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.setup-components {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.setup-component {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.setup-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #b05252;
+  flex: none;
+}
+.setup-component.ready .setup-dot {
+  background: #4f9c6f;
+}
+.setup-component-label {
+  color: var(--text);
+  min-width: 148px;
+}
+.setup-component-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.setup-component-size {
+  flex: none;
+}
+.setup-job {
+  margin-top: 14px;
+}
+.setup-job-line {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.setup-progress {
+  height: 4px;
+  background: #1d1d24;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.setup-progress span {
+  display: block;
+  height: 100%;
+  background: #e6a54a;
+  transition: width 0.3s;
+}
+.setup-summary {
+  margin: 8px 0 0;
+  padding-left: 16px;
+  font-size: 12px;
+  color: var(--muted);
+}

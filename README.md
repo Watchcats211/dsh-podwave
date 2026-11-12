@@ -161,3 +161,17 @@ node scripts/release.mjs 0.9.1   # 改版本号 → 测试 → 构建 → 打包
 ```
 
 CI（GitHub Actions）在每次 push / PR 跑 `npm test` 与 `npm run build`。
+
+## 环境与模型（跨平台）
+
+设置 → 播客 → 「环境与模型」会扫描本机，给出推荐引擎与缺失组件：
+
+| 平台 | 转写 | 翻译 |
+| --- | --- | --- |
+| macOS Apple Silicon | Qwen3-ASR-1.7B-8bit（MLX） | Hy-MT2-1.8B-4bit（MLX） |
+| Windows / Linux / Intel Mac | SenseVoiceSmall int8（sherpa-onnx） | Hy-MT2-1.8B-Q4_K_M（llama.cpp） |
+
+- 下载线路可选「自动测速 / 国际（Hugging Face、GitHub）/ 国内（hf-mirror、gh-proxy、ModelScope）」。
+- 「一键安装」会准备 uv 与 Python 虚拟环境、安装 sherpa-onnx（MLX 平台额外装 mlx-qwen3-asr、mlx-lm）、下载 llama.cpp 预编译包和缺失模型，并在完成后列出每项内容与体积。
+- 模型保存在 `~/.podwave/models`，运行时在 `~/.podwave/runtime`；卸载插件不会删除这些文件。
+- 注意：Hy-MT2 1.25bit GGUF 是自定义量化，主线 llama.cpp 加载会报 `failed to read tensor data`，所以非 MLX 平台用 Q4_K_M。

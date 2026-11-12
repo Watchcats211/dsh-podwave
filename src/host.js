@@ -49,6 +49,7 @@ import {
   validateTranscript,
 } from './transcribe.js'
 import { listJobs, removeJob } from './jobs.js'
+import { scan as scanSetup, install as installSetup, cancelSetup, setupJob } from './setup.js'
 import { getSection, updateSection } from './config.js'
 import { diarizeInfo } from './diarize.js'
 import { getTranslationState, publicConfig, saveConfig, startTranslation } from './translate.js'
@@ -248,8 +249,20 @@ async function route(ctx, req, res) {
   const routePath = url.pathname.replace(/^\/podwave\/?/, '')
   const method = req.method || 'GET'
 
+  if (routePath === 'api/setup') {
+    return json(res, 200, { ...scanSetup(), job: setupJob() })
+  }
+  if (routePath === 'api/setup/install' && method === 'POST') {
+    const body = await readJson(req)
+    if (setupJob()?.running) return json(res, 409, { error: '安装已在进行中' })
+    installSetup({ source: body?.source || 'auto' }).catch(() => {})
+    return json(res, 200, { started: true })
+  }
+  if (routePath === 'api/setup/cancel' && method === 'POST') {
+    return json(res, 200, { cancelled: cancelSetup() })
+  }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.9.1', transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.10.0', transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
