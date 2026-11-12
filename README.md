@@ -62,7 +62,7 @@ uv venv ~/.podwave/runtime/.venv --python 3.12
 uv pip install --python ~/.podwave/runtime/.venv/bin/python "mlx-qwen3-asr==0.4.4" mlx-lm sherpa-onnx
 
 hf download mlx-community/Qwen3-ASR-1.7B-8bit --local-dir ~/.podwave/models/qwen3-asr-1.7b-8bit
-hf download mlx-community/Qwen3-8B-4bit --local-dir ~/.podwave/models/qwen3-8b-4bit
+hf download mlx-community/Hy-MT2-1.8B-4bit --local-dir ~/.podwave/models/hy-mt2-1.8b-4bit
 
 # 说话人分离模型（约 34MB）
 mkdir -p ~/.podwave/models/diarization && cd ~/.podwave/models/diarization
@@ -71,7 +71,7 @@ tar xjf sherpa-onnx-pyannote-segmentation-3-0.tar.bz2
 curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx
 ```
 
-- 转写模型约 2.3 GB，翻译模型约 4.3 GB，说话人模型约 34 MB；只做播放可以都不装。
+- 转写模型约 2.3 GB，翻译模型约 1 GB（Hy-MT2-1.8B，974 MB），说话人模型约 34 MB；只做播放可以都不装。
 - 翻译可以不用本地模型：字幕面板 →「设置」→ 选 DeepSeek API，填 API key（默认 `api.deepseek.com` / `deepseek-chat`）。
 - 字幕面板 →「设置」里切换引擎；目标语言在字幕面板的「对照」下拉里选。
 
@@ -135,12 +135,12 @@ dsh plugin --profile podwave-test add file:$PWD
 - 还没有 RSS / 在线流订阅，只播放本地文件。
 - 说话人分离是转写后整段批处理，不是实时；暂不支持手动改名或合并说话人。
 - 转写是「事后整段」模式，不是真流式；播放中可以先听，转写完成后字幕会出现在面板里。
-- 本地翻译是 8B 4bit 模型，长句质量不如 API；重要内容建议用 DeepSeek API 翻。
+- 本地翻译是 Hy-MT2-1.8B 4bit（约 1 GB），轻量、快；长句质量仍不如 API，重要内容建议用 DeepSeek API 翻。
 
 ## 路线图
 
 - [x] 转写：本地 MLX Qwen3-ASR（中英混合），词级时间戳
-- [x] 双语字幕：本地 Qwen3-8B / DeepSeek API
+- [x] 双语字幕：本地 Hy-MT2-1.8B / DeepSeek API
 - [x] 导出 SRT / Markdown
 - [x] 系统文件夹选择器与音频拖拽导入
 - [ ] 说话人分离与说话人标签
@@ -157,7 +157,7 @@ MIT
 npm install
 npm test          # node:test 单元测试
 npm run build     # 构建 dist/client.js
-node scripts/release.mjs 0.9.0   # 改版本号 → 测试 → 构建 → 打包 → commit/tag/push/Release
+node scripts/release.mjs 0.9.1   # 改版本号 → 测试 → 构建 → 打包 → commit/tag/push/Release
 ```
 
 CI（GitHub Actions）在每次 push / PR 跑 `npm test` 与 `npm run build`。

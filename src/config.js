@@ -16,7 +16,7 @@ export const CONFIG_DEFAULTS = {
     apiModel: 'deepseek-chat',
     apiKey: '',
   },
-  models: { asrModel: 'qwen3-asr-1.7b-8bit', translateModel: 'qwen3-8b-4bit' },
+  models: { asrModel: 'qwen3-asr-1.7b-8bit', translateModel: 'hy-mt2-1.8b-4bit' },
   transcribe: { hotwords: [], chunkMinutes: 1, diarize: true },
   import: { mode: 'copy' },
 }
