@@ -1,3 +1,4 @@
+const API = '/podwave/api'
 import React, { useEffect, useRef } from 'react'
 import Icon from './Icon.jsx'
 import { fmtTime } from '../lib/format.js'
@@ -44,6 +45,17 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
         </div>
       </header>
       <div className="transcript-body" ref={bodyRef}>
+        {transcript && running ? (
+          <div className="tr-strip">
+            <span>
+              {status === 'queued' ? '排队中…' : stage === 'preparing' ? '正在准备音频…' : stage === 'diarizing' ? '正在分离说话人…' : '正在转写…'}
+              {progress?.percent != null ? ` ${progress.percent}%` : ''}
+              {chunks?.total ? ` · 第 ${Math.min((chunks.done || 0) + 1, chunks.total)}/${chunks.total} 块` : ''}
+              {` · 已出 ${transcript.lines.length} 行`}
+            </span>
+            {onCancel ? <button className="seg-tool" onClick={onCancel}>取消</button> : null}
+          </div>
+        ) : null}
         {transcript && issues?.length ? (
           <div className="tr-issues">
             {issues.slice(0, 5).map((issue) => <div key={issue}>· {issue}</div>)}

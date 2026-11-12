@@ -351,12 +351,95 @@ function wordsOf(raw) {
     : []
 }
 
+
+function buildBatchArgs(files, outDir) {
+  const { hotwords } = transcribeConfig()
+  const args = [
+    ...files,
+    '--model', currentAsrModel().dir,
+    '--output-dir', outDir,
+    '--output-format', 'json',
+    '--timestamps',
+    '--no-progress',
+    '--quiet',
+  ]
+  if (hotwords.length) args.push('--context', hotwords.join(' '))
+  return args
+}
+
+function countResults(resultsDir, plan) {
+  let count = 0
+  let seconds = 0
+  let partial = 0
+  for (const part of plan.parts) {
+    if (!hasResult(resultsDir, part.index)) {
+      if (part.index === -1) partial += 1
+      continue
+    }
+    count += 1
+    seconds += part.duration
+  }
+  return { count, seconds }
+}
+
+function mergedFromResults(plan, resultsDir) {
+  const lines = []
+  let language = ''
+  const texts = []
+  for (const part of [...plan.parts].sort((a, b) => a.index - b.index)) {
+    if (!hasResult(resultsDir, part.index)) continue
+    let data
+    try {
+      data = JSON.parse(fs.readFileSync(resultPath(resultsDir, part.index), 'utf8'))
+    } catch {
+      continue
+    }
+    if (!language && data.language) language = data.language
+    if (data.text) texts.push(data.text)
+    for (const line of data.lines || []) {
+      const text = String(line.text || '').trim()
+      if (!text) continue
+      lines.push({
+        id: lines.length + 1,
+        start: round2(Number(line.start) + part.start),
+        end: round2(Number(line.end) + part.start),
+        text,
+        speaker: null,
+        translations: {},
+      })
+    }
+  }
+  return { lines, language, texts }
+}
+
+function buildPreview(episode, plan, merged) {
+  return {
+    schemaVersion: 2,
+    id: episode.id,
+    title: episode.title || '',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    model: currentAsrModel().name,
+    language: merged.language,
+    duration: plan.duration,
+    text: merged.texts.join(' '),
+    source: { path: episode.file },
+    lines: merged.lines,
+    providers: {},
+    speakers: [],
+    partial: true,
+  }
+}
+
 async function runJob(item) {
   const { episode, force } = item
   const key = jobId(episode.id)
   const work = path.join(WORK_DIR, episode.id)
+  const target = transcriptPath(episode.id)
+  const backup = `${target}.previous`
   let plan = null
-  let cancelled = false
+  let backedUp = false
+  let partialWritten = false
   try {
     upsertJob({
       key,
@@ -375,109 +458,118 @@ async function runJob(item) {
     await mkdir(work, { recursive: true })
     plan = await ensurePlan(episode, work)
     const resultsDir = path.join(work, 'results')
+    const cliDir = path.join(work, 'cli')
     await mkdir(resultsDir, { recursive: true })
+    await mkdir(cliDir, { recursive: true })
 
-    let doneParts = plan.parts.filter((part) => hasResult(resultsDir, part.index)).length
-    let doneSeconds = plan.parts.filter((part) => hasResult(resultsDir, part.index)).reduce((sum, part) => sum + part.duration, 0)
-    upsertJob({
-      key,
-      stage: 'transcribing',
-      chunks: { total: plan.parts.length, done: doneParts, current: null },
-      progress: progressOf(plan, doneSeconds, 0),
-    })
+    // 重转时先备份旧字幕，失败/取消可以还原，不让半成品覆盖已有结果。
+    if (fs.existsSync(target)) {
+      await copyFile(target, backup).catch(() => {})
+      backedUp = fs.existsSync(backup)
+    }
 
-    for (const part of plan.parts) {
-      if (cancelRequested.has(key)) {
-        cancelled = true
-        break
+    // CLI 一次处理所有缺失的块：只加载一次模型；每完成一块就落一个 JSON。
+    const ingest = async () => {
+      let fresh = 0
+      for (const part of plan.parts) {
+        if (hasResult(resultsDir, part.index)) continue
+        const base = path.basename(part.file).replace(/\.[^.]+$/, '')
+        let raw
+        try {
+          raw = JSON.parse(await readFile(path.join(cliDir, `${base}.json`), 'utf8'))
+        } catch {
+          continue
+        }
+        const lines = buildSegments(raw, wordsOf(raw))
+        await writeFile(
+          resultPath(resultsDir, part.index),
+          JSON.stringify({ index: part.index, start: part.start, lines, language: raw.language || '', text: raw.text || '' }),
+          'utf8',
+        )
+        fresh += 1
       }
-      if (hasResult(resultsDir, part.index)) continue
-      const partWork = path.join(work, 'cli', String(part.index))
-      await rm(partWork, { recursive: true, force: true })
-      await mkdir(partWork, { recursive: true })
-      upsertJob({ key, chunks: { total: plan.parts.length, done: doneParts, current: part.index + 1 } })
+      return fresh
+    }
 
-      const child = spawn(CLI, buildArgs(part.file, partWork), {
+    await ingest()
+    const missing = plan.parts.filter((part) => !hasResult(resultsDir, part.index))
+    let child = null
+    let stderrTail = ''
+    let lastIngestAt = Date.now()
+    if (missing.length) {
+      child = spawn(CLI, buildBatchArgs(missing.map((part) => part.file), cliDir), {
         env: { ...process.env, HF_HUB_OFFLINE: '1', TOKENIZERS_PARALLELISM: 'false' },
         stdio: ['ignore', 'ignore', 'pipe'],
       })
       activeChild = child
-      let stderrTail = ''
       child.stderr.on('data', (chunk) => {
         stderrTail = (stderrTail + chunk.toString()).slice(-4000)
       })
-      const startedAt = Date.now()
-      const timer = setInterval(() => {
-        const elapsed = (Date.now() - startedAt) / 1000
-        const estimate = Math.min(part.duration * 0.96, Math.max(0, elapsed - 3) * SPEED)
-        upsertJob({ key, stage: 'transcribing', progress: progressOf(plan, doneSeconds, estimate) })
-      }, 1000)
-      let code = -1
-      try {
-        code = await waitChild(child)
-      } finally {
-        clearInterval(timer)
-        activeChild = null
+    }
+
+    let lastLineCount = 0
+    const tick = async () => {
+      const fresh = await ingest()
+      const counts = countResults(resultsDir, plan)
+      if (fresh > 0) {
+        const merged = mergedFromResults(plan, resultsDir)
+        if (merged.lines.length) {
+          await saveTranscript(buildPreview(episode, plan, merged)).catch(() => {})
+          partialWritten = true
+          lastLineCount = merged.lines.length
+        }
+        lastIngestAt = Date.now()
       }
-      if (cancelRequested.has(key)) {
-        cancelled = true
-        break
-      }
-      if (code !== 0) {
-        const detail = stderrTail.trim().split('\n').slice(-6).join('\n')
-        throw new Error(`转写进程退出码 ${code}${detail ? `\n${detail}` : ''}`)
-      }
-      const raw = await readPartOutput(partWork)
-      const lines = buildSegments(raw, wordsOf(raw))
-      await writeFile(
-        resultPath(resultsDir, part.index),
-        JSON.stringify({ index: part.index, start: part.start, lines, language: raw.language || '', text: raw.text || '' }),
-        'utf8',
-      )
-      await rm(partWork, { recursive: true, force: true })
-      doneParts += 1
-      doneSeconds += part.duration
+      const current = plan.parts.find((part) => !hasResult(resultsDir, part.index)) || null
+      const eta = current ? Math.min(current.duration * 0.96, Math.max(0, (Date.now() - lastIngestAt) / 1000) * SPEED) : 0
       upsertJob({
         key,
         stage: 'transcribing',
-        chunks: { total: plan.parts.length, done: doneParts, current: null },
-        progress: progressOf(plan, doneSeconds, 0),
+        chunks: { total: plan.parts.length, done: counts.count, current: current ? current.index + 1 : null },
+        progress: progressOf(plan, counts.seconds, eta),
+        lineCount: lastLineCount,
       })
-    }
-
-    if (cancelled || cancelRequested.has(key)) {
-      upsertJob({ key, status: 'cancelled', stage: 'cancelled', finishedAt: Date.now(), error: '用户取消了转写' })
-      return
-    }
-
-    upsertJob({ key, stage: 'merging' })
-    const mergedLines = []
-    let language = ''
-    const texts = []
-    for (const part of plan.parts) {
-      const partData = JSON.parse(await readFile(resultPath(resultsDir, part.index), 'utf8'))
-      if (!language && partData.language) language = partData.language
-      if (partData.text) texts.push(partData.text)
-      for (const line of partData.lines) {
-        const text = String(line.text || '').trim()
-        if (!text) continue
-        mergedLines.push({
-          id: mergedLines.length + 1,
-          start: round2(line.start + part.start),
-          end: round2(line.end + part.start),
-          text,
-          speaker: null,
-          translations: {},
-        })
+      if (cancelRequested.has(key) && child) {
+        try {
+          child.kill('SIGTERM')
+        } catch {
+          /* ignore */
+        }
       }
     }
 
+    const ticker = setInterval(() => {
+      tick().catch(() => {})
+    }, 1000)
+    let code = 0
+    if (child) code = await waitChild(child)
+    clearInterval(ticker)
+    activeChild = null
+    await ingest()
+    const counts = countResults(resultsDir, plan)
+
+    if (cancelRequested.has(key)) {
+      cancelRequested.delete(key)
+      if (backedUp) await copyFile(backup, target).catch(() => {})
+      else if (partialWritten) await rm(target, { force: true }).catch(() => {})
+      upsertJob({ key, status: 'cancelled', stage: 'cancelled', finishedAt: Date.now(), error: '用户取消了转写' })
+      return
+    }
+    if (code !== 0) {
+      const detail = stderrTail.trim().split('\n').slice(-6).join('\n')
+      throw new Error(`转写进程退出码 ${code}${detail ? `\n${detail}` : ''}`)
+    }
+    if (counts.count < plan.parts.length) throw new Error('部分音频块没有转写结果')
+
+    upsertJob({ key, stage: 'merging' })
+    const merged = mergedFromResults(plan, resultsDir)
     let speakers = []
     if (transcribeConfig().diarize && diarizeInfo().modelsReady) {
-      upsertJob({ key, stage: 'diarizing' })
+      const prevPercent = getJob(key)?.progress?.percent || 0
+      upsertJob({ key, stage: 'diarizing', progress: { done: 0, total: 0, percent: Math.max(prevPercent, 96), unit: 'seconds' } })
       try {
         const result = await runDiarization(episode.file)
-        speakers = assignSpeakers(mergedLines, result.segments || [])
+        speakers = assignSpeakers(merged.lines, result.segments || [])
       } catch {
         speakers = []
       }
@@ -498,22 +590,23 @@ async function runJob(item) {
       createdAt: Date.now(),
       updatedAt: Date.now(),
       model: currentAsrModel().name,
-      language,
-      duration: plan.duration || episode.duration || mergedLines[mergedLines.length - 1]?.end || 0,
-      text: texts.join(' '),
+      language: merged.language,
+      duration: plan.duration || episode.duration || merged.lines[merged.lines.length - 1]?.end || 0,
+      text: merged.texts.join(' '),
       source,
-      lines: mergedLines,
+      lines: merged.lines,
       providers: {},
       speakers,
     }
     await saveTranscript(transcript)
+    await rm(backup, { force: true }).catch(() => {})
     upsertJob({
       key,
       status: 'done',
       stage: 'done',
       finishedAt: Date.now(),
-      lineCount: mergedLines.length,
-      language,
+      lineCount: merged.lines.length,
+      language: merged.language,
       speakers: speakers.length,
       error: null,
       progress: { ...progressOf(plan, plan.duration, 0), percent: 100, done: plan.duration, total: plan.duration },
@@ -521,7 +614,10 @@ async function runJob(item) {
     })
     await rm(work, { recursive: true, force: true })
   } catch (error) {
+    if (backedUp) await copyFile(backup, target).catch(() => {})
+    else if (partialWritten) await rm(target, { force: true }).catch(() => {})
     if (cancelRequested.has(key)) {
+      cancelRequested.delete(key)
       upsertJob({ key, status: 'cancelled', stage: 'cancelled', finishedAt: Date.now(), error: '用户取消了转写' })
     } else {
       upsertJob({
@@ -713,14 +809,14 @@ export async function startTranscription(episode, { force = false, resume = fals
   if (!info.installed) throw Object.assign(new Error('转写运行环境未安装（~/.podwave/runtime）'), { status: 503 })
   if (!info.modelReady) throw Object.assign(new Error('转写模型未下载（~/.podwave/models）'), { status: 503 })
 
-  const existing = await readTranscript(episode.id)
-  if (existing && !force && !resume) return { status: 'done', lines: existing.lines.length }
-
   const key = jobId(episode.id)
   const currentJob = getJob(key)
   if (currentJob && (currentJob.status === 'queued' || currentJob.status === 'running')) {
     return { status: currentJob.status }
   }
+
+  const existing = await readTranscript(episode.id)
+  if (existing && !force && !resume) return { status: 'done', lines: existing.lines.length }
 
   const resumeWork = Boolean(resume) && fs.existsSync(path.join(WORK_DIR, episode.id, 'results'))
   upsertJob({
@@ -806,6 +902,7 @@ export async function getTranscriptionState(id) {
       chunks: job.chunks || null,
       queued: position >= 0 ? position + 1 : 0,
       elapsedMs,
+      transcript: transcript && transcript.partial ? transcript : null,
       episodeTitle: job.episodeTitle || '',
     }
   }

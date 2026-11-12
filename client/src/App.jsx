@@ -325,6 +325,7 @@ export default function App() {
           setTranscript(state.transcript)
         } else if (state.status === 'queued' || state.status === 'running') {
           setTxElapsed(state.elapsedMs || 0)
+          if (state.transcript) setTranscript(state.transcript)
         } else if (state.status === 'error') {
           setTxError(state.error || '转写失败')
         }
@@ -351,7 +352,9 @@ export default function App() {
         setTxStatus(state.status)
         setTxInfo(state.status === 'queued' || state.status === 'running' ? state : null)
         setTxElapsed(state.elapsedMs || 0)
-        if (state.status === 'done' && state.transcript) {
+        if ((state.status === 'queued' || state.status === 'running') && state.transcript) {
+          setTranscript(state.transcript)
+        } else if (state.status === 'done' && state.transcript) {
           setTranscript(state.transcript)
           setSubsOpen(true)
           flash('转写完成')
@@ -908,7 +911,7 @@ export default function App() {
         <div className="brand">
           <span className="brand-mark"><Icon name="wave" size={20} /></span>
           <span className="brand-name">Podwave</span>
-          <span className="brand-version">0.8</span>
+          <span className="brand-version">0.9</span>
           <button className="icon-btn brand-collapse" title="收起侧边栏" onClick={toggleNav}>
             <Icon name="chevron-left" size={16} />
           </button>

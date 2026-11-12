@@ -1164,3 +1164,20 @@ select:focus-visible {
 .row-star:hover { color: #c8a45c; }
 .row-star.is-on { color: #e6a54a; }
 .btn.danger { color: #f08a8a; border-color: rgba(240, 138, 138, 0.35); }
+
+.tr-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 2px 0 8px;
+  padding: 7px 10px;
+  border: 1px solid #23232b;
+  border-radius: 8px;
+  background: #15151b;
+  color: #a9a9b4;
+  font-size: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}

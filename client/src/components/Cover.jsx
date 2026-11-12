@@ -1,3 +1,4 @@
+const API = '/podwave/api'
 import React from 'react'
 import { initialOf } from '../lib/format.js'
 
