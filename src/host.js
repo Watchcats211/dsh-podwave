@@ -41,7 +41,7 @@ import { listModels, loadModelConfig, saveModelConfig } from './models.js'
 export const name = 'dsh-podwave'
 
 const UI_CONFIG = path.join(DATA_DIR, 'ui.json')
-const UI_DEFAULTS = { showSidebarPanel: true }
+const UI_DEFAULTS = { showSidebarPanel: true, sidebarCollapsed: false }
 
 function loadUiSettings() {
   try {
@@ -164,7 +164,7 @@ async function route(ctx, req, res) {
   const method = req.method || 'GET'
 
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.2.5', transcribe: runtimeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.2.8', transcribe: runtimeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -319,6 +319,7 @@ async function route(ctx, req, res) {
       const body = await readJson(req)
       const patch = {}
       if (typeof body?.showSidebarPanel === 'boolean') patch.showSidebarPanel = body.showSidebarPanel
+      if (typeof body?.sidebarCollapsed === 'boolean') patch.sidebarCollapsed = body.sidebarCollapsed
       if (!Object.keys(patch).length) return json(res, 400, { error: '没有可保存的设置' })
       return json(res, 200, saveUiSettings(patch))
     }

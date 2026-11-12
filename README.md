@@ -15,6 +15,7 @@ DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘�
 - **双语字幕**：点「字幕」打开面板，选「中文对照 / English」，只翻译另一种语言的行；点字幕行可以跳到对应时间。
 - **导出**：SRT 或 Markdown。
 - **快捷键**：`空格` 播放/暂停，`← / →` ±15 秒，`↑ / ↓` 上/下一集，`/` 搜索。
+- **收起侧栏**：点侧栏顶部标题右边的 `‹` 收起，左上角 `›` 展开；状态记在 `~/.podwave/ui.json`。面板被 DSH 挤窄时会自动收起侧栏，详情页改为上下布局。
 - **设置页**：DSH 设置 → 播客，可以看已完成的转写历史、配置 DeepSeek API、选择转写与翻译模型、控制侧边栏入口是否显示。
 
 ## 安装
@@ -24,7 +25,7 @@ DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘�
 从 [Releases](https://github.com/Watchcats211/dsh-podwave/releases) 下载最新的 `dsh-podwave-*.tgz`，然后：
 
 ```bash
-dsh plugin --profile desktop add file:/path/to/dsh-podwave-0.2.7.tgz
+dsh plugin --profile desktop add file:/path/to/dsh-podwave-0.2.8.tgz
 ```
 
 也可以直接从源码目录装：
