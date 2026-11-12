@@ -150,7 +150,9 @@ export function recommendEngine(platform) {
     }
   }
   const mem = platform.memoryGB
-  const translate = mem >= 24 ? 'hy-mt2-1.8b-q4km' : mem >= 12 ? 'hy-mt2-1.8b-2bit' : 'hy-mt2-1.8b-1.25bit'
+  // 1.25bit 是腾讯自定义量化，主线 llama.cpp 无法加载（tensor offset 错误），
+  // 因此 Windows/Linux 最低只用 2bit（572MB）。
+  const translate = mem >= 24 ? 'hy-mt2-1.8b-q4km' : 'hy-mt2-1.8b-2bit'
   return {
     id: 'onnx-llama',
     label: `${platform.osLabel} · ONNX + llama.cpp`,

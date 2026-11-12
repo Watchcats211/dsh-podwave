@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.2 — 2026-11-12
+
+- **修正模型推荐**：Hy-MT2 的 1.25bit 是腾讯自定义量化，主线 llama.cpp 无法加载；Windows / Linux 最低改为推荐 2bit（572 MB），24 GB 以上内存推荐 Q4_K_M（1.1 GB）。macOS 仍推荐 MLX 4bit。
+- 新增回归测试：低内存非 MLX 机器不会选中 1.25bit。
+
 ## 0.10.1 — 2026-11-12
 
 Windows 安装链路补齐：ffmpeg、选择器与解压回退。
