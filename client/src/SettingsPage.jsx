@@ -45,6 +45,7 @@ export default function SettingsPage() {
   const [uiSettings, setUiSettings] = useState({ showSidebarPanel: true })
   const [hotwords, setHotwords] = useState('')
   const [chunkMinutes, setChunkMinutes] = useState(15)
+  const [diarize, setDiarize] = useState(true)
 
   const [provider, setProvider] = useState('api')
   const [apiBase, setApiBase] = useState('https://api.deepseek.com')
@@ -70,6 +71,7 @@ export default function SettingsPage() {
       setUiSettings({ showSidebarPanel: uiData?.showSidebarPanel !== false })
       setHotwords((txData.hotwords || []).join(' '))
       setChunkMinutes(txData.chunkMinutes || 15)
+      setDiarize(txData.diarize !== false)
       setHistory(historyData.items || [])
       setModels(modelsData.models || [])
       setModelConfig(modelsData.config || { asrModel: '', translateModel: '' })
@@ -164,9 +166,11 @@ export default function SettingsPage() {
       const data = await sendJSON(`${API}/transcribe/settings`, 'PUT', {
         hotwords: words,
         chunkMinutes: Math.min(60, Math.max(1, Number(chunkMinutes) || 15)),
+        diarize,
       })
       setHotwords((data.hotwords || []).join(' '))
       setChunkMinutes(data.chunkMinutes || 15)
+      setDiarize(data.diarize !== false)
       flash('转写设置已保存')
     } catch (err) {
       setError(err.message)
@@ -236,6 +240,10 @@ export default function SettingsPage() {
               value={chunkMinutes}
               onChange={(event) => setChunkMinutes(event.target.value)}
             />
+          </label>
+          <label className="check-row">
+            <input type="checkbox" checked={diarize} onChange={(event) => setDiarize(event.target.checked)} />
+            <span>自动识别说话人（本地声纹，分离失败不影响转写）</span>
           </label>
         </div>
         <div className="settings-actions">

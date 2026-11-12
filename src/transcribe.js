@@ -9,6 +9,7 @@ import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:
 import { DATA_DIR } from './state.js'
 import { loadModelConfig, modelDir } from './models.js'
 import { getSection } from './config.js'
+import { assignSpeakers, diarizeInfo, runDiarization } from './diarize.js'
 import { flushJobs, getJob, jobKey, removeJob, upsertJob } from './jobs.js'
 
 export const TRANSCRIPTS_DIR = path.join(DATA_DIR, 'transcripts')
@@ -45,7 +46,7 @@ export function transcribeConfig() {
   const hotwords = Array.isArray(section.hotwords) ? section.hotwords.map((word) => String(word || '').trim()).filter(Boolean) : []
   const raw = Number(section.chunkMinutes)
   const chunkMinutes = Math.max(1, Math.min(60, Number.isFinite(raw) && raw > 0 ? raw : 15))
-  return { hotwords, chunkMinutes }
+  return { hotwords, chunkMinutes, diarize: section.diarize !== false }
 }
 
 export function runtimeInfo() {
@@ -59,6 +60,8 @@ export function runtimeInfo() {
     cli: CLI,
     hotwords: config.hotwords,
     chunkMinutes: config.chunkMinutes,
+    diarize: config.diarize,
+    diarization: diarizeInfo(),
   }
 }
 
@@ -469,6 +472,17 @@ async function runJob(item) {
       }
     }
 
+    let speakers = []
+    if (transcribeConfig().diarize && diarizeInfo().modelsReady) {
+      upsertJob({ key, stage: 'diarizing' })
+      try {
+        const result = await runDiarization(episode.file)
+        speakers = assignSpeakers(mergedLines, result.segments || [])
+      } catch {
+        speakers = []
+      }
+    }
+
     let source = null
     try {
       const info = fs.statSync(episode.file)
@@ -490,7 +504,7 @@ async function runJob(item) {
       source,
       lines: mergedLines,
       providers: {},
-      speakers: [],
+      speakers,
     }
     await saveTranscript(transcript)
     upsertJob({
@@ -500,6 +514,7 @@ async function runJob(item) {
       finishedAt: Date.now(),
       lineCount: mergedLines.length,
       language,
+      speakers: speakers.length,
       error: null,
       progress: { ...progressOf(plan, plan.duration, 0), percent: 100, done: plan.duration, total: plan.duration },
       chunks: { total: plan.parts.length, done: plan.parts.length, current: null },
@@ -940,6 +955,37 @@ export function toMarkdown(transcript) {
     lines.push(`**${minutes}:${String(seconds).padStart(2, '0')}** ${line.text}`)
   }
   return `${lines.join('\n')}\n`
+}
+
+export async function diarizeTranscript(episode) {
+  const transcript = await readTranscript(episode.id)
+  if (!transcript) throw new Error('还没有转写，先转写再识别说话人')
+  const info = diarizeInfo()
+  if (!info.installed || !info.modelsReady) throw new Error('说话人分离模型还没准备好')
+  const key = jobKey({ type: 'diarize', episodeId: episode.id })
+  upsertJob({
+    key,
+    type: 'diarize',
+    episodeId: episode.id,
+    episodeTitle: episode.title || '',
+    status: 'running',
+    stage: 'diarizing',
+    startedAt: Date.now(),
+    finishedAt: null,
+    error: null,
+  })
+  try {
+    const result = await runDiarization(episode.file)
+    const speakers = assignSpeakers(transcript.lines, result.segments || [])
+    transcript.speakers = speakers
+    transcript.updatedAt = Date.now()
+    await saveTranscript(transcript)
+    upsertJob({ key, status: 'done', stage: 'done', finishedAt: Date.now(), speakers: speakers.length, error: null })
+    return transcript
+  } catch (error) {
+    upsertJob({ key, status: 'error', stage: 'error', finishedAt: Date.now(), error: error.message || String(error) })
+    throw error
+  }
 }
 
 export function stopAll() {

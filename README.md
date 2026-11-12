@@ -14,6 +14,7 @@ DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘�
 - **转写**：本地 Qwen3-ASR-1.7B-8bit，带词级时间戳；按停顿与标点切成字幕行。
 - **任务面板与批量**：顶部「任务」查看队列、进度，可取消 / 重试；「选择」多选批量转写。
 - **长播客分块**：按 15 分钟切块转写，取消或失败后从已完成块续跑；热词可在设置里维护。
+- **说话人分离**：转写后自动分辨说话人（本地声纹，离线），字幕行带彩色「说话人 N」标签；字幕头部显示人数。
 - **双语字幕**：点「字幕」打开面板，选「中文对照 / English」，只翻译另一种语言的行；点字幕行可以跳到对应时间。
 - **字幕编辑**：行悬停出现 ✎，就地改文本；按光标「拆分」、行尾 ⇣ 合并；右上「撤销」最多回退 20 步；「校验」在导出前检查空行、无效时间戳与时间重叠。
 - **导出**：SRT 或 Markdown。
@@ -28,7 +29,7 @@ DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘�
 从 [Releases](https://github.com/Watchcats211/dsh-podwave/releases) 下载最新的 `dsh-podwave-*.tgz`，然后：
 
 ```bash
-dsh plugin --profile desktop add file:/path/to/dsh-podwave-0.2.9.tgz
+dsh plugin --profile desktop add file:/path/to/dsh-podwave-0.6.0.tgz
 ```
 
 也可以直接从源码目录装：
@@ -45,13 +46,19 @@ dsh plugin --profile desktop add file:/path/to/dsh-podwave
 
 ```bash
 uv venv ~/.podwave/runtime/.venv --python 3.12
-~/.podwave/runtime/.venv/bin/python -m pip install "mlx-qwen3-asr==0.4.4" mlx-lm
+uv pip install --python ~/.podwave/runtime/.venv/bin/python "mlx-qwen3-asr==0.4.4" mlx-lm sherpa-onnx
 
 hf download mlx-community/Qwen3-ASR-1.7B-8bit --local-dir ~/.podwave/models/qwen3-asr-1.7b-8bit
 hf download mlx-community/Qwen3-8B-4bit --local-dir ~/.podwave/models/qwen3-8b-4bit
+
+# 说话人分离模型（约 34MB）
+mkdir -p ~/.podwave/models/diarization && cd ~/.podwave/models/diarization
+curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2
+tar xjf sherpa-onnx-pyannote-segmentation-3-0.tar.bz2
+curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx
 ```
 
-- 转写模型约 2.3 GB，翻译模型约 4.3 GB；只做播放可以都不装。
+- 转写模型约 2.3 GB，翻译模型约 4.3 GB，说话人模型约 34 MB；只做播放可以都不装。
 - 翻译可以不用本地模型：字幕面板 →「设置」→ 选 DeepSeek API，填 API key（默认 `api.deepseek.com` / `deepseek-chat`）。
 - 字幕面板 →「设置」里切换引擎；目标语言在字幕面板的「对照」下拉里选。
 
@@ -59,7 +66,8 @@ hf download mlx-community/Qwen3-8B-4bit --local-dir ~/.podwave/models/qwen3-8b-4
 
 DSH 设置 →「播客」：
 
-- **历史记录**：所有已完成转写的单集（时长、语言、行数、已翻语言、完成时间）。
+- **历史记录**：所有已完成转写的单集（时长、语言、行数、位说话人、已翻语言、完成时间）。
+- **转写**：热词、分块时长（1–60 分钟）、是否自动识别说话人。
 - **API 与翻译引擎**：DeepSeek API 地址 / 模型 / API Key，或切到本地模型。
 - **模型**：在 `~/.podwave/models/` 下已就绪的模型里选转写模型（ASR）与翻译模型。
 - **界面**：开关「在主界面侧边栏显示播客入口」，保存后立即生效（不需要刷新）。
@@ -82,10 +90,12 @@ src/state.js               状态读写（~/.podwave/state.json，原子写）
 src/library.js             媒体库扫描（music-metadata）
 src/transcribe.js          MLX Qwen3-ASR 调用、队列、字幕分行与导出
 src/translate.js           翻译任务（DeepSeek API / 本地 MLX Qwen3）
+src/diarize.js             说话人分离（sherpa-onnx，本地声纹）
 src/models.js              模型目录扫描与选择（config.models）
 src/config.js              统一配置（~/.podwave/config.json，迁移旧 ui/translate/models.json）
 src/jobs.js                任务记录（~/.podwave/jobs.json，重启标 interrupted）
 scripts/translate_local.py 本地翻译脚本（mlx_lm）
+scripts/diarize.py         说话人分离脚本（sherpa-onnx）
 client/src/                React 面板（App.jsx、SettingsPage.jsx、plugin.jsx、styles.css）
 build.mjs                  PostCSS 作用域前缀 + esbuild 打包为 DSH client bundle
 cordis.patch.yml           插件加载声明
@@ -109,7 +119,7 @@ dsh plugin --profile podwave-test add file:$PWD
 ## 限制
 
 - 还没有 RSS / 在线流订阅，只播放本地文件。
-- 说话人分离暂未接入（`mlx-qwen3-asr` 的 `--diarize` 依赖 pyannote + HF token）；字幕目前不分说话人。
+- 说话人分离是转写后整段批处理，不是实时；暂不支持手动改名或合并说话人。
 - 转写是「事后整段」模式，不是真流式；播放中可以先听，转写完成后字幕会出现在面板里。
 - 本地翻译是 8B 4bit 模型，长句质量不如 API；重要内容建议用 DeepSeek API 翻。
 

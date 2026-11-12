@@ -38,6 +38,7 @@ import {
   toMarkdown,
   toSRT,
   cancelTranscription,
+  diarizeTranscript,
   editTranscriptLine,
   enqueueBatch,
   mergeTranscriptLine,
@@ -47,6 +48,7 @@ import {
 } from './transcribe.js'
 import { listJobs, removeJob } from './jobs.js'
 import { getSection, updateSection } from './config.js'
+import { diarizeInfo } from './diarize.js'
 import { getTranslationState, publicConfig, saveConfig, startTranslation } from './translate.js'
 import { listModels, loadModelConfig, saveModelConfig } from './models.js'
 
@@ -211,7 +213,7 @@ async function route(ctx, req, res) {
   const method = req.method || 'GET'
 
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.4.0', transcribe: runtimeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.6.0', transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -350,6 +352,18 @@ async function route(ctx, req, res) {
     return json(res, 200, result)
   }
 
+  const diarizeMatch = /^api\/episodes\/([^/]+)\/diarize$/.exec(routePath)
+  if (diarizeMatch && method === 'POST') {
+    const episode = getEpisode(decodeURIComponent(diarizeMatch[1]))
+    if (!episode) return json(res, 404, { error: '单集不存在' })
+    try {
+      const transcript = await diarizeTranscript(episode)
+      return json(res, 200, { transcript })
+    } catch (error) {
+      return json(res, 400, { error: error.message })
+    }
+  }
+
   const transcribeCancelMatch = /^api\/episodes\/([^/]+)\/transcribe\/cancel$/.exec(routePath)
   if (transcribeCancelMatch && method === 'POST') {
     const id = decodeURIComponent(transcribeCancelMatch[1])
@@ -373,6 +387,7 @@ async function route(ctx, req, res) {
       const patch = {}
       if (Array.isArray(body?.hotwords)) patch.hotwords = body.hotwords.map((word) => String(word || '').trim()).filter(Boolean).slice(0, 500)
       if (Number.isFinite(Number(body?.chunkMinutes))) patch.chunkMinutes = Math.max(1, Math.min(60, Number(body.chunkMinutes)))
+      if (typeof body?.diarize === 'boolean') patch.diarize = body.diarize
       if (!Object.keys(patch).length) return json(res, 400, { error: '没有可保存的设置' })
       return json(res, 200, { ...updateSection('transcribe', patch), runtime: runtimeInfo() })
     }
