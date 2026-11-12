@@ -1,9 +1,11 @@
 // dsh-podwave host 半片：在 DSH 的 webServer 上挂 /podwave/api/*。
 // 数据仍然放在 ~/.podwave，和独立版 Podwave 共用媒体库与进度。
 import fs from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { mkdir, stat } from 'node:fs/promises'
 import path from 'node:path'
-import { createReadStream } from 'node:fs'
+import { createReadStream, createWriteStream } from 'node:fs'
+import { execFile } from 'node:child_process'
+import { pipeline } from 'node:stream/promises'
 import { DATA_DIR } from './state.js'
 import {
   addFolderState,
@@ -40,6 +42,7 @@ import { listModels, loadModelConfig, saveModelConfig } from './models.js'
 
 export const name = 'dsh-podwave'
 
+const IMPORTS_DIR = path.join(DATA_DIR, 'imports')
 const UI_CONFIG = path.join(DATA_DIR, 'ui.json')
 const UI_DEFAULTS = { showSidebarPanel: true, sidebarCollapsed: false }
 
@@ -158,13 +161,44 @@ async function sendFile(req, res, file, cacheControl = 'private, max-age=3600') 
   return createReadStream(file).pipe(res)
 }
 
+function safeName(name) {
+  return String(name || 'audio')
+    .replace(/[\\/\u0000-\u001f]/g, '_')
+    .replace(/^\.+/, '_')
+    .slice(0, 180) || 'audio'
+}
+
+function pickFolderDialog() {
+  const preset = process.env.PODWAVE_PICK_FOLDER
+  if (preset) return Promise.resolve({ path: preset })
+  return new Promise((resolve) => {
+    const script = 'POSIX path of (choose folder with prompt "选择存放播客的文件夹")'
+    execFile('osascript', ['-e', script], { timeout: 180000 }, (error, stdout) => {
+      if (error) {
+        const message = String(error.stderr || error.message || '')
+        if (/canceled|cancelled|-128/i.test(message)) return resolve({ canceled: true })
+        return resolve({ error: `打开系统选择器失败：${message.trim().slice(0, 240)}` })
+      }
+      const picked = stdout.trim()
+      resolve(picked ? { path: picked } : { canceled: true })
+    })
+  })
+}
+
+async function addFolderByPath(rawPath) {
+  const folder = await addFolder(rawPath)
+  addFolderState(folder)
+  scanLibrary().catch((error) => console.error('[dsh-podwave] scan failed:', error.message))
+  return folder
+}
+
 async function route(ctx, req, res) {
   const url = new URL(req.url || '/', 'http://local')
   const routePath = url.pathname.replace(/^\/podwave\/?/, '')
   const method = req.method || 'GET'
 
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.2.8', transcribe: runtimeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.2.9', transcribe: runtimeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -182,6 +216,52 @@ async function route(ctx, req, res) {
   if (method === 'POST' && routePath === 'api/scan') {
     scanLibrary().catch((error) => console.error('[dsh-podwave] scan failed:', error.message))
     return json(res, 200, { scan: getScanState() })
+  }
+
+  if (routePath === 'api/pick-folder') {
+    if (method !== 'POST') return json(res, 405, { error: 'Method not allowed' })
+    const result = await pickFolderDialog()
+    if (result.error) return json(res, 500, { error: result.error })
+    return json(res, 200, result)
+  }
+
+  if (routePath === 'api/import/upload') {
+    if (method !== 'POST') return json(res, 405, { error: 'Method not allowed' })
+    const name = safeName(url.searchParams.get('name'))
+    const batch = safeName(url.searchParams.get('batch')) || `drop-${Date.now()}`
+    const dir = path.join(IMPORTS_DIR, batch)
+    await mkdir(dir, { recursive: true })
+    let file = path.join(dir, name)
+    let counter = 1
+    while (fs.existsSync(file)) file = path.join(dir, `${counter++}-${name}`)
+    await pipeline(req, createWriteStream(file))
+    const size = (await stat(file)).size
+    return json(res, 200, { folder: dir, file, size })
+  }
+
+  if (routePath === 'api/import/paths') {
+    if (method !== 'POST') return json(res, 405, { error: 'Method not allowed' })
+    const body = await readJson(req)
+    const inputs = Array.isArray(body?.paths) ? body.paths : []
+    let added = 0
+    for (const input of inputs) {
+      const target = expandHome(String(input || ''))
+      if (!target) continue
+      let info
+      try {
+        info = await stat(target)
+      } catch {
+        continue
+      }
+      const dir = info.isDirectory() ? target : path.dirname(target)
+      try {
+        await addFolderByPath(dir)
+        added++
+      } catch (error) {
+        if (error.status !== 409) throw error
+      }
+    }
+    return json(res, 200, { added, folders: getState().folders })
   }
 
   if (routePath === 'api/folders') {

@@ -25,7 +25,7 @@ DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘�
 从 [Releases](https://github.com/Watchcats211/dsh-podwave/releases) 下载最新的 `dsh-podwave-*.tgz`，然后：
 
 ```bash
-dsh plugin --profile desktop add file:/path/to/dsh-podwave-0.2.8.tgz
+dsh plugin --profile desktop add file:/path/to/dsh-podwave-0.2.9.tgz
 ```
 
 也可以直接从源码目录装：
@@ -63,13 +63,13 @@ DSH 设置 →「播客」：
 
 ## 用法
 
-- **添加文件夹**：面板左上 `+`。扫描在后台进行，状态显示在底部。
+- **添加文件夹**：点面板左上 `+` → 「选择文件夹…」调用系统目录选择器；也可以直接把音频文件拖进面板（会复制到 `~/.podwave/imports/`）。手动输入路径保留为备选。扫描在后台进行，状态显示在底部。
 - **播放 / 续播**：点单集；刷新或重开 DSH 后接着上次位置。
 - **转写**：点播放条右侧「转写」，完成后自动打开字幕面板。长播客需要时间（M4 上大约 5–10 倍实时速度）。
 - **翻译**：字幕面板右上「对照」选目标语言；已有译文会直接显示，没有就自动开始翻。
 - **删除文件夹**：侧栏文件夹右侧 `×`，会移除该目录下的单集记录。
 
-数据保存在 `~/.podwave/`：`state.json`、`covers/`、`transcripts/`、`translate.json`、`models/`、`runtime/`。
+数据保存在 `~/.podwave/`：`state.json`、`covers/`、`transcripts/`、`translate.json`、`models/`、`runtime/`、`imports/`（拖拽导入的音频副本）。
 
 ## 结构
 
@@ -109,6 +109,7 @@ dsh plugin --profile podwave-test add file:$PWD
 - [x] 转写：本地 MLX Qwen3-ASR（中英混合），词级时间戳
 - [x] 双语字幕：本地 Qwen3-8B / DeepSeek API
 - [x] 导出 SRT / Markdown
+- [x] 系统文件夹选择器与音频拖拽导入
 - [ ] 说话人分离与说话人标签
 - [ ] 跟播预转写（边播边出字幕）
 - [ ] RSS / 在线播客订阅
