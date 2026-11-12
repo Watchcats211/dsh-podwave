@@ -166,6 +166,18 @@ function Icon({ name, size = 18 }) {
           <rect x="20" y="11" width="2" height="2" rx="1" />
         </svg>
       )
+    case 'chevron-left':
+      return (
+        <svg {...common}>
+          <path d="m14.5 6-6 6 6 6" />
+        </svg>
+      )
+    case 'chevron-right':
+      return (
+        <svg {...common}>
+          <path d="m9.5 6 6 6-6 6" />
+        </svg>
+      )
     default:
       return null
   }
@@ -388,6 +400,7 @@ export default function App() {
   const [trTarget, setTrTarget] = useState('')
   const [trJob, setTrJob] = useState({ status: 'none' })
   const [trSettingsOpen, setTrSettingsOpen] = useState(false)
+  const [navCollapsed, setNavCollapsed] = useState(false)
 
   const audioRef = useRef(null)
   const currentRef = useRef(null)
@@ -401,6 +414,31 @@ export default function App() {
   useEffect(() => { settingsRef.current = settings }, [settings])
   useEffect(() => { currentRef.current = current }, [current])
   useEffect(() => { durationRef.current = duration }, [duration])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const cfg = await getJSON(`${API}/ui-settings`)
+        if (!cancelled && cfg) setNavCollapsed(Boolean(cfg.sidebarCollapsed))
+      } catch {
+        /* 旧版本没有这个接口时保持默认展开 */
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  const toggleNav = useCallback(() => {
+    setNavCollapsed((prev) => {
+      const next = !prev
+      fetch(`${API}/ui-settings`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sidebarCollapsed: next }),
+      }).catch(() => {})
+      return next
+    })
+  }, [])
 
   const flash = useCallback((message) => {
     setToast(message)
@@ -829,12 +867,20 @@ export default function App() {
   }
 
   return (
-    <div className="shell">
+    <div className={`shell ${navCollapsed ? 'nav-collapsed' : ''}`}>
+      {navCollapsed ? (
+        <button className="nav-reopen" title="展开侧边栏" onClick={toggleNav}>
+          <Icon name="chevron-right" size={16} />
+        </button>
+      ) : null}
       <aside className="sidebar">
         <div className="brand">
           <span className="brand-mark"><Icon name="wave" size={20} /></span>
           <span className="brand-name">Podwave</span>
           <span className="brand-version">0.2</span>
+          <button className="icon-btn brand-collapse" title="收起侧边栏" onClick={toggleNav}>
+            <Icon name="chevron-left" size={16} />
+          </button>
         </div>
 
         <nav className="nav">
