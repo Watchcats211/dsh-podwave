@@ -69,7 +69,7 @@ DSH 设置 →「播客」：
 - **翻译**：字幕面板右上「对照」选目标语言；已有译文会直接显示，没有就自动开始翻。
 - **删除文件夹**：侧栏文件夹右侧 `×`，会移除该目录下的单集记录。
 
-数据保存在 `~/.podwave/`：`state.json`、`covers/`、`transcripts/`、`translate.json`、`models/`、`runtime/`、`imports/`（拖拽导入的音频副本）。
+数据保存在 `~/.podwave/`：`state.json`（媒体库/进度）、`config.json`（统一配置）、`jobs.json`（任务记录）、`transcripts/`（字幕 v2）、`covers/`、`models/`、`runtime/`、`imports/`（拖拽导入的音频副本）。数据与配置的详细结构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 结构
 
@@ -79,12 +79,18 @@ src/state.js               状态读写（~/.podwave/state.json，原子写）
 src/library.js             媒体库扫描（music-metadata）
 src/transcribe.js          MLX Qwen3-ASR 调用、队列、字幕分行与导出
 src/translate.js           翻译任务（DeepSeek API / 本地 MLX Qwen3）
-src/models.js              模型目录扫描与选择（~/.podwave/models.json）
+src/models.js              模型目录扫描与选择（config.models）
+src/config.js              统一配置（~/.podwave/config.json，迁移旧 ui/translate/models.json）
+src/jobs.js                任务记录（~/.podwave/jobs.json，重启标 interrupted）
 scripts/translate_local.py 本地翻译脚本（mlx_lm）
 client/src/                React 面板（App.jsx、SettingsPage.jsx、plugin.jsx、styles.css）
 build.mjs                  PostCSS 作用域前缀 + esbuild 打包为 DSH client bundle
 cordis.patch.yml           插件加载声明
+docs/ARCHITECTURE.md       架构、数据格式、API 表
+CHANGELOG.md               版本记录
 ```
+
+版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 开发
 

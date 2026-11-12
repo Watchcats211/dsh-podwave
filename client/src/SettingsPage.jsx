@@ -174,7 +174,7 @@ export default function SettingsPage() {
                   <span className="history-meta">
                     {item.artist ? `${item.artist} · ` : ''}
                     {item.duration ? `${fmtDuration(item.duration)} · ` : ''}
-                    {item.language || '未知语言'} · {item.segments} 行
+                    {item.language || '未知语言'} · {item.lines} 行
                     {item.translations?.length ? ` · 已翻 ${item.translations.join(' / ')}` : ''}
                   </span>
                 </div>

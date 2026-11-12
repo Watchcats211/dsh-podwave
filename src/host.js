@@ -29,6 +29,7 @@ import {
 import {
   deleteTranscript,
   getTranscriptionState,
+  migrateAllTranscripts,
   readTranscript,
   runtimeInfo,
   startTranscription,
@@ -37,28 +38,21 @@ import {
   toMarkdown,
   toSRT,
 } from './transcribe.js'
+import { listJobs } from './jobs.js'
+import { getSection, updateSection } from './config.js'
 import { getTranslationState, publicConfig, saveConfig, startTranslation } from './translate.js'
 import { listModels, loadModelConfig, saveModelConfig } from './models.js'
 
 export const name = 'dsh-podwave'
 
 const IMPORTS_DIR = path.join(DATA_DIR, 'imports')
-const UI_CONFIG = path.join(DATA_DIR, 'ui.json')
-const UI_DEFAULTS = { showSidebarPanel: true, sidebarCollapsed: false }
 
 function loadUiSettings() {
-  try {
-    return { ...UI_DEFAULTS, ...JSON.parse(fs.readFileSync(UI_CONFIG, 'utf8')) }
-  } catch {
-    return { ...UI_DEFAULTS }
-  }
+  return getSection('ui')
 }
 
 function saveUiSettings(patch) {
-  const next = { ...loadUiSettings(), ...patch }
-  fs.mkdirSync(DATA_DIR, { recursive: true })
-  fs.writeFileSync(UI_CONFIG, JSON.stringify(next, null, 2))
-  return next
+  return updateSection('ui', patch)
 }
 
 const MIME = {
@@ -86,6 +80,7 @@ function boot() {
   if (!booted) {
     booted = (async () => {
       await initState()
+      await migrateAllTranscripts().catch((error) => console.error('[dsh-podwave] transcript migration failed:', error.message))
       if (getState().folders.length) {
         scanLibrary().catch((error) => console.error('[dsh-podwave] initial scan failed:', error.message))
       }
@@ -198,7 +193,7 @@ async function route(ctx, req, res) {
   const method = req.method || 'GET'
 
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.2.9', transcribe: runtimeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.3.0', transcribe: runtimeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -358,6 +353,10 @@ async function route(ctx, req, res) {
     }
   }
 
+  if (method === 'GET' && routePath === 'api/jobs') {
+    return json(res, 200, { items: listJobs() })
+  }
+
   if (method === 'GET' && routePath === 'api/history') {
     const items = []
     let files = []
@@ -383,9 +382,12 @@ async function route(ctx, req, res) {
         artist: episode?.artist || '',
         duration: episode?.duration || null,
         language: transcript.language || null,
-        segments: Array.isArray(transcript.segments) ? transcript.segments.length : 0,
-        translations: Object.keys(transcript.translations || {}).filter((key) => key !== '_provider'),
-        provider: transcript.translations?._provider || null,
+        lines: Array.isArray(transcript.lines) ? transcript.lines.length : 0,
+        translations: Object.keys(transcript.providers || {}),
+        translated: Array.isArray(transcript.lines)
+          ? transcript.lines.filter((line) => Object.keys(line.translations || {}).length).length
+          : 0,
+        provider: Object.values(transcript.providers || {})[0] || null,
         completedAt,
       })
     }
