@@ -183,9 +183,10 @@ function Icon({ name, size = 18 }) {
   }
 }
 
-function AddFolderDialog({ onSubmit, onClose }) {
+function AddFolderDialog({ onSubmit, onPick, onClose }) {
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
+  const [busyPick, setBusyPick] = useState(false)
   const [error, setError] = useState('')
   const inputRef = useRef(null)
 
@@ -197,6 +198,25 @@ function AddFolderDialog({ onSubmit, onClose }) {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  const pick = async () => {
+    if (busyPick) return
+    setBusyPick(true)
+    setError('')
+    try {
+      const result = await onPick()
+      if (result?.canceled) return
+      if (result?.error) throw new Error(result.error)
+      if (result?.path) {
+        await onSubmit(result.path)
+        onClose()
+      }
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusyPick(false)
+    }
+  }
 
   const submit = async (event) => {
     event.preventDefault()
@@ -216,21 +236,28 @@ function AddFolderDialog({ onSubmit, onClose }) {
     <div className="overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
       <form className="dialog" onSubmit={submit}>
         <h2>添加文件夹</h2>
-        <p className="dialog-hint">Podwave 只读取这个文件夹里的音频文件，不会移动、上传或修改它们。</p>
-        <input
-          ref={inputRef}
-          value={value}
-          onChange={(event) => setValue(event.target.value)}
-          placeholder="~/Music/播客 或 /Users/你/Downloads/节目"
-          spellCheck={false}
-        />
-        {error ? <div className="dialog-error">{error}</div> : null}
+        <p className="dialog-hint">
+          Podwave 只读取音频文件，不会移动或修改它们。也可以直接把音频文件拖进面板。
+        </p>
         <div className="dialog-actions">
           <button type="button" className="btn ghost" onClick={onClose}>取消</button>
-          <button type="submit" className="btn primary" disabled={busy || !value.trim()}>
+          <button type="button" className="btn primary" onClick={pick} disabled={busyPick} autoFocus>
+            {busyPick ? '打开选择器…' : '选择文件夹…'}
+          </button>
+        </div>
+        <div className="path-row">
+          <input
+            ref={inputRef}
+            value={value}
+            onChange={(event) => setValue(event.target.value)}
+            placeholder="或手动输入路径，例如 ~/Music/播客"
+            spellCheck={false}
+          />
+          <button type="submit" className="btn ghost" disabled={busy || !value.trim()}>
             {busy ? '读取中…' : '添加'}
           </button>
         </div>
+        {error ? <div className="dialog-error">{error}</div> : null}
       </form>
     </div>
   )
@@ -401,6 +428,7 @@ export default function App() {
   const [trJob, setTrJob] = useState({ status: 'none' })
   const [trSettingsOpen, setTrSettingsOpen] = useState(false)
   const [navCollapsed, setNavCollapsed] = useState(false)
+  const [dragging, setDragging] = useState(false)
 
   const audioRef = useRef(null)
   const currentRef = useRef(null)
@@ -827,6 +855,77 @@ export default function App() {
     flash('已添加文件夹，正在扫描')
   }
 
+  const pickFolder = async () => {
+    const res = await fetch(`${API}/pick-folder`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || '打开系统选择器失败')
+    return data
+  }
+
+  const onDragOver = (event) => {
+    if (![...(event.dataTransfer?.types || [])].includes('Files')) return
+    event.preventDefault()
+    if (!dragging) setDragging(true)
+  }
+
+  const onDragLeave = (event) => {
+    if (event.currentTarget.contains(event.relatedTarget)) return
+    setDragging(false)
+  }
+
+  const onDrop = async (event) => {
+    event.preventDefault()
+    setDragging(false)
+    const dataTransfer = event.dataTransfer
+    const files = [...(dataTransfer?.files || [])]
+    const paths = files.map((file) => file.path).filter((item) => typeof item === 'string' && item)
+    const uriPaths = String(dataTransfer?.getData('text/uri-list') || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('file://'))
+      .map((line) => decodeURIComponent(line.replace(/^file:\/\//, '')))
+    const direct = [...new Set([...paths, ...uriPaths])]
+    if (direct.length) {
+      try {
+        const result = await sendJSON(`${API}/import/paths`, 'POST', { paths: direct })
+        await loadLibrary()
+        flash(result.added ? `已添加 ${result.added} 个文件夹` : '这些文件夹已经在媒体库里了')
+      } catch (err) {
+        setError(err.message)
+      }
+      return
+    }
+    const audioFiles = files.filter((file) => file.size > 0)
+    if (!audioFiles.length) {
+      flash('拖进来的是文件夹，请用「选择文件夹」')
+      return
+    }
+    const batch = `drop-${Date.now()}`
+    let folder = ''
+    let ok = 0
+    for (const file of audioFiles) {
+      try {
+        const res = await fetch(`${API}/import/upload?name=${encodeURIComponent(file.name)}&batch=${batch}`, { method: 'POST', body: file })
+        const data = await res.json()
+        if (res.ok) {
+          folder = data.folder || folder
+          ok += 1
+        }
+      } catch {
+        /* 单个文件失败不影响其它文件 */
+      }
+    }
+    if (folder) {
+      try {
+        await sendJSON(`${API}/folders`, 'POST', { path: folder })
+      } catch {
+        /* 同一天的重复导入会返回 409 */
+      }
+    }
+    await loadLibrary()
+    flash(ok ? `已导入 ${ok} 个音频` : '导入失败，请重试')
+  }
+
   const removeFolder = async (folderPath) => {
     if (!window.confirm(`从媒体库移除这个文件夹？\n${folderPath}\n\n不会删除你的文件。`)) return
     try {
@@ -867,7 +966,18 @@ export default function App() {
   }
 
   return (
-    <div className={`shell ${navCollapsed ? 'nav-collapsed' : ''}`}>
+    <div
+      className={`shell ${navCollapsed ? 'nav-collapsed' : ''}`}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dragging ? (
+        <div className="drop-hint">
+          <span>松开以添加音频</span>
+          <span>文件夹请用「选择文件夹」</span>
+        </div>
+      ) : null}
       {navCollapsed ? (
         <button className="nav-reopen" title="展开侧边栏" onClick={toggleNav}>
           <Icon name="chevron-right" size={16} />
@@ -1151,7 +1261,7 @@ export default function App() {
         </div>
       </footer>
 
-      {addOpen ? <AddFolderDialog onClose={() => setAddOpen(false)} onSubmit={addFolder} /> : null}
+      {addOpen ? <AddFolderDialog onClose={() => setAddOpen(false)} onSubmit={addFolder} onPick={pickFolder} /> : null}
       {trSettingsOpen ? (
         <TranslateSettingsDialog
           config={trConfig}
