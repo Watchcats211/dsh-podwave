@@ -818,6 +818,114 @@ function srtTime(seconds) {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')},${String(ms).padStart(3, '0')}`
 }
 
+function joinText(left, right) {
+  if (!left) return right
+  if (!right) return left
+  return /[A-Za-z0-9]$/.test(left) && /^[A-Za-z0-9]/.test(right) ? `${left} ${right}` : `${left}${right}`
+}
+
+function renumberLines(lines) {
+  return lines.map((line, index) => ({ ...line, id: index + 1 }))
+}
+
+function refreshText(transcript) {
+  transcript.text = transcript.lines.map((line) => line.text).join(' ')
+  return transcript
+}
+
+// P2：字幕行编辑。改文本会作废该行旧译文（时间戳单独改不影响译文）。
+export async function editTranscriptLine(id, lineId, patch = {}) {
+  const transcript = await readTranscript(id)
+  if (!transcript) return null
+  const line = transcript.lines.find((item) => String(item.id) === String(lineId))
+  if (!line) throw new Error('找不到这一行')
+  let changedText = false
+  if (typeof patch.text === 'string') {
+    const text = patch.text.replace(/\s+/g, ' ').trim()
+    if (!text) throw new Error('字幕文本不能为空')
+    if (text !== line.text) {
+      line.text = text
+      line.translations = {}
+      changedText = true
+    }
+  }
+  if (Number.isFinite(Number(patch.start))) line.start = round2(Math.max(0, Number(patch.start)))
+  if (Number.isFinite(Number(patch.end))) line.end = round2(Math.max(line.start + 0.05, Number(patch.end)))
+  if (changedText && transcript.providers) {
+    // 译文整体失效时保留 provider 记录，方便再翻
+  }
+  transcript.lines = renumberLines(transcript.lines)
+  refreshText(transcript)
+  await saveTranscript(transcript)
+  return transcript
+}
+
+export async function splitTranscriptLine(id, lineId, offset) {
+  const transcript = await readTranscript(id)
+  if (!transcript) return null
+  const index = transcript.lines.findIndex((item) => String(item.id) === String(lineId))
+  if (index < 0) throw new Error('找不到这一行')
+  const line = transcript.lines[index]
+  const chars = Array.from(line.text)
+  let at = Number.isFinite(Number(offset)) ? Math.round(Number(offset)) : Math.floor(chars.length / 2)
+  at = Math.min(chars.length - 1, Math.max(1, at))
+  const left = chars.slice(0, at).join('').trim()
+  const right = chars.slice(at).join('').trim()
+  if (!left || !right) throw new Error('拆分位置前后都需要有文字')
+  const ratio = at / chars.length
+  const splitAt = round2(line.start + (line.end - line.start) * ratio)
+  const first = { ...line, text: left, end: splitAt, translations: {} }
+  const second = { ...line, text: right, start: splitAt, translations: {} }
+  transcript.lines.splice(index, 1, first, second)
+  transcript.lines = renumberLines(transcript.lines)
+  refreshText(transcript)
+  await saveTranscript(transcript)
+  return transcript
+}
+
+export async function mergeTranscriptLine(id, lineId) {
+  const transcript = await readTranscript(id)
+  if (!transcript) return null
+  const index = transcript.lines.findIndex((item) => String(item.id) === String(lineId))
+  if (index < 0) throw new Error('找不到这一行')
+  if (index >= transcript.lines.length - 1) throw new Error('已经是最后一行')
+  const first = transcript.lines[index]
+  const second = transcript.lines[index + 1]
+  const translations = {}
+  for (const target of new Set([...Object.keys(first.translations || {}), ...Object.keys(second.translations || {})])) {
+    const left = first.translations?.[target]
+    const right = second.translations?.[target]
+    if (left && right) translations[target] = joinText(left, right)
+    else if (left || right) translations[target] = left || right
+  }
+  const merged = {
+    ...first,
+    end: second.end,
+    text: joinText(first.text, second.text),
+    translations,
+    speaker: first.speaker && first.speaker === second.speaker ? first.speaker : first.speaker || second.speaker || null,
+  }
+  transcript.lines.splice(index, 2, merged)
+  transcript.lines = renumberLines(transcript.lines)
+  refreshText(transcript)
+  await saveTranscript(transcript)
+  return transcript
+}
+
+export async function validateTranscript(id) {
+  const transcript = await readTranscript(id)
+  if (!transcript) return { ok: false, issues: ['还没有转写'] }
+  const issues = []
+  transcript.lines.forEach((line, index) => {
+    if (!String(line.text || '').trim()) issues.push(`第 ${index + 1} 行没有文字`)
+    if (!(line.end > line.start)) issues.push(`第 ${index + 1} 行时间戳无效`)
+    if (index > 0 && line.start < transcript.lines[index - 1].end - 0.05) {
+      issues.push(`第 ${index} 行与第 ${index + 1} 行时间重叠`)
+    }
+  })
+  return { ok: issues.length === 0, issues }
+}
+
 export function toSRT(transcript) {
   return transcript.lines
     .map((line, index) => `${index + 1}\n${srtTime(line.start)} --> ${srtTime(line.end)}\n${line.text}\n`)

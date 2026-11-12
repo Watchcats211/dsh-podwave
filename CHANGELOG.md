@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0 — 2026-11-12
+
+P2：字幕编辑（改文本、拆分/合并、撤销、导出前校验）。
+
+- 行内编辑：字幕面板每一行悬停出现 ✎，点开就地改文本；⌘/Ctrl+Enter 保存、Esc 取消。改过文本的行会清空旧译文，避免译文和原文对不上。
+- 拆分与合并：编辑时按光标位置「拆分」成两行（时间戳按字符比例分配）；行尾 ⇣ 与下一行合并（英文之间自动补空格，译文一起合并）。
+- 撤销：字幕面板右上「撤销」，每个单集保留最近 20 步修改（服务端内存栈，重启后清空）。
+- 校验：导出前「校验」检查空行、无效时间戳、行间时间重叠；面板顶部列出问题。
+- 新接口：`PUT /api/episodes/:id/transcript/lines/:lineId`、`POST .../lines/:lineId/split`、`POST .../lines/:lineId/merge`、`POST .../transcript/undo`、`GET .../transcript/validate`；`health` 版本 0.5.0。
+- 新截图：`docs/screenshot-editing.png`。
+
 ## 0.4.0 — 2026-11-12
 
 P1：转写体验（任务面板、进度、取消/续跑、批量、热词）。
