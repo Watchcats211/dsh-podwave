@@ -66,7 +66,8 @@ if (!fs.existsSync(tgz)) throw new Error(`没有找到打包产物 ${tgz}`)
 
 // 5. 提交、打 tag、推送
 run('git add -A')
-run(`git commit -m "v${version}: ${title.replace(/"/g, "'")}"`)
+const description = title.replace(/^v\S+\s+/, '').replace(/"/g, "'")
+run(`git commit -m "v${version}: ${description}"`)
 run(`git tag -f ${tag}`)
 run('git push')
 run(`git push -f origin ${tag}`)
