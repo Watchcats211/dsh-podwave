@@ -17,7 +17,7 @@ export const CONFIG_DEFAULTS = {
     apiKey: '',
   },
   models: { asrModel: 'qwen3-asr-1.7b-8bit', translateModel: 'qwen3-8b-4bit' },
-  transcribe: { hotwords: [] },
+  transcribe: { hotwords: [], chunkMinutes: 15 },
 }
 
 const LEGACY_FILES = [

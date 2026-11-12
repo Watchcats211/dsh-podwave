@@ -37,8 +37,10 @@ import {
   stopAll,
   toMarkdown,
   toSRT,
+  cancelTranscription,
+  enqueueBatch,
 } from './transcribe.js'
-import { listJobs } from './jobs.js'
+import { listJobs, removeJob } from './jobs.js'
 import { getSection, updateSection } from './config.js'
 import { getTranslationState, publicConfig, saveConfig, startTranslation } from './translate.js'
 import { listModels, loadModelConfig, saveModelConfig } from './models.js'
@@ -193,7 +195,7 @@ async function route(ctx, req, res) {
   const method = req.method || 'GET'
 
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.3.0', transcribe: runtimeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.4.0', transcribe: runtimeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -201,8 +203,15 @@ async function route(ctx, req, res) {
   }
   if (method === 'GET' && routePath === 'api/episodes') {
     const state = getState()
+    let transcriptIds = []
+    try {
+      transcriptIds = fs.readdirSync(TRANSCRIPTS_DIR).filter((file) => file.endsWith('.json')).map((file) => file.replace(/\.json$/, ''))
+    } catch {
+      transcriptIds = []
+    }
+    const withTranscript = new Set(transcriptIds)
     return json(res, 200, {
-      items: getEpisodes(),
+      items: getEpisodes().map((episode) => ({ ...episode, hasTranscript: withTranscript.has(episode.id) })),
       folders: state.folders,
       progress: state.progress,
       scan: getScanState(),
@@ -321,8 +330,36 @@ async function route(ctx, req, res) {
     const episode = getEpisode(decodeURIComponent(transcribeMatch[1]))
     if (!episode) return json(res, 404, { error: '单集不存在' })
     const body = await readJson(req)
-    const result = await startTranscription(episode, { force: Boolean(body?.force) })
+    const result = await startTranscription(episode, { force: Boolean(body?.force), resume: Boolean(body?.resume) })
     return json(res, 200, result)
+  }
+
+  const transcribeCancelMatch = /^api\/episodes\/([^/]+)\/transcribe\/cancel$/.exec(routePath)
+  if (transcribeCancelMatch && method === 'POST') {
+    const id = decodeURIComponent(transcribeCancelMatch[1])
+    if (!getEpisode(id)) return json(res, 404, { error: '单集不存在' })
+    return json(res, 200, cancelTranscription(id))
+  }
+
+  if (routePath === 'api/transcribe/batch' && method === 'POST') {
+    const body = await readJson(req)
+    const ids = Array.isArray(body?.ids) ? body.ids.map((id) => String(id)) : []
+    const episodes = ids.map((id) => getEpisode(id)).filter(Boolean)
+    if (!episodes.length) return json(res, 400, { error: '没有可转写的单集' })
+    const result = await enqueueBatch(episodes)
+    return json(res, 200, result)
+  }
+
+  if (routePath === 'api/transcribe/settings') {
+    if (method === 'GET') return json(res, 200, { ...getSection('transcribe'), runtime: runtimeInfo() })
+    if (method === 'PUT') {
+      const body = await readJson(req)
+      const patch = {}
+      if (Array.isArray(body?.hotwords)) patch.hotwords = body.hotwords.map((word) => String(word || '').trim()).filter(Boolean).slice(0, 500)
+      if (Number.isFinite(Number(body?.chunkMinutes))) patch.chunkMinutes = Math.max(1, Math.min(60, Number(body.chunkMinutes)))
+      if (!Object.keys(patch).length) return json(res, 400, { error: '没有可保存的设置' })
+      return json(res, 200, { ...updateSection('transcribe', patch), runtime: runtimeInfo() })
+    }
   }
 
   const transcriptExportMatch = /^api\/episodes\/([^/]+)\/transcript\/export$/.exec(routePath)
@@ -353,8 +390,13 @@ async function route(ctx, req, res) {
     }
   }
 
-  if (method === 'GET' && routePath === 'api/jobs') {
-    return json(res, 200, { items: listJobs() })
+  if (routePath === 'api/jobs') {
+    if (method === 'GET') return json(res, 200, { items: listJobs() })
+    if (method === 'DELETE') {
+      const body = await readJson(req)
+      if (body?.key) removeJob(String(body.key))
+      return json(res, 200, { items: listJobs() })
+    }
   }
 
   if (method === 'GET' && routePath === 'api/history') {

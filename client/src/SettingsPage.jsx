@@ -43,6 +43,8 @@ export default function SettingsPage() {
   const [transcribeInfo, setTranscribeInfo] = useState(null)
   const [trConfig, setTrConfig] = useState(null)
   const [uiSettings, setUiSettings] = useState({ showSidebarPanel: true })
+  const [hotwords, setHotwords] = useState('')
+  const [chunkMinutes, setChunkMinutes] = useState(15)
 
   const [provider, setProvider] = useState('api')
   const [apiBase, setApiBase] = useState('https://api.deepseek.com')
@@ -58,13 +60,16 @@ export default function SettingsPage() {
 
   const load = useCallback(async () => {
     try {
-      const [historyData, modelsData, trData, uiData] = await Promise.all([
+      const [historyData, modelsData, trData, uiData, txData] = await Promise.all([
         getJSON(`${API}/history`),
         getJSON(`${API}/models`),
         getJSON(`${API}/translate/settings`),
         getJSON(`${API}/ui-settings`),
+        getJSON(`${API}/transcribe/settings`),
       ])
       setUiSettings({ showSidebarPanel: uiData?.showSidebarPanel !== false })
+      setHotwords((txData.hotwords || []).join(' '))
+      setChunkMinutes(txData.chunkMinutes || 15)
       setHistory(historyData.items || [])
       setModels(modelsData.models || [])
       setModelConfig(modelsData.config || { asrModel: '', translateModel: '' })
@@ -147,6 +152,29 @@ export default function SettingsPage() {
     }
   }
 
+  const saveTranscribe = async () => {
+    setSaving('transcribe')
+    setError('')
+    try {
+      const words = hotwords
+        .split(/[\s,，、]+/)
+        .map((word) => word.trim())
+        .filter(Boolean)
+        .slice(0, 500)
+      const data = await sendJSON(`${API}/transcribe/settings`, 'PUT', {
+        hotwords: words,
+        chunkMinutes: Math.min(60, Math.max(1, Number(chunkMinutes) || 15)),
+      })
+      setHotwords((data.hotwords || []).join(' '))
+      setChunkMinutes(data.chunkMinutes || 15)
+      flash('转写设置已保存')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving('')
+    }
+  }
+
   const modelOptions = allModels
 
   return (
@@ -185,6 +213,37 @@ export default function SettingsPage() {
         ) : (
           <p className="settings-empty">还没有完成过转写。在「播客」面板里打开一集，点「转写字幕」。</p>
         )}
+      </section>
+
+      <section className="settings-card">
+        <h2>转写</h2>
+        <p className="settings-hint">热词用空格或逗号分隔，会作为 --context 传给模型，专有名词更准。长播客按分钟切块，失败只重跑那一块。</p>
+        <div className="settings-fields">
+          <label className="field-row">
+            <span>热词</span>
+            <input
+              value={hotwords}
+              onChange={(event) => setHotwords(event.target.value)}
+              placeholder="例如：DeepSeek Harness 播客 硅谷"
+            />
+          </label>
+          <label className="field-row">
+            <span>分块时长（分钟）</span>
+            <input
+              type="number"
+              min="1"
+              max="60"
+              value={chunkMinutes}
+              onChange={(event) => setChunkMinutes(event.target.value)}
+            />
+          </label>
+        </div>
+        <div className="settings-actions">
+          <button className="settings-btn" onClick={saveTranscribe} disabled={saving === 'transcribe'}>
+            {saving === 'transcribe' ? '保存中…' : '保存转写设置'}
+          </button>
+          <span className="settings-status">热词最多 500 个</span>
+        </div>
       </section>
 
       <section className="settings-card">

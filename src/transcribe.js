@@ -1,5 +1,6 @@
 // 转写任务管理：调用 MLX Qwen3-ASR CLI，把结果落到 ~/.podwave/transcripts/<id>.json。
 // 一次只跑一个任务，其余排队，避免在 16GB 内存的机器上同时加载多个模型。
+// 长音频按 chunkMinutes 切块（ffmpeg），逐块转写后合并时间戳；块结果留在 .work/<id> 里，取消/崩溃后可续跑。
 // transcript 使用 v2 结构：lines[]（行级时间戳 + 每行译文）和 providers{}（每个目标语言的翻译来源）。
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
@@ -7,16 +8,23 @@ import path from 'node:path'
 import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { DATA_DIR } from './state.js'
 import { loadModelConfig, modelDir } from './models.js'
+import { getSection } from './config.js'
 import { flushJobs, getJob, jobKey, removeJob, upsertJob } from './jobs.js'
 
 export const TRANSCRIPTS_DIR = path.join(DATA_DIR, 'transcripts')
 const WORK_DIR = path.join(TRANSCRIPTS_DIR, '.work')
 const RUNTIME_DIR = path.join(DATA_DIR, 'runtime')
 const CLI = path.join(RUNTIME_DIR, '.venv', 'bin', 'mlx-qwen3-asr')
+const FFMPEG = process.env.PODWAVE_FFMPEG || (fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg')
+const FFPROBE = process.env.PODWAVE_FFPROBE || (fs.existsSync('/opt/homebrew/bin/ffprobe') ? '/opt/homebrew/bin/ffprobe' : 'ffprobe')
 
-const queue = []
-let active = null
+// 估算进度用：转写速度约 3.2x 实时（含每次启动加载模型的固定开销）。
+const SPEED = 3.2
+
+const queue = [] // { episode, force, resume }
+let active = null // { key, episodeId }
 let activeChild = null
+const cancelRequested = new Set()
 
 function transcriptPath(id) {
   return path.join(TRANSCRIPTS_DIR, `${id}.json`)
@@ -32,14 +40,25 @@ export function currentAsrModel() {
   return { name, dir, ready: fs.existsSync(path.join(dir, 'model.safetensors')) }
 }
 
+export function transcribeConfig() {
+  const section = getSection('transcribe') || {}
+  const hotwords = Array.isArray(section.hotwords) ? section.hotwords.map((word) => String(word || '').trim()).filter(Boolean) : []
+  const raw = Number(section.chunkMinutes)
+  const chunkMinutes = Math.max(1, Math.min(60, Number.isFinite(raw) && raw > 0 ? raw : 15))
+  return { hotwords, chunkMinutes }
+}
+
 export function runtimeInfo() {
   const model = currentAsrModel()
+  const config = transcribeConfig()
   return {
     installed: fs.existsSync(CLI),
     modelReady: model.ready,
     model: model.dir,
     modelName: model.name,
     cli: CLI,
+    hotwords: config.hotwords,
+    chunkMinutes: config.chunkMinutes,
   }
 }
 
@@ -174,66 +193,281 @@ export async function deleteTranscript(id) {
   } catch {
     /* ignore */
   }
+  await rm(path.join(WORK_DIR, id), { recursive: true, force: true }).catch(() => {})
   removeJob(jobId(id))
   return true
 }
 
 function pump() {
   if (active || !queue.length) return
-  const episode = queue.shift()
-  active = episode
-  runJob(episode)
+  const item = queue.shift()
+  active = { key: jobId(item.episode.id), episodeId: item.episode.id }
+  runJob(item)
 }
 
-async function runJob(episode) {
-  const key = jobId(episode.id)
-  upsertJob({ key, type: 'transcribe', episodeId: episode.id, status: 'running', startedAt: Date.now(), error: null })
-  const work = path.join(WORK_DIR, episode.id)
+function waitChild(child) {
+  return new Promise((resolve, reject) => {
+    child.on('error', reject)
+    child.on('close', resolve)
+  })
+}
+
+function runProcess(command, args) {
+  return new Promise((resolve) => {
+    let child
+    try {
+      child = spawn(command, args, { stdio: 'ignore' })
+    } catch {
+      resolve(-1)
+      return
+    }
+    child.on('error', () => resolve(-1))
+    child.on('close', (code) => resolve(code))
+  })
+}
+
+async function probeDuration(file) {
+  return new Promise((resolve) => {
+    let child
+    try {
+      child = spawn(FFPROBE, ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', file], {
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+    } catch {
+      resolve(0)
+      return
+    }
+    let out = ''
+    child.stdout.on('data', (chunk) => {
+      out += chunk.toString()
+    })
+    child.on('error', () => resolve(0))
+    child.on('close', () => resolve(Number(out.trim()) || 0))
+  })
+}
+
+// 用 ffmpeg 把长音频切成若干块；先尝试不重编码（-c copy），失败再转 AAC。
+async function splitAudio(file, dir, chunkSeconds) {
+  await mkdir(dir, { recursive: true })
+  const pattern = path.join(dir, 'chunk-%03d.m4a')
+  const base = ['-hide_banner', '-loglevel', 'error', '-y', '-i', file, '-f', 'segment', '-segment_time', String(chunkSeconds), '-reset_timestamps', '1']
+  let code = await runProcess(FFMPEG, [...base, '-c', 'copy', pattern])
+  if (code !== 0) code = await runProcess(FFMPEG, [...base, '-c:a', 'aac', '-b:a', '96k', pattern])
+  if (code !== 0) throw new Error('音频切分失败（ffmpeg）')
+  const names = (await readdir(dir)).filter((name) => /\.m4a$/i.test(name)).sort()
+  if (!names.length) throw new Error('音频切分后没有生成文件')
+  const parts = []
+  let start = 0
+  for (const [index, name] of names.entries()) {
+    const full = path.join(dir, name)
+    const duration = (await probeDuration(full)) || chunkSeconds
+    parts.push({ index, start: round2(start), end: round2(start + duration), file: full, duration: round2(duration) })
+    start += duration
+  }
+  return parts
+}
+
+// 生成或复用切块计划；计划存 .work/<id>/meta.json，块结果在 .work/<id>/results/<index>.json。
+async function ensurePlan(episode, workDir) {
+  const { chunkMinutes } = transcribeConfig()
+  const chunkSeconds = Math.round(chunkMinutes * 60)
+  const duration = Number(episode.duration) || (await probeDuration(episode.file)) || 0
+  if (!duration) throw new Error('无法读取音频时长（ffprobe）')
+  const metaPath = path.join(workDir, 'meta.json')
+  let meta = null
   try {
-    await rm(work, { recursive: true, force: true })
+    meta = JSON.parse(await readFile(metaPath, 'utf8'))
+  } catch {
+    meta = null
+  }
+  const canReuse =
+    meta &&
+    meta.chunkSeconds === chunkSeconds &&
+    Math.abs(Number(meta.duration) - duration) < 2 &&
+    Array.isArray(meta.parts) &&
+    meta.parts.length > 0 &&
+    meta.parts.every((part) => fs.existsSync(part.file))
+  if (canReuse) return meta
+
+  await rm(path.join(workDir, 'parts'), { recursive: true, force: true })
+  await rm(path.join(workDir, 'results'), { recursive: true, force: true })
+  const single = duration <= chunkSeconds * 1.2
+  const parts = single
+    ? [{ index: 0, start: 0, end: round2(duration), file: episode.file, duration: round2(duration) }]
+    : await splitAudio(episode.file, path.join(workDir, 'parts'), chunkSeconds)
+  const plan = { duration: round2(duration), chunkSeconds, chunked: !single, parts }
+  await writeFile(metaPath, JSON.stringify(plan, null, 2), 'utf8')
+  return plan
+}
+
+function resultPath(resultsDir, index) {
+  return path.join(resultsDir, `${String(index).padStart(3, '0')}.json`)
+}
+
+function hasResult(resultsDir, index) {
+  return fs.existsSync(resultPath(resultsDir, index))
+}
+
+function progressOf(plan, doneSeconds, currentSeconds) {
+  const total = Number(plan?.duration) || 0
+  const raw = total ? ((doneSeconds + Math.max(0, currentSeconds)) / total) * 100 : 0
+  const percent = Math.min(99.5, Math.round(raw * 10) / 10)
+  return { done: round2(doneSeconds), total: round2(total), percent, unit: 'seconds' }
+}
+
+function buildArgs(file, outDir) {
+  const { hotwords } = transcribeConfig()
+  const args = [
+    file,
+    '--model', currentAsrModel().dir,
+    '--output-dir', outDir,
+    '--output-format', 'json',
+    '--timestamps',
+    '--no-progress',
+    '--quiet',
+  ]
+  if (hotwords.length) args.push('--context', hotwords.join(' '))
+  return args
+}
+
+async function readPartOutput(dir) {
+  const names = (await readdir(dir)).filter((name) => name.toLowerCase().endsWith('.json'))
+  if (!names.length) throw new Error('转写没有产生 JSON 输出')
+  return JSON.parse(await readFile(path.join(dir, names[0]), 'utf8'))
+}
+
+function wordsOf(raw) {
+  return Array.isArray(raw.segments)
+    ? raw.segments
+        .map((seg) => ({
+          start: Number(seg.start) || 0,
+          end: Number(seg.end) || 0,
+          text: String(seg.text || '').trim(),
+        }))
+        .filter((seg) => seg.text)
+    : []
+}
+
+async function runJob(item) {
+  const { episode, force } = item
+  const key = jobId(episode.id)
+  const work = path.join(WORK_DIR, episode.id)
+  let plan = null
+  let cancelled = false
+  try {
+    upsertJob({
+      key,
+      type: 'transcribe',
+      episodeId: episode.id,
+      episodeTitle: episode.title || '',
+      status: 'running',
+      stage: 'preparing',
+      startedAt: Date.now(),
+      finishedAt: null,
+      error: null,
+      progress: { done: 0, total: 0, percent: 0, unit: 'seconds' },
+      chunks: { total: 0, done: 0, current: null },
+    })
+    if (force) await rm(work, { recursive: true, force: true })
     await mkdir(work, { recursive: true })
-    const args = [
-      episode.file,
-      '--model', currentAsrModel().dir,
-      '--output-dir', work,
-      '--output-format', 'json',
-      '--timestamps',
-      '--no-progress',
-      '--quiet',
-    ]
-    const child = spawn(CLI, args, {
-      env: { ...process.env, HF_HUB_OFFLINE: '1', TOKENIZERS_PARALLELISM: 'false' },
-      stdio: ['ignore', 'ignore', 'pipe'],
+    plan = await ensurePlan(episode, work)
+    const resultsDir = path.join(work, 'results')
+    await mkdir(resultsDir, { recursive: true })
+
+    let doneParts = plan.parts.filter((part) => hasResult(resultsDir, part.index)).length
+    let doneSeconds = plan.parts.filter((part) => hasResult(resultsDir, part.index)).reduce((sum, part) => sum + part.duration, 0)
+    upsertJob({
+      key,
+      stage: 'transcribing',
+      chunks: { total: plan.parts.length, done: doneParts, current: null },
+      progress: progressOf(plan, doneSeconds, 0),
     })
-    activeChild = child
-    let stderrTail = ''
-    child.stderr.on('data', (chunk) => {
-      stderrTail = (stderrTail + chunk.toString()).slice(-4000)
-    })
-    const code = await new Promise((resolve, reject) => {
-      child.on('error', reject)
-      child.on('close', resolve)
-    })
-    activeChild = null
-    if (code !== 0) {
-      const detail = stderrTail.trim().split('\n').slice(-6).join('\n')
-      throw new Error(`转写进程退出码 ${code}${detail ? `\n${detail}` : ''}`)
+
+    for (const part of plan.parts) {
+      if (cancelRequested.has(key)) {
+        cancelled = true
+        break
+      }
+      if (hasResult(resultsDir, part.index)) continue
+      const partWork = path.join(work, 'cli', String(part.index))
+      await rm(partWork, { recursive: true, force: true })
+      await mkdir(partWork, { recursive: true })
+      upsertJob({ key, chunks: { total: plan.parts.length, done: doneParts, current: part.index + 1 } })
+
+      const child = spawn(CLI, buildArgs(part.file, partWork), {
+        env: { ...process.env, HF_HUB_OFFLINE: '1', TOKENIZERS_PARALLELISM: 'false' },
+        stdio: ['ignore', 'ignore', 'pipe'],
+      })
+      activeChild = child
+      let stderrTail = ''
+      child.stderr.on('data', (chunk) => {
+        stderrTail = (stderrTail + chunk.toString()).slice(-4000)
+      })
+      const startedAt = Date.now()
+      const timer = setInterval(() => {
+        const elapsed = (Date.now() - startedAt) / 1000
+        const estimate = Math.min(part.duration * 0.96, Math.max(0, elapsed - 3) * SPEED)
+        upsertJob({ key, stage: 'transcribing', progress: progressOf(plan, doneSeconds, estimate) })
+      }, 1000)
+      let code = -1
+      try {
+        code = await waitChild(child)
+      } finally {
+        clearInterval(timer)
+        activeChild = null
+      }
+      if (cancelRequested.has(key)) {
+        cancelled = true
+        break
+      }
+      if (code !== 0) {
+        const detail = stderrTail.trim().split('\n').slice(-6).join('\n')
+        throw new Error(`转写进程退出码 ${code}${detail ? `\n${detail}` : ''}`)
+      }
+      const raw = await readPartOutput(partWork)
+      const lines = buildSegments(raw, wordsOf(raw))
+      await writeFile(
+        resultPath(resultsDir, part.index),
+        JSON.stringify({ index: part.index, start: part.start, lines, language: raw.language || '', text: raw.text || '' }),
+        'utf8',
+      )
+      await rm(partWork, { recursive: true, force: true })
+      doneParts += 1
+      doneSeconds += part.duration
+      upsertJob({
+        key,
+        stage: 'transcribing',
+        chunks: { total: plan.parts.length, done: doneParts, current: null },
+        progress: progressOf(plan, doneSeconds, 0),
+      })
     }
 
-    const files = (await readdir(work)).filter((file) => file.toLowerCase().endsWith('.json'))
-    if (!files.length) throw new Error('转写没有产生 JSON 输出')
-    const raw = JSON.parse(await readFile(path.join(work, files[0]), 'utf8'))
-    const words = Array.isArray(raw.segments)
-      ? raw.segments
-          .map((seg) => ({
-            start: Number(seg.start) || 0,
-            end: Number(seg.end) || 0,
-            text: String(seg.text || '').trim(),
-          }))
-          .filter((seg) => seg.text)
-      : []
-    const segments = buildSegments(raw, words)
-    const lines = segments.map((seg) => ({ ...seg, speaker: null, translations: {} }))
+    if (cancelled || cancelRequested.has(key)) {
+      upsertJob({ key, status: 'cancelled', stage: 'cancelled', finishedAt: Date.now(), error: '用户取消了转写' })
+      return
+    }
+
+    upsertJob({ key, stage: 'merging' })
+    const mergedLines = []
+    let language = ''
+    const texts = []
+    for (const part of plan.parts) {
+      const partData = JSON.parse(await readFile(resultPath(resultsDir, part.index), 'utf8'))
+      if (!language && partData.language) language = partData.language
+      if (partData.text) texts.push(partData.text)
+      for (const line of partData.lines) {
+        const text = String(line.text || '').trim()
+        if (!text) continue
+        mergedLines.push({
+          id: mergedLines.length + 1,
+          start: round2(line.start + part.start),
+          end: round2(line.end + part.start),
+          text,
+          speaker: null,
+          translations: {},
+        })
+      }
+    }
 
     let source = null
     try {
@@ -250,38 +484,44 @@ async function runJob(episode) {
       createdAt: Date.now(),
       updatedAt: Date.now(),
       model: currentAsrModel().name,
-      language: raw.language || '',
-      duration: episode.duration || lines[lines.length - 1]?.end || 0,
-      text: raw.text || lines.map((line) => line.text).join(' '),
+      language,
+      duration: plan.duration || episode.duration || mergedLines[mergedLines.length - 1]?.end || 0,
+      text: texts.join(' '),
       source,
-      lines,
+      lines: mergedLines,
       providers: {},
       speakers: [],
     }
     await saveTranscript(transcript)
     upsertJob({
       key,
-      type: 'transcribe',
-      episodeId: episode.id,
       status: 'done',
+      stage: 'done',
       finishedAt: Date.now(),
-      lineCount: lines.length,
-      language: transcript.language,
+      lineCount: mergedLines.length,
+      language,
       error: null,
+      progress: { ...progressOf(plan, plan.duration, 0), percent: 100, done: plan.duration, total: plan.duration },
+      chunks: { total: plan.parts.length, done: plan.parts.length, current: null },
     })
+    await rm(work, { recursive: true, force: true })
   } catch (error) {
-    upsertJob({
-      key,
-      type: 'transcribe',
-      episodeId: episode.id,
-      status: 'error',
-      finishedAt: Date.now(),
-      error: error.message || String(error),
-    })
+    if (cancelRequested.has(key)) {
+      upsertJob({ key, status: 'cancelled', stage: 'cancelled', finishedAt: Date.now(), error: '用户取消了转写' })
+    } else {
+      upsertJob({
+        key,
+        status: 'error',
+        stage: 'error',
+        finishedAt: Date.now(),
+        error: error.message || String(error),
+      })
+    }
   } finally {
+    cancelRequested.delete(key)
     active = null
     activeChild = null
-    rm(work, { recursive: true, force: true }).catch(() => {})
+    flushJobs()
     pump()
   }
 }
@@ -453,36 +693,119 @@ function buildSegments(raw, words) {
   }))
 }
 
-export async function startTranscription(episode, { force = false } = {}) {
+export async function startTranscription(episode, { force = false, resume = false } = {}) {
   const info = runtimeInfo()
   if (!info.installed) throw Object.assign(new Error('转写运行环境未安装（~/.podwave/runtime）'), { status: 503 })
   if (!info.modelReady) throw Object.assign(new Error('转写模型未下载（~/.podwave/models）'), { status: 503 })
 
   const existing = await readTranscript(episode.id)
-  if (existing && !force) return { status: 'done', lines: existing.lines.length }
+  if (existing && !force && !resume) return { status: 'done', lines: existing.lines.length }
 
   const key = jobId(episode.id)
-  const current = getJob(key)
-  if (current && (current.status === 'queued' || current.status === 'running')) {
-    return { status: current.status }
+  const currentJob = getJob(key)
+  if (currentJob && (currentJob.status === 'queued' || currentJob.status === 'running')) {
+    return { status: currentJob.status }
   }
 
-  upsertJob({ key, type: 'transcribe', episodeId: episode.id, status: 'queued', queuedAt: Date.now(), startedAt: null, finishedAt: null, error: null })
-  queue.push(episode)
+  const resumeWork = Boolean(resume) && fs.existsSync(path.join(WORK_DIR, episode.id, 'results'))
+  upsertJob({
+    key,
+    type: 'transcribe',
+    episodeId: episode.id,
+    episodeTitle: episode.title || '',
+    status: 'queued',
+    stage: 'queued',
+    queuedAt: Date.now(),
+    startedAt: null,
+    finishedAt: null,
+    error: null,
+    progress: { done: 0, total: 0, percent: 0, unit: 'seconds' },
+    chunks: { total: 0, done: 0, current: null },
+  })
+  queue.push({ episode, force: Boolean(force) || !resumeWork, resume: resumeWork })
   pump()
   return { status: 'queued' }
 }
 
+export async function enqueueBatch(episodes) {
+  const result = { queued: 0, skipped: 0, errors: [] }
+  for (const episode of episodes) {
+    try {
+      const state = await startTranscription(episode, {})
+      if (state.status === 'queued') result.queued += 1
+      else result.skipped += 1
+    } catch (error) {
+      result.errors.push({ id: episode.id, error: error.message || String(error) })
+    }
+  }
+  return result
+}
+
+export function cancelTranscription(id) {
+  const key = jobId(id)
+  const job = getJob(key)
+  if (!job) return { status: 'none' }
+  if (job.status === 'done' || job.status === 'error' || job.status === 'cancelled' || job.status === 'interrupted') {
+    return { status: job.status }
+  }
+  const index = queue.findIndex((item) => item.episode.id === id)
+  if (index >= 0) {
+    queue.splice(index, 1)
+    cancelRequested.delete(key)
+    upsertJob({ key, status: 'cancelled', stage: 'cancelled', finishedAt: Date.now(), error: '用户取消了排队中的转写' })
+    flushJobs()
+    return { status: 'cancelled' }
+  }
+  cancelRequested.add(key)
+  if (active && active.key === key && activeChild) {
+    const child = activeChild
+    try {
+      child.kill('SIGTERM')
+    } catch {
+      /* ignore */
+    }
+    setTimeout(() => {
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        /* ignore */
+      }
+    }, 5000)
+    upsertJob({ key, stage: 'cancelling' })
+    return { status: 'cancelling' }
+  }
+  return { status: job.status }
+}
+
 export async function getTranscriptionState(id) {
   const job = getJob(jobId(id))
-  const base = job ? (job.startedAt || job.queuedAt || job.updatedAt || Date.now()) : 0
-  const elapsedMs = job ? (job.finishedAt || Date.now()) - base : 0
-  if (job && (job.status === 'queued' || job.status === 'running')) return { status: job.status, elapsedMs }
   const transcript = await readTranscript(id)
+  const base = job ? job.startedAt || job.queuedAt || job.updatedAt || Date.now() : 0
+  const elapsedMs = job ? (job.finishedAt || Date.now()) - base : 0
+  if (job && (job.status === 'queued' || job.status === 'running')) {
+    const position = queue.findIndex((item) => item.episode.id === id)
+    return {
+      status: job.status,
+      stage: job.stage,
+      progress: job.progress || null,
+      chunks: job.chunks || null,
+      queued: position >= 0 ? position + 1 : 0,
+      elapsedMs,
+      episodeTitle: job.episodeTitle || '',
+    }
+  }
   // 旧字幕还在时优先显示旧字幕：一次失败的重转不应该把已有结果藏起来。
-  if (transcript) return { status: 'done', transcript }
-  if (job && job.status === 'interrupted') return { status: 'error', error: job.error || '任务已中断', elapsedMs }
-  if (job && job.status === 'error') return { status: 'error', error: job.error, elapsedMs }
+  if (transcript) return { status: 'done', transcript, job: job || null, elapsedMs }
+  if (job && (job.status === 'interrupted' || job.status === 'error' || job.status === 'cancelled')) {
+    return {
+      status: 'error',
+      error: job.error || (job.status === 'cancelled' ? '已取消' : '任务已中断'),
+      stage: job.stage,
+      progress: job.progress || null,
+      chunks: job.chunks || null,
+      elapsedMs,
+    }
+  }
   return { status: 'none' }
 }
 
@@ -519,5 +842,7 @@ export function stopAll() {
       /* ignore */
     }
   }
+  cancelRequested.clear()
+  queue.length = 0
   flushJobs()
 }
