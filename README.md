@@ -25,6 +25,16 @@ DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘�
 - **收起侧栏**：点侧栏顶部标题右边的 `‹` 收起，左上角 `›` 展开；状态记在 `~/.podwave/ui.json`。面板被 DSH 挤窄时会自动收起侧栏，详情页改为上下布局。
 - **设置页**：DSH 设置 → 播客，可以看已完成的转写历史、配置 DeepSeek API、选择转写与翻译模型、控制侧边栏入口是否显示。
 
+## 实时字幕
+
+转写不用等整集结束。音频按块处理（默认 1 分钟一块），每完成一块就把新字幕推进面板：
+
+- 字幕面板顶部显示进度：百分比、第几块、已出多少行，可随时取消；
+- 转写中就能在详情页滚动、点行跳转、导出当前已出的 SRT/Markdown；
+- 重转时旧字幕会备份，取消或失败自动还原。
+
+分块时长可在设置 → 播客 → 转写里调整；块越小出字越快，块越大上下文越完整。
+
 ## 安装
 
 需要 DeepSeek Harness `>=0.2.1-rc.5`。
@@ -147,7 +157,7 @@ MIT
 npm install
 npm test          # node:test 单元测试
 npm run build     # 构建 dist/client.js
-node scripts/release.mjs 0.8.0   # 改版本号 → 测试 → 构建 → 打包 → commit/tag/push/Release
+node scripts/release.mjs 0.9.0   # 改版本号 → 测试 → 构建 → 打包 → commit/tag/push/Release
 ```
 
 CI（GitHub Actions）在每次 push / PR 跑 `npm test` 与 `npm run build`。
