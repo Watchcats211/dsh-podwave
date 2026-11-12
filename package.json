@@ -1,6 +1,6 @@
 {
   "name": "dsh-podwave",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "DeepSeek Harness 插件：本地优先的播客播放器 + 转写 + 双语字幕 + 字幕翻译。",
   "type": "module",
   "main": "./src/host.js",
@@ -40,7 +40,8 @@
   "homepage": "https://github.com/Watchcats211/dsh-podwave#readme",
   "scripts": {
     "build": "node build.mjs",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "music-metadata": "^10.6.0"

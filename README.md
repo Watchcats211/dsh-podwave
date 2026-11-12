@@ -140,3 +140,14 @@ dsh plugin --profile podwave-test add file:$PWD
 ## License
 
 MIT
+
+## 开发与发布
+
+```bash
+npm install
+npm test          # node:test 单元测试
+npm run build     # 构建 dist/client.js
+node scripts/release.mjs 0.8.0   # 改版本号 → 测试 → 构建 → 打包 → commit/tag/push/Release
+```
+
+CI（GitHub Actions）在每次 push / PR 跑 `npm test` 与 `npm run build`。

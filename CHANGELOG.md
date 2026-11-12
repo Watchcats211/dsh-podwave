@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0 — 2026-11-12
+
+P6：工程化（拆分前端、单元测试、发布脚本、CI）。
+
+- **前端拆分**：Icon / Cover / TranscriptPanel 拆到 `client/src/components/`，格式化与任务文案拆到 `client/src/lib/`；App.jsx 从 1466 行降到约 1340 行。
+- **单元测试**：`npm test`（node:test）覆盖格式化、旧字幕迁移与 SRT/Markdown 导出、配置迁移与持久化、episodeId 与音频扩展名，共 12 个用例。
+- **发布脚本**：`node scripts/release.mjs <version>` 自动改版本号（package.json / host health / 界面 brand）、跑测试与构建、打包 tgz、提交、打 tag、推送并创建 GitHub Release（说明取自 CHANGELOG）。
+- **CI**：GitHub Actions 增加 test job（npm ci + npm test），与 build job 并行。
+
 ## 0.7.0 — 2026-11-12
 
 P4：媒体库管理（收藏、筛选、移除索引、导入策略、重复检测、清理）。
