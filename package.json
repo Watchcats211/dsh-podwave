@@ -1,6 +1,6 @@
 {
   "name": "dsh-podwave",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "DeepSeek Harness 插件：本地优先的播客播放器，播放硬盘上的音频，转写与双语字幕在路线图中。",
   "type": "module",
   "main": "./src/host.js",
