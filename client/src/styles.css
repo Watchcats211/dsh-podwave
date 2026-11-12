@@ -840,3 +840,103 @@ select:focus-visible {
   .player-body { grid-template-columns: minmax(0, 1fr) auto; }
   .player-right { display: none; }
 }
+
+
+/* 字幕面板 */
+.subs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid #2b2b33;
+  background: #17171d;
+  color: #d8d8de;
+  font-size: 12px;
+  cursor: pointer;
+}
+.subs-btn:hover { background: #1f1f27; }
+.subs-btn.active { border-color: #e6a54a; color: #e6a54a; }
+.subs-btn:disabled { opacity: .45; cursor: default; }
+
+.transcript-panel {
+  position: absolute;
+  right: 18px;
+  bottom: 104px;
+  width: min(560px, 52%);
+  max-height: 58%;
+  display: flex;
+  flex-direction: column;
+  background: #121217;
+  border: 1px solid #2a2a32;
+  border-radius: 12px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .5);
+  z-index: 30;
+  overflow: hidden;
+}
+.transcript-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #23232b;
+}
+.transcript-head h3 { margin: 0; font-size: 13px; font-weight: 600; color: #e8e8ee; }
+.transcript-meta { color: #8b8b96; font-size: 12px; }
+.transcript-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.mini-link {
+  color: #c9c9d2;
+  font-size: 12px;
+  text-decoration: none;
+  border: 1px solid #2b2b33;
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+.mini-link:hover { border-color: #e6a54a; color: #e6a54a; }
+.transcript-close { border: 0; background: none; color: #8b8b96; cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; }
+.transcript-body { overflow-y: auto; padding: 6px 0; }
+.seg-row {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 12px;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.seg-row:hover { background: #191920; }
+.seg-row.active { background: #201c14; }
+.seg-time { flex: none; width: 56px; color: #8b8b96; font-variant-numeric: tabular-nums; font-size: 12px; padding-top: 2px; }
+.seg-text { font-size: 13px; line-height: 1.55; color: #dcdce3; }
+.seg-row.active .seg-text { color: #f2e7d2; }
+.transcript-status { padding: 16px; font-size: 13px; color: #9a9aa5; line-height: 1.6; }
+.transcript-status .err { color: #e08a8a; white-space: pre-wrap; }
+
+
+/* 翻译 */
+.tr-select {
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid #2b2b33;
+  background: #17171d;
+  color: #c9c9d2;
+  font-size: 12px;
+  padding: 0 4px;
+}
+.seg-trans { display: block; margin-top: 2px; color: #8f9aa6; font-size: 12px; line-height: 1.5; }
+.tr-running { padding: 8px 12px; color: #e6a54a; font-size: 12px; }
+.tr-running.err { color: #e08a8a; white-space: pre-wrap; }
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font-size: 12px; color: #a8a8b2; }
+.field select, .field input {
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid #2b2b33;
+  background: #17171d;
+  color: #e6e6ec;
+  padding: 0 10px;
+  font-size: 13px;
+}
