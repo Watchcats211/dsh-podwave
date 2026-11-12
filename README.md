@@ -4,10 +4,11 @@ DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘�
 
 音频只从本地磁盘读取，不上传、不联网、不依赖订阅源。转写与翻译默认跑在本机（Apple Silicon / MLX），也可以切到 DeepSeek API。
 
-![播客面板与双语字幕](docs/screenshot-0.2.png)
+![单集详情：封面 + 双语字幕](docs/screenshot-detail.png)
 
 ## 功能
 
+- **单集详情**：点任意一集进入详情页——左侧封面与信息，右侧直接显示字幕，转写后可切中英对照。
 - **本地播放**：扫描文件夹（递归 6 层，支持 `mp3 / m4a / m4b / aac / wav / flac / ogg / opus / weba / webm / wma`），自动读标题、艺术家、封面。
 - **续播**：进度每 4 秒保存，切集 / 暂停 / 关闭时立即保存；重开从上次位置继续。
 - **转写**：本地 Qwen3-ASR-1.7B-8bit，带词级时间戳；按停顿与标点切成字幕行。
@@ -22,7 +23,7 @@ DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘�
 从 [Releases](https://github.com/Watchcats211/dsh-podwave/releases) 下载最新的 `dsh-podwave-*.tgz`，然后：
 
 ```bash
-dsh plugin --profile desktop add file:/path/to/dsh-podwave-0.2.3.tgz
+dsh plugin --profile desktop add file:/path/to/dsh-podwave-0.2.4.tgz
 ```
 
 也可以直接从源码目录装：
