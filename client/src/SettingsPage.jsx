@@ -150,7 +150,7 @@ export default function SettingsPage() {
   const modelOptions = allModels
 
   return (
-    <div className="podwave-root" style={{ height: 'auto', overflow: 'visible' }}>
+    <div className="podwave-root" style={{ height: 'auto', overflow: 'visible', background: 'transparent', color: 'inherit' }}>
       <style>{css}</style>
       <div className="podwave-settings">
 
@@ -217,7 +217,7 @@ export default function SettingsPage() {
           </label>
         </div>
         <div className="settings-actions">
-          <button className="btn primary" onClick={saveApi} disabled={saving === 'api'}>
+          <button className="settings-btn" onClick={saveApi} disabled={saving === 'api'}>
             {saving === 'api' ? '保存中…' : '保存 API 设置'}
           </button>
           <span className="settings-status">{trConfig?.hasApiKey ? 'API Key 已保存' : '尚未填写 API Key'}</span>
@@ -236,7 +236,7 @@ export default function SettingsPage() {
           <span>在主界面侧边栏显示「播客」入口</span>
         </label>
         <div className="settings-actions">
-          <button className="btn primary" onClick={saveUi} disabled={saving === 'ui'}>
+          <button className="settings-btn" onClick={saveUi} disabled={saving === 'ui'}>
             {saving === 'ui' ? '保存中…' : '保存界面设置'}
           </button>
           <span className="settings-status">保存后立即生效</span>
@@ -271,7 +271,7 @@ export default function SettingsPage() {
           </label>
         </div>
         <div className="settings-actions">
-          <button className="btn primary" onClick={saveModels} disabled={saving === 'models'}>
+          <button className="settings-btn" onClick={saveModels} disabled={saving === 'models'}>
             {saving === 'models' ? '保存中…' : '保存模型选择'}
           </button>
         </div>

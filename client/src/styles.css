@@ -967,30 +967,35 @@ select:focus-visible {
   .transcript-panel.inline { width: 100%; height: 420px; }
 }
 
-/* 设置页 */
-.podwave-settings { height: auto; overflow: visible; padding: 2px 0 32px; }
-.podwave-settings .settings-head h1 { margin: 0 0 6px; font-size: 20px; font-weight: 600; color: #f2f2f5; }
-.podwave-settings .settings-head p { margin: 0; color: #8b8b96; font-size: 13px; }
-.podwave-settings .settings-message { margin-top: 12px; color: #7ec699; font-size: 13px; }
-.podwave-settings .settings-card { margin-top: 18px; padding: 16px 18px 18px; background: #121217; border: 1px solid #26262e; border-radius: 12px; }
-.podwave-settings .settings-card h2 { margin: 0 0 4px; font-size: 15px; font-weight: 600; color: #e8e8ee; }
-.podwave-settings .settings-hint { margin: 0 0 12px; color: #7c7c88; font-size: 12.5px; }
-.podwave-settings .settings-empty { margin: 4px 0 0; color: #7c7c88; font-size: 13px; }
-.podwave-settings .history-list { list-style: none; margin: 4px 0 0; padding: 0; }
-.podwave-settings .history-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 10px 0; border-top: 1px solid #22222a; }
+/* 设置页：跟随 DSH 设置面板的配色与排版，不覆盖背景 */
+.podwave-settings { height: auto; overflow: visible; padding: 4px 0 24px; color: inherit; font-size: 14px; }
+.podwave-settings .settings-head h1 { margin: 0 0 4px; font-size: 15px; font-weight: 600; color: inherit; }
+.podwave-settings .settings-head p { margin: 0; font-size: 13px; color: color-mix(in srgb, currentColor 58%, transparent); }
+.podwave-settings .settings-message { margin-top: 10px; font-size: 13px; color: color-mix(in srgb, currentColor 75%, transparent); }
+.podwave-settings .settings-card { margin-top: 0; padding: 18px 0 4px; border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
+.podwave-settings .settings-card:first-of-type { margin-top: 16px; }
+.podwave-settings .settings-card h2 { margin: 0 0 4px; font-size: 14px; font-weight: 600; color: inherit; }
+.podwave-settings .settings-hint { margin: 0 0 12px; font-size: 13px; color: color-mix(in srgb, currentColor 55%, transparent); }
+.podwave-settings .settings-empty { margin: 4px 0 0; font-size: 13px; color: color-mix(in srgb, currentColor 55%, transparent); }
+.podwave-settings .history-list { list-style: none; margin: 2px 0 0; padding: 0; }
+.podwave-settings .history-row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 9px 0; border-top: 1px solid color-mix(in srgb, currentColor 8%, transparent); }
 .podwave-settings .history-row:first-child { border-top: 0; padding-top: 2px; }
-.podwave-settings .history-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.podwave-settings .history-title { color: #e7e7ec; font-size: 13.5px; }
-.podwave-settings .history-meta { color: #7f7f8b; font-size: 12px; }
-.podwave-settings .history-date { color: #6d6d78; font-size: 12px; white-space: nowrap; }
+.podwave-settings .history-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.podwave-settings .history-title { font-size: 13.5px; color: inherit; }
+.podwave-settings .history-meta { font-size: 12.5px; color: color-mix(in srgb, currentColor 55%, transparent); }
+.podwave-settings .history-date { font-size: 12.5px; white-space: nowrap; color: color-mix(in srgb, currentColor 45%, transparent); }
 .podwave-settings .settings-fields { display: flex; flex-direction: column; gap: 10px; }
-.podwave-settings .field-row { display: flex; align-items: center; gap: 12px; }
-.podwave-settings .field-row > span:first-child { flex: 0 0 128px; color: #a9a9b4; font-size: 13px; }
+.podwave-settings .field-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.podwave-settings .field-row > span:first-child { flex: 0 0 118px; font-size: 13px; color: color-mix(in srgb, currentColor 75%, transparent); }
 .podwave-settings .field-row select,
-.podwave-settings .field-row input { min-width: 0; width: 260px; height: 30px; padding: 0 9px; color: #e6e6ea; background: #0d0d11; border: 1px solid #2b2b34; border-radius: 7px; font-size: 13px; outline: none; }
+.podwave-settings .field-row input { min-width: 0; flex: 1 1 auto; max-width: 320px; height: 32px; padding: 0 10px; color: inherit; background: color-mix(in srgb, currentColor 6%, transparent); border: 1px solid color-mix(in srgb, currentColor 13%, transparent); border-radius: 8px; font-size: 13.5px; outline: none; }
 .podwave-settings .field-row select:focus,
-.podwave-settings .field-row input:focus { border-color: rgba(230, 165, 74, 0.5); }
-.podwave-settings .settings-status { color: #7c7c88; font-size: 12px; }
+.podwave-settings .field-row input:focus { border-color: color-mix(in srgb, currentColor 34%, transparent); }
+.podwave-settings .field-row select option { color: #f2f2f5; background: #2c2c2e; }
+.podwave-settings .settings-status { flex: none; font-size: 12.5px; color: color-mix(in srgb, currentColor 50%, transparent); }
 .podwave-settings .settings-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
-.podwave-settings .check-row { display: flex; align-items: center; gap: 9px; color: #d3d3da; font-size: 13px; }
-.podwave-settings .check-row input { width: 15px; height: 15px; accent-color: #e6a54a; }
+.podwave-settings .settings-btn { height: 30px; padding: 0 14px; border: 0; border-radius: 8px; color: inherit; background: color-mix(in srgb, currentColor 11%, transparent); font-size: 13.5px; font-weight: 500; cursor: pointer; }
+.podwave-settings .settings-btn:hover { background: color-mix(in srgb, currentColor 17%, transparent); }
+.podwave-settings .settings-btn:disabled { opacity: 0.5; cursor: default; }
+.podwave-settings .check-row { display: flex; align-items: center; gap: 9px; font-size: 13.5px; color: inherit; }
+.podwave-settings .check-row input { width: 15px; height: 15px; accent-color: #7aa7ff; }
