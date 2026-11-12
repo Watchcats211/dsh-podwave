@@ -136,10 +136,10 @@ export default function SettingsPage() {
 
   const allModels = models.length ? models : [
     { name: modelConfig.asrModel || 'qwen3-asr-1.7b-8bit', ready: transcribeInfo?.modelReady },
-    { name: modelConfig.translateModel || 'qwen3-8b-4bit', ready: trConfig?.localReady },
+    { name: modelConfig.translateModel || 'hy-mt2-1.8b-4bit', ready: trConfig?.localReady },
   ]
-  const asrOptions = allModels.filter((model) => /asr/i.test(model.name))
-  const translateOptions = allModels.filter((model) => !/asr/i.test(model.name))
+  const asrOptions = allModels.filter((model) => /asr/i.test(model.name) && model.ready !== false)
+  const translateOptions = allModels.filter((model) => !/asr|diarization/i.test(model.name) && model.ready !== false)
   const saveUi = async () => {
     setSaving('ui')
     setError('')
