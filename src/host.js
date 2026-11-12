@@ -38,7 +38,12 @@ import {
   toMarkdown,
   toSRT,
   cancelTranscription,
+  editTranscriptLine,
   enqueueBatch,
+  mergeTranscriptLine,
+  saveTranscript,
+  splitTranscriptLine,
+  validateTranscript,
 } from './transcribe.js'
 import { listJobs, removeJob } from './jobs.js'
 import { getSection, updateSection } from './config.js'
@@ -48,6 +53,17 @@ import { listModels, loadModelConfig, saveModelConfig } from './models.js'
 export const name = 'dsh-podwave'
 
 const IMPORTS_DIR = path.join(DATA_DIR, 'imports')
+
+// P2：撤销栈（每集最多 20 步，进程内保存）。
+const undoStacks = new Map()
+
+function pushUndo(id, transcript) {
+  const stack = undoStacks.get(id) || []
+  stack.push(JSON.parse(JSON.stringify(transcript.lines || [])))
+  if (stack.length > 20) stack.shift()
+  undoStacks.set(id, stack)
+}
+
 
 function loadUiSettings() {
   return getSection('ui')
@@ -360,6 +376,72 @@ async function route(ctx, req, res) {
       if (!Object.keys(patch).length) return json(res, 400, { error: '没有可保存的设置' })
       return json(res, 200, { ...updateSection('transcribe', patch), runtime: runtimeInfo() })
     }
+  }
+
+  const lineMatch = /^api\/episodes\/([^/]+)\/transcript\/lines\/([^/]+)$/.exec(routePath)
+  if (lineMatch && method === 'PUT') {
+    const id = decodeURIComponent(lineMatch[1])
+    if (!getEpisode(id)) return json(res, 404, { error: '单集不存在' })
+    const before = await readTranscript(id)
+    if (!before) return json(res, 404, { error: '还没有转写' })
+    const body = await readJson(req)
+    try {
+      pushUndo(id, before)
+      const transcript = await editTranscriptLine(id, decodeURIComponent(lineMatch[2]), body || {})
+      return json(res, 200, { transcript })
+    } catch (error) {
+      return json(res, 400, { error: error.message })
+    }
+  }
+
+  const splitMatch = /^api\/episodes\/([^/]+)\/transcript\/lines\/([^/]+)\/split$/.exec(routePath)
+  if (splitMatch && method === 'POST') {
+    const id = decodeURIComponent(splitMatch[1])
+    if (!getEpisode(id)) return json(res, 404, { error: '单集不存在' })
+    const before = await readTranscript(id)
+    if (!before) return json(res, 404, { error: '还没有转写' })
+    const body = await readJson(req)
+    try {
+      pushUndo(id, before)
+      const transcript = await splitTranscriptLine(id, decodeURIComponent(splitMatch[2]), Number(body?.offset))
+      return json(res, 200, { transcript })
+    } catch (error) {
+      return json(res, 400, { error: error.message })
+    }
+  }
+
+  const mergeMatch = /^api\/episodes\/([^/]+)\/transcript\/lines\/([^/]+)\/merge$/.exec(routePath)
+  if (mergeMatch && method === 'POST') {
+    const id = decodeURIComponent(mergeMatch[1])
+    if (!getEpisode(id)) return json(res, 404, { error: '单集不存在' })
+    const before = await readTranscript(id)
+    if (!before) return json(res, 404, { error: '还没有转写' })
+    try {
+      pushUndo(id, before)
+      const transcript = await mergeTranscriptLine(id, decodeURIComponent(mergeMatch[2]))
+      return json(res, 200, { transcript })
+    } catch (error) {
+      return json(res, 400, { error: error.message })
+    }
+  }
+
+  const undoMatch = /^api\/episodes\/([^/]+)\/transcript\/undo$/.exec(routePath)
+  if (undoMatch && method === 'POST') {
+    const id = decodeURIComponent(undoMatch[1])
+    if (!getEpisode(id)) return json(res, 404, { error: '单集不存在' })
+    const transcript = await readTranscript(id)
+    if (!transcript) return json(res, 404, { error: '还没有转写' })
+    const stack = undoStacks.get(id) || []
+    if (!stack.length) return json(res, 409, { error: '没有可以撤销的修改' })
+    transcript.lines = stack.pop()
+    transcript.text = transcript.lines.map((line) => line.text).join(' ')
+    await saveTranscript(transcript)
+    return json(res, 200, { transcript })
+  }
+
+  const validateMatch = /^api\/episodes\/([^/]+)\/transcript\/validate$/.exec(routePath)
+  if (validateMatch && method === 'GET') {
+    return json(res, 200, await validateTranscript(decodeURIComponent(validateMatch[1])))
   }
 
   const transcriptExportMatch = /^api\/episodes\/([^/]+)\/transcript\/export$/.exec(routePath)

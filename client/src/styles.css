@@ -1134,3 +1134,16 @@ select:focus-visible {
 .jobs-foot { display: flex; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--line); flex-wrap: wrap; }
 .mini-link { border: 0; background: none; padding: 2px 4px; color: var(--muted); font-size: 12px; cursor: pointer; }
 .mini-link:hover { color: var(--accent); }
+
+/* ---- P2：字幕行编辑 ---- */
+.seg-row { align-items: flex-start; }
+.seg-row.is-editing { background: #1b1b23; cursor: default; }
+.seg-tools { display: flex; gap: 2px; margin-left: auto; opacity: 0; transition: opacity .12s ease; }
+.seg-row:hover .seg-tools, .seg-row:focus-within .seg-tools { opacity: 1; }
+.seg-tool { border: 0; background: none; color: #8b8b96; font-size: 12px; padding: 1px 4px; cursor: pointer; border-radius: 4px; }
+.seg-tool:hover { color: #e6a54a; background: rgba(230,165,74,.12); }
+.seg-edit { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
+.seg-edit textarea { width: 100%; resize: vertical; border: 1px solid #33333d; border-radius: 7px; background: #101015; color: #ececf2; font: inherit; font-size: 13px; line-height: 1.55; padding: 7px 9px; }
+.seg-edit textarea:focus { outline: none; border-color: rgba(230,165,74,.6); }
+.seg-edit-actions { display: flex; gap: 12px; }
+.tr-issues { margin: 6px 12px 8px; padding: 8px 10px; border: 1px solid rgba(224,122,95,.35); border-radius: 8px; background: rgba(224,122,95,.08); color: #e0927c; font-size: 12px; line-height: 1.6; }

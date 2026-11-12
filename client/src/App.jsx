@@ -57,7 +57,8 @@ function fmtDate(ms) {
 
 function initialOf(title) {
   const text = String(title || '').trim()
-  return text ? text.charAt(0).toUpperCase() : '·'
+  const match = text.match(/[A-Za-z\u3400-\u9fff]/)
+  return match ? match[0].toUpperCase() : '♫'
 }
 
 function shortPath(folder) {
@@ -287,8 +288,9 @@ function AddFolderDialog({ onSubmit, onPick, onClose }) {
   )
 }
 
-function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onOpenSettings, inline = false }) {
+function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onOpenSettings, inline = false, editingId = null, draft = '', onDraftChange, onEditLine, onSaveLine, onCancelEdit, onSplitLine, onMergeLine, onUndo, onValidate, issues = [] }) {
   const bodyRef = useRef(null)
+  const editRef = useRef(null)
   const activeIndex = transcript?.lines?.findIndex((line) => position >= line.start && position < line.end) ?? -1
 
   useEffect(() => {
@@ -317,6 +319,8 @@ function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, 
           <button className="mini-link" onClick={onOpenSettings}>设置</button>
           {transcript ? (
             <>
+              <button className="mini-link" onClick={onUndo} title="撤销上一步编辑">撤销</button>
+              <button className="mini-link" onClick={onValidate} title="导出前检查字幕">校验</button>
               <a className="mini-link" href={`${API}/episodes/${transcript.id}/transcript/export?format=srt`} download>SRT</a>
               <a className="mini-link" href={`${API}/episodes/${transcript.id}/transcript/export?format=md`} download>Markdown</a>
             </>
@@ -325,22 +329,56 @@ function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, 
         </div>
       </header>
       <div className="transcript-body" ref={bodyRef}>
+        {transcript && issues?.length ? (
+          <div className="tr-issues">
+            {issues.slice(0, 5).map((issue) => <div key={issue}>· {issue}</div>)}
+            {issues.length > 5 ? <div>…共 {issues.length} 条</div> : null}
+          </div>
+        ) : null}
         {job?.status === 'running' ? <div className="tr-running">翻译中…</div> : null}
         {job?.status === 'error' ? <div className="tr-running err">{job.error}</div> : null}
         {transcript ? (
           transcript.lines.map((line, index) => (
-            <button
+            <div
               key={line.id}
               data-seg={index}
-              className={`seg-row ${index === activeIndex ? 'active' : ''}`}
+              className={`seg-row ${index === activeIndex ? 'active' : ''} ${editingId === line.id ? 'is-editing' : ''}`}
               onClick={() => onSeek(line.start)}
             >
               <span className="seg-time">{fmtTime(line.start)}</span>
-              <span className="seg-text">
-                {line.text}
-                {line.translations?.[target] ? <span className="seg-trans">{line.translations[target]}</span> : null}
-              </span>
-            </button>
+              {editingId === line.id ? (
+                <span className="seg-edit" onClick={(event) => event.stopPropagation()}>
+                  <textarea
+                    ref={editRef}
+                    value={draft}
+                    rows={Math.min(4, Math.max(2, Math.ceil((draft.length || 1) / 40)))}
+                    onChange={(event) => onDraftChange(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) onSaveLine(line.id)
+                      if (event.key === 'Escape') onCancelEdit()
+                    }}
+                  />
+                  <span className="seg-edit-actions">
+                    <button className="seg-tool" onClick={() => onSaveLine(line.id)}>保存</button>
+                    <button className="seg-tool" onClick={() => onSplitLine(line.id, editRef.current?.selectionStart ?? Math.floor(draft.length / 2))}>拆分</button>
+                    <button className="seg-tool" onClick={onCancelEdit}>取消</button>
+                  </span>
+                </span>
+              ) : (
+                <>
+                  <span className="seg-text">
+                    {line.text}
+                    {line.translations?.[target] ? <span className="seg-trans">{line.translations[target]}</span> : null}
+                  </span>
+                  <span className="seg-tools">
+                    <button className="seg-tool" title="编辑这一行" onClick={(event) => { event.stopPropagation(); onEditLine(line) }}>✎</button>
+                    {index < transcript.lines.length - 1 ? (
+                      <button className="seg-tool" title="与下一行合并" onClick={(event) => { event.stopPropagation(); onMergeLine(line.id) }}>⇣</button>
+                    ) : null}
+                  </span>
+                </>
+              )}
+            </div>
           ))
         ) : running ? (
           <div className="transcript-status">
@@ -464,6 +502,9 @@ export default function App() {
   const [jobs, setJobs] = useState([])
   const [batchMode, setBatchMode] = useState(false)
   const [selected, setSelected] = useState([])
+  const [editingLineId, setEditingLineId] = useState(null)
+  const [draftText, setDraftText] = useState('')
+  const [txIssues, setTxIssues] = useState([])
 
   const audioRef = useRef(null)
   const currentRef = useRef(null)
@@ -734,6 +775,64 @@ export default function App() {
   const toggleSelected = useCallback((id) => {
     setSelected((prev) => (prev.includes(id) ? prev.filter((value) => value !== id) : [...prev, id]))
   }, [])
+
+  const transcriptMutate = useCallback(async (path, method, body) => {
+    try {
+      const data = await sendJSON(`${API}${path}`, method, body || {})
+      if (data?.transcript) setTranscript(data.transcript)
+      return data
+    } catch (err) {
+      flash(err.message)
+      return null
+    }
+  }, [flash])
+
+  const editLine = useCallback((line) => {
+    setEditingLineId(line.id)
+    setDraftText(line.text)
+    setTxIssues([])
+  }, [])
+
+  const saveLine = useCallback(async (lineId) => {
+    if (!transcript) return
+    const data = await transcriptMutate(`/episodes/${transcript.id}/transcript/lines/${lineId ?? editingLineId}`, 'PUT', { text: draftText })
+    if (data) {
+      setEditingLineId(null)
+      flash('这一行已保存')
+    }
+  }, [transcript, editingLineId, draftText, transcriptMutate, flash])
+
+  const splitLine = useCallback(async (lineId, offset) => {
+    if (!transcript) return
+    const data = await transcriptMutate(`/episodes/${transcript.id}/transcript/lines/${lineId ?? editingLineId}/split`, 'POST', { offset })
+    if (data) {
+      setEditingLineId(null)
+      flash('已拆成两行')
+    }
+  }, [transcript, editingLineId, transcriptMutate, flash])
+
+  const mergeLine = useCallback(async (lineId) => {
+    if (!transcript) return
+    const data = await transcriptMutate(`/episodes/${transcript.id}/transcript/lines/${lineId}/merge`, 'POST', {})
+    if (data) flash('已与下一行合并')
+  }, [transcript, transcriptMutate, flash])
+
+  const undoTranscript = useCallback(async () => {
+    if (!transcript) return
+    const data = await transcriptMutate(`/episodes/${transcript.id}/transcript/undo`, 'POST', {})
+    if (data) flash('已撤销上一步')
+  }, [transcript, transcriptMutate, flash])
+
+  const validateTx = useCallback(async () => {
+    if (!transcript) return
+    try {
+      const data = await getJSON(`${API}/episodes/${transcript.id}/transcript/validate`)
+      setTxIssues(data.issues || [])
+      flash(data.ok ? '字幕校验通过' : `发现 ${(data.issues || []).length} 个问题`)
+    } catch (err) {
+      flash(err.message)
+    }
+  }, [transcript, flash])
 
   const refreshTranscript = useCallback(async () => {
     const id = currentRef.current?.id
@@ -1081,7 +1180,7 @@ export default function App() {
         <div className="brand">
           <span className="brand-mark"><Icon name="wave" size={20} /></span>
           <span className="brand-name">Podwave</span>
-          <span className="brand-version">0.4</span>
+          <span className="brand-version">0.5</span>
           <button className="icon-btn brand-collapse" title="收起侧边栏" onClick={toggleNav}>
             <Icon name="chevron-left" size={16} />
           </button>
@@ -1207,6 +1306,17 @@ export default function App() {
                   chunks={txInfo?.chunks}
                   queued={txInfo?.queued}
                   elapsed={txElapsed}
+                  editingId={editingLineId}
+                  draft={draftText}
+                  onDraftChange={setDraftText}
+                  onEditLine={editLine}
+                  onSaveLine={saveLine}
+                  onCancelEdit={() => setEditingLineId(null)}
+                  onSplitLine={splitLine}
+                  onMergeLine={mergeLine}
+                  onUndo={undoTranscript}
+                  onValidate={validateTx}
+                  issues={txIssues}
                   onCancel={cancelTranscript}
                   error={txError}
                   position={position}
@@ -1309,6 +1419,17 @@ export default function App() {
           chunks={txInfo?.chunks}
           queued={txInfo?.queued}
           elapsed={txElapsed}
+          editingId={editingLineId}
+          draft={draftText}
+          onDraftChange={setDraftText}
+          onEditLine={editLine}
+          onSaveLine={saveLine}
+          onCancelEdit={() => setEditingLineId(null)}
+          onSplitLine={splitLine}
+          onMergeLine={mergeLine}
+          onUndo={undoTranscript}
+          onValidate={validateTx}
+          issues={txIssues}
           onCancel={cancelTranscript}
           error={txError}
           position={position}
