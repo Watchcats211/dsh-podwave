@@ -48,6 +48,7 @@ import {
   splitTranscriptLine,
   validateTranscript,
 } from './transcribe.js'
+import { isLinux, isMac, isWindows } from './platform.js'
 import { listJobs, removeJob } from './jobs.js'
 import { scan as scanSetup, install as installSetup, cancelSetup, setupJob } from './setup.js'
 import { getSection, updateSection } from './config.js'
@@ -223,15 +224,40 @@ function safeName(name) {
 function pickFolderDialog() {
   const preset = process.env.PODWAVE_PICK_FOLDER
   if (preset) return Promise.resolve({ path: preset })
+  let command
+  let args
+  if (isMac) {
+    command = 'osascript'
+    args = ['-e', 'POSIX path of (choose folder with prompt "选择存放播客的文件夹")']
+  } else if (isWindows) {
+    command = 'powershell.exe'
+    args = [
+      '-NoProfile',
+      '-STA',
+      '-Command',
+      [
+        '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
+        'Add-Type -AssemblyName System.Windows.Forms',
+        '$dialog = New-Object System.Windows.Forms.FolderBrowserDialog',
+        "$dialog.Description = '选择存放播客的文件夹'",
+        "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dialog.SelectedPath }",
+      ].join('; '),
+    ]
+  } else if (isLinux) {
+    command = 'zenity'
+    args = ['--file-selection', '--directory', '--title=选择存放播客的文件夹']
+  } else {
+    return Promise.resolve({ error: '当前系统没有可用的文件夹选择器，请手动输入路径' })
+  }
   return new Promise((resolve) => {
-    const script = 'POSIX path of (choose folder with prompt "选择存放播客的文件夹")'
-    execFile('osascript', ['-e', script], { timeout: 180000 }, (error, stdout) => {
+    execFile(command, args, { timeout: 180000 }, (error, stdout) => {
       if (error) {
         const message = String(error.stderr || error.message || '')
-        if (/canceled|cancelled|-128/i.test(message)) return resolve({ canceled: true })
+        if (/canceled|cancelled|-128|exit code 1/i.test(message)) return resolve({ canceled: true })
+        if (error.code === 'ENOENT') return resolve({ error: '找不到系统选择器，请手动输入路径' })
         return resolve({ error: `打开系统选择器失败：${message.trim().slice(0, 240)}` })
       }
-      const picked = stdout.trim()
+      const picked = String(stdout || '').trim()
       resolve(picked ? { path: picked } : { canceled: true })
     })
   })
@@ -262,7 +288,7 @@ async function route(ctx, req, res) {
     return json(res, 200, { cancelled: cancelSetup() })
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.10.0', transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.10.1', transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()

@@ -4,9 +4,10 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { DATA_DIR } from './state.js'
+import { ffmpegPath, venvPython } from './platform.js'
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'diarize.py')
-const PYTHON = path.join(DATA_DIR, 'runtime', '.venv', 'bin', 'python')
+const PYTHON = venvPython()
 export const DIARIZATION_DIR = path.join(DATA_DIR, 'models', 'diarization')
 export const SEG_MODEL = path.join(DIARIZATION_DIR, 'sherpa-onnx-pyannote-segmentation-3-0', 'model.onnx')
 export const EMB_MODEL = path.join(DIARIZATION_DIR, '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx')
@@ -32,7 +33,7 @@ export function runDiarization(audioPath, { threshold = 0.6, numSpeakers = -1 } 
     if (Number(numSpeakers) > 0) args.push('--num-speakers', String(numSpeakers))
     const child = spawn(PYTHON, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, PYTHONUNBUFFERED: '1', PODWAVE_FFMPEG: process.env.PODWAVE_FFMPEG || '/opt/homebrew/bin/ffmpeg' },
+      env: { ...process.env, PYTHONUNBUFFERED: '1', PODWAVE_FFMPEG: process.env.PODWAVE_FFMPEG || ffmpegPath() || 'ffmpeg' },
     })
     let stdout = ''
     let stderr = ''

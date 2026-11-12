@@ -189,16 +189,35 @@ function isJunk(p) {
   return /^\.gitattributes$|^README|^LICENSE|^imgs\/|^train\/|\.md$/i.test(p)
 }
 
-export function extractArchive(file, destDir) {
-  const lower = file.toLowerCase()
-  const cmd = lower.endsWith('.zip') ? (process.platform === 'darwin' ? 'unzip' : 'tar') : 'tar'
-  const args =
-    cmd === 'unzip' ? ['-q', '-o', file, '-d', destDir] : lower.endsWith('.zip') ? ['-xf', file, '-C', destDir] : ['-xf', file, '-C', destDir]
+function runExtract(cmd, args) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: 'ignore' })
     child.on('error', reject)
     child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} 解压失败（${code}）`))))
   })
+}
+
+export async function extractArchive(file, destDir) {
+  const lower = file.toLowerCase()
+  const attempts = []
+  if (lower.endsWith('.zip')) {
+    attempts.push(['unzip', ['-q', '-o', file, '-d', destDir]])
+    attempts.push(['tar', ['-xf', file, '-C', destDir]])
+    attempts.push(['powershell.exe', ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${file}' -DestinationPath '${destDir}' -Force`]])
+    attempts.push(['python3', ['-m', 'zipfile', '-e', file, destDir]])
+  } else {
+    attempts.push(['tar', ['-xf', file, '-C', destDir]])
+  }
+  let lastError = null
+  for (const [cmd, args] of attempts) {
+    try {
+      await runExtract(cmd, args)
+      return
+    } catch (error) {
+      lastError = error
+    }
+  }
+  throw lastError || new Error('解压失败')
 }
 
 async function dataDir() {

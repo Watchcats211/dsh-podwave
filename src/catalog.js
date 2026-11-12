@@ -120,6 +120,35 @@ export const CATALOG = {
   },
 }
 
+export const FFMPEG_BINARY = {
+  id: 'ffmpeg',
+  label: 'ffmpeg / ffprobe',
+  kind: 'tool',
+  dir: '../runtime/ffmpeg-download',
+  note: '切块、时长探测与说话人分离需要；Windows / Linux 可自动下载，macOS 优先用 Homebrew。',
+  assets: {
+    'win32-x64': {
+      file: 'ffmpeg-master-latest-win64-gpl.zip',
+      bytes: 201_918_539,
+      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip',
+    },
+    'linux-x64': {
+      file: 'ffmpeg-master-latest-linux64-gpl.tar.xz',
+      bytes: 157_285_360,
+      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz',
+    },
+    'linux-arm64': {
+      file: 'ffmpeg-master-latest-linuxarm64-gpl.tar.xz',
+      bytes: 92_000_000,
+      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linuxarm64-gpl.tar.xz',
+    },
+  },
+}
+
+export function ffmpegAsset(platform) {
+  return FFMPEG_BINARY.assets[platformKey(platform)] || null
+}
+
 export const LLAMA_BINARY = {
   id: 'llama-cpp',
   label: 'llama.cpp 运行时',

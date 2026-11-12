@@ -9,7 +9,7 @@ import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:
 import { fileURLToPath } from 'node:url'
 import { DATA_DIR } from './state.js'
 import { loadModelConfig, modelDir } from './models.js'
-import { isWindows, venvPython } from './platform.js'
+import { ffmpegPath, ffprobePath, venvPython } from './platform.js'
 import { getSection } from './config.js'
 import { assignSpeakers, diarizeInfo, runDiarization } from './diarize.js'
 import { flushJobs, getJob, jobKey, removeJob, upsertJob } from './jobs.js'
@@ -19,8 +19,8 @@ const WORK_DIR = path.join(TRANSCRIPTS_DIR, '.work')
 const RUNTIME_DIR = path.join(DATA_DIR, 'runtime')
 const CLI = path.join(RUNTIME_DIR, '.venv', 'bin', 'mlx-qwen3-asr')
 const SHERPA_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'asr_sherpa_batch.py')
-const FFMPEG = process.env.PODWAVE_FFMPEG || (fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg')
-const FFPROBE = process.env.PODWAVE_FFPROBE || (fs.existsSync('/opt/homebrew/bin/ffprobe') ? '/opt/homebrew/bin/ffprobe' : 'ffprobe')
+const FFMPEG = process.env.PODWAVE_FFMPEG || ffmpegPath() || 'ffmpeg'
+const FFPROBE = process.env.PODWAVE_FFPROBE || ffprobePath() || 'ffprobe'
 
 // 估算进度用：转写速度约 3.2x 实时（含每次启动加载模型的固定开销）。
 const SPEED = 3.2
