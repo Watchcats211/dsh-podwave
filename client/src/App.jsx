@@ -481,6 +481,7 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('recent')
   const [view, setView] = useState('all')
+  const [filter, setFilter] = useState('all')
   const [detailId, setDetailId] = useState(null)
   const [current, setCurrent] = useState(null)
   const [playing, setPlaying] = useState(false)
@@ -872,6 +873,28 @@ export default function App() {
     await startTranslate(value)
   }, [transcript, startTranslate, refreshTranscript])
 
+  const toggleFavorite = (item) => {
+    const favorite = !item.favorite
+    setItems((list) => list.map((entry) => (entry.id === item.id ? { ...entry, favorite } : entry)))
+    sendJSON(`${API}/episodes/${item.id}/favorite`, 'PUT', { favorite }).catch((error) => flash(error.message))
+  }
+
+  const removeEpisodes = async (ids) => {
+    if (!ids.length) return
+    if (!window.confirm(`从播放器移除 ${ids.length} 集？只删索引，不会动源文件。`)) return
+    for (const id of ids) {
+      try {
+        await fetch(`${API}/episodes/${id}`, { method: 'DELETE' })
+      } catch {
+        /* ignore */
+      }
+    }
+    setItems((list) => list.filter((entry) => !ids.includes(entry.id)))
+    setSelected([])
+    if (ids.includes(detailId)) setDetailId(null)
+    flash(`已移除 ${ids.length} 集，源文件未动`)
+  }
+
   const ordered = useMemo(() => {
     const list = [...items]
     if (sort === 'title') list.sort((a, b) => a.title.localeCompare(b.title, 'zh-Hans-CN'))
@@ -890,9 +913,12 @@ export default function App() {
       const ratio = total ? pos / total : 0
       if (view === 'inprogress') return pos > 5 && ratio < 0.97
       if (view === 'finished') return ratio >= 0.97
+      if (filter === 'unheard') return pos <= 5
+      if (filter === 'transcribed') return Boolean(item.hasTranscript)
+      if (filter === 'favorites') return Boolean(item.favorite)
       return true
     })
-  }, [ordered, query, view, progress])
+  }, [ordered, query, view, filter, progress])
 
   const activeJobs = useMemo(() => jobs.filter((job) => job.status === 'queued' || job.status === 'running'), [jobs])
   const unTranscribed = useMemo(() => visible.filter((item) => !item.hasTranscript), [visible])
@@ -1184,7 +1210,7 @@ export default function App() {
         <div className="brand">
           <span className="brand-mark"><Icon name="wave" size={20} /></span>
           <span className="brand-name">Podwave</span>
-          <span className="brand-version">0.6</span>
+          <span className="brand-version">0.7</span>
           <button className="icon-btn brand-collapse" title="收起侧边栏" onClick={toggleNav}>
             <Icon name="chevron-left" size={16} />
           </button>
@@ -1266,6 +1292,7 @@ export default function App() {
               转写未转写的 {unTranscribed.length} 集
             </button>
             <button className="btn primary" disabled={!selected.length} onClick={() => submitBatch(selected)}>转写选中</button>
+            <button className="btn ghost danger" disabled={!selected.length} onClick={() => removeEpisodes(selected)}>移除选中</button>
             <button className="btn ghost" onClick={() => { setSelected([]); setBatchMode(false) }}>取消</button>
           </div>
         ) : null}
@@ -1298,6 +1325,7 @@ export default function App() {
                       {transcript ? '重新转写' : '转写字幕'}
                     </button>
                   )}
+                  <button className="btn ghost danger" onClick={() => removeEpisodes([detailItem.id])}>从播放器移除</button>
                 </div>
               </div>
               <div className="episode-right">
@@ -1337,6 +1365,18 @@ export default function App() {
           </>
         ) : (
           <>
+        <div className="filter-chips">
+          {[
+            ['all', '全部'],
+            ['unheard', '未听'],
+            ['transcribed', '有字幕'],
+            ['favorites', '收藏'],
+          ].map(([key, label]) => (
+            <button key={key} className={`chip ${filter === key ? 'is-on' : ''}`} onClick={() => setFilter(key)}>
+              {label}
+            </button>
+          ))}
+        </div>
         {view === 'all' && !query && continueList.length > 0 ? (
           <section className="continue">
             <h2>接着听</h2>
@@ -1401,6 +1441,17 @@ export default function App() {
                       </span>
                     </span>
                     <span className="col-duration row-duration">{fmtDuration(item.duration)}</span>
+                    <span
+                      className={`row-star ${item.favorite ? 'is-on' : ''}`}
+                      role="button"
+                      title={item.favorite ? '取消收藏' : '收藏'}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        toggleFavorite(item)
+                      }}
+                    >
+                      ★
+                    </span>
                     <span className="col-progress row-progress">
                       {isFinished(item) ? <span className="finished-mark"><Icon name="check" size={14} /> 已播完</span> : pct > 0 ? <span className="mini-track"><span style={{ width: `${pct}%` }} /></span> : null}
                     </span>
