@@ -185,6 +185,10 @@ export function getEpisode(id) {
   return byId.get(id) || null
 }
 
+export function getEpisodePaths() {
+  return episodes.map(({ id, file, size }) => ({ id, file, size }))
+}
+
 export function getEpisodes() {
   return episodes.map(({ file, folder, ...rest }) => ({
     ...rest,

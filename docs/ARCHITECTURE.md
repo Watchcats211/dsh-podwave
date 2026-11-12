@@ -39,6 +39,11 @@ library.js（媒体库）  state.js（播放进度/文件夹）
 
 旧的 `ui.json` / `translate.json` / `models.json` 会在首次启动时迁入 `config.json` 并改名为 `*.bak`。
 
+## 媒体库状态
+
+- `state.json` 里 `favorites: [episodeId]`、`hidden: [episodeId]`；`hidden` 只影响列表，不会删除源文件。
+- 导入策略与孤儿清理的配置在 `config.json` 的 `import.mode`（`copy` / `reference`）。
+
 ## transcript v2
 
 ```json
@@ -90,7 +95,7 @@ library.js（媒体库）  state.js（播放进度/文件夹）
 | --- | --- | --- |
 | GET | `/health` | 版本、转写运行时、翻译配置、说话人分离状态 |
 | GET | `/state` | 文件夹、播放进度、设置 |
-| GET | `/episodes` | 媒体库条目 |
+| GET | `/episodes` | 媒体库条目（含 `hasTranscript` / `favorite`，过滤 `hidden`） |
 | POST | `/scan` | 重新扫描 |
 | POST/DELETE | `/folders` | 添加/移除文件夹 |
 | POST | `/pick-folder` | 系统文件夹选择器 |
@@ -111,6 +116,10 @@ library.js（媒体库）  state.js（播放进度/文件夹）
 | GET | `/history` | 已完成的转写/翻译 |
 | GET | `/jobs` | 任务记录 |
 | GET/PUT | `/ui-settings` | 侧栏入口与收起状态 |
+| PUT | `/episodes/:id/favorite` | 收藏 / 取消收藏 |
+| DELETE | `/episodes/:id` | 仅从索引隐藏（不动源文件） |
+| GET/PUT | `/import/settings` | 导入策略（copy / reference）与孤儿统计 |
+| GET/DELETE | `/imports/orphans` | 列出 / 清理未引用的 imports 批次 |
 
 ## 发布流程
 

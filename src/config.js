@@ -18,6 +18,7 @@ export const CONFIG_DEFAULTS = {
   },
   models: { asrModel: 'qwen3-asr-1.7b-8bit', translateModel: 'qwen3-8b-4bit' },
   transcribe: { hotwords: [], chunkMinutes: 15, diarize: true },
+  import: { mode: 'copy' },
 }
 
 const LEGACY_FILES = [

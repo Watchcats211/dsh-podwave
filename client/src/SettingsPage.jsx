@@ -43,6 +43,7 @@ export default function SettingsPage() {
   const [transcribeInfo, setTranscribeInfo] = useState(null)
   const [trConfig, setTrConfig] = useState(null)
   const [uiSettings, setUiSettings] = useState({ showSidebarPanel: true })
+  const [importConfig, setImportConfig] = useState({ mode: 'copy', orphans: 0, orphanBytes: 0 })
   const [hotwords, setHotwords] = useState('')
   const [chunkMinutes, setChunkMinutes] = useState(15)
   const [diarize, setDiarize] = useState(true)
@@ -61,13 +62,15 @@ export default function SettingsPage() {
 
   const load = useCallback(async () => {
     try {
-      const [historyData, modelsData, trData, uiData, txData] = await Promise.all([
+      const [historyData, modelsData, trData, uiData, txData, importData] = await Promise.all([
         getJSON(`${API}/history`),
         getJSON(`${API}/models`),
         getJSON(`${API}/translate/settings`),
         getJSON(`${API}/ui-settings`),
         getJSON(`${API}/transcribe/settings`),
+        getJSON(`${API}/import/settings`),
       ])
+      setImportConfig({ mode: importData.mode || 'copy', orphans: importData.orphans || 0, orphanBytes: importData.orphanBytes || 0 })
       setUiSettings({ showSidebarPanel: uiData?.showSidebarPanel !== false })
       setHotwords((txData.hotwords || []).join(' '))
       setChunkMinutes(txData.chunkMinutes || 15)
@@ -147,6 +150,36 @@ export default function SettingsPage() {
         window.dispatchEvent(new CustomEvent('podwave:ui-settings', { detail: data }))
       }
       flash('界面设置已保存')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving('')
+    }
+  }
+
+  const saveImport = async (mode) => {
+    setSaving('import')
+    setError('')
+    try {
+      const data = await sendJSON(`${API}/import/settings`, 'PUT', { mode })
+      setImportConfig((prev) => ({ ...prev, mode: data.mode }))
+      flash('导入方式已保存')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving('')
+    }
+  }
+
+  const cleanupImports = async () => {
+    if (!importConfig.orphans) return
+    if (!window.confirm(`清理 ${importConfig.orphans} 个未引用的导入批次？只删 imports/ 下的副本。`)) return
+    setSaving('imports')
+    setError('')
+    try {
+      const data = await sendJSON(`${API}/imports/orphans`, 'DELETE', {})
+      setImportConfig((prev) => ({ ...prev, orphans: 0, orphanBytes: 0 }))
+      flash(`已清理 ${data.removed || 0} 个批次`)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -252,7 +285,27 @@ export default function SettingsPage() {
           </button>
           <span className="settings-status">热词最多 500 个</span>
         </div>
+      
       </section>
+
+      <section className="settings-card">
+        <h2>导入与清理</h2>
+        <p className="settings-hint">拖拽音频默认复制到 ~/.podwave/imports/；选择文件夹是原地引用。清理只删没有文件夹引用的副本，不碰原始文件。</p>
+        <div className="settings-fields">
+          <label className="check-row">
+            <input type="radio" name="import-mode" checked={importConfig.mode === 'copy'} onChange={() => saveImport('copy')} />
+            <span>复制到 imports/（推荐，删除源文件也不影响播放）</span>
+          </label>
+          <label className="check-row">
+            <input type="radio" name="import-mode" checked={importConfig.mode === 'reference'} onChange={() => saveImport('reference')} />
+            <span>原地引用（不复制，直接引用文件所在目录）</span>
+          </label>
+        </div>
+        <div className="settings-actions">
+          <button className="settings-btn" onClick={cleanupImports} disabled={saving === 'imports' || !importConfig.orphans}>
+            {importConfig.orphans ? `清理 ${importConfig.orphans} 个未引用批次（${(importConfig.orphanBytes / 1048576).toFixed(1)} MB）` : '没有可清理的导入副本'}
+          </button>
+        </div></section>
 
       <section className="settings-card">
         <h2>API 与翻译引擎</h2>

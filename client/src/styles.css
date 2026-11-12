@@ -1154,3 +1154,13 @@ select:focus-visible {
 .spk-2 { color: #e0af68; background: rgba(224, 175, 104, 0.12); }
 .spk-3 { color: #bb9af7; background: rgba(187, 154, 247, 0.12); }
 .spk-4 { color: #f7768e; background: rgba(247, 118, 142, 0.12); }
+
+/* P4 媒体库：筛选、收藏、移除 */
+.filter-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 14px; }
+.chip { padding: 4px 11px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
+.chip:hover { color: var(--text); border-color: #3a3a44; }
+.chip.is-on { background: rgba(230, 165, 74, 0.12); border-color: rgba(230, 165, 74, 0.45); color: #f0c98a; }
+.row-star { flex: none; width: 22px; text-align: center; color: #34343e; font-size: 15px; line-height: 1; cursor: pointer; }
+.row-star:hover { color: #c8a45c; }
+.row-star.is-on { color: #e6a54a; }
+.btn.danger { color: #f08a8a; border-color: rgba(240, 138, 138, 0.35); }

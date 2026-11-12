@@ -10,6 +10,8 @@ const STATE_FILE = path.join(DATA_DIR, 'state.json')
 const DEFAULT_STATE = {
   folders: [],
   progress: {},
+  favorites: [],
+  hidden: [],
   settings: { rate: 1, volume: 0.9, lastEpisodeId: null },
 }
 

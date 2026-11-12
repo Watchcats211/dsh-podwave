@@ -1,7 +1,7 @@
 // dsh-podwave host 半片：在 DSH 的 webServer 上挂 /podwave/api/*。
 // 数据仍然放在 ~/.podwave，和独立版 Podwave 共用媒体库与进度。
 import fs from 'node:fs'
-import { mkdir, stat } from 'node:fs/promises'
+import { copyFile, mkdir, realpath, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { execFile } from 'node:child_process'
@@ -10,6 +10,7 @@ import { DATA_DIR } from './state.js'
 import {
   addFolderState,
   getState,
+  updateState,
   initState,
   removeFolderState,
   removeProgressFor,
@@ -22,6 +23,7 @@ import {
   forgetEpisodesUnder,
   getCoverPath,
   getEpisode,
+  getEpisodePaths,
   getEpisodes,
   getScanState,
   scanLibrary,
@@ -55,6 +57,40 @@ import { listModels, loadModelConfig, saveModelConfig } from './models.js'
 export const name = 'dsh-podwave'
 
 const IMPORTS_DIR = path.join(DATA_DIR, 'imports')
+
+function importOrphans() {
+  let entries = []
+  try {
+    entries = fs.readdirSync(IMPORTS_DIR, { withFileTypes: true }).filter((entry) => entry.isDirectory())
+  } catch {
+    return { batches: [], bytes: 0 }
+  }
+  const referenced = new Set(getState().folders || [])
+  const batches = []
+  let bytes = 0
+  for (const entry of entries) {
+    const dir = path.join(IMPORTS_DIR, entry.name)
+    if (referenced.has(dir)) continue
+    let size = 0
+    const walk = (target) => {
+      let info
+      try {
+        info = fs.statSync(target)
+      } catch {
+        return
+      }
+      if (info.isDirectory()) {
+        for (const name of fs.readdirSync(target)) walk(path.join(target, name))
+      } else {
+        size += info.size
+      }
+    }
+    walk(dir)
+    bytes += size
+    batches.push({ name: entry.name, path: dir, bytes: size })
+  }
+  return { batches, bytes }
+}
 
 // P2：撤销栈（每集最多 20 步，进程内保存）。
 const undoStacks = new Map()
@@ -213,7 +249,7 @@ async function route(ctx, req, res) {
   const method = req.method || 'GET'
 
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.6.0', transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.7.0', transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -228,8 +264,12 @@ async function route(ctx, req, res) {
       transcriptIds = []
     }
     const withTranscript = new Set(transcriptIds)
+    const favorites = new Set(state.favorites || [])
+    const hidden = new Set(state.hidden || [])
     return json(res, 200, {
-      items: getEpisodes().map((episode) => ({ ...episode, hasTranscript: withTranscript.has(episode.id) })),
+      items: getEpisodes()
+        .filter((episode) => !hidden.has(episode.id))
+        .map((episode) => ({ ...episode, hasTranscript: withTranscript.has(episode.id), favorite: favorites.has(episode.id) })),
       folders: state.folders,
       progress: state.progress,
       scan: getScanState(),
@@ -265,7 +305,13 @@ async function route(ctx, req, res) {
     if (method !== 'POST') return json(res, 405, { error: 'Method not allowed' })
     const body = await readJson(req)
     const inputs = Array.isArray(body?.paths) ? body.paths : []
+    const mode = (getSection('import') || {}).mode === 'reference' ? 'reference' : 'copy'
+    const library = getEpisodePaths()
+    const existing = new Map(library.map((episode) => [episode.file, episode.id]))
+    const signatures = new Set(library.map((episode) => `${path.basename(episode.file)}:${episode.size || 0}`))
+    const skipped = []
     let added = 0
+    let copied = 0
     for (const input of inputs) {
       const target = expandHome(String(input || ''))
       if (!target) continue
@@ -273,17 +319,85 @@ async function route(ctx, req, res) {
       try {
         info = await stat(target)
       } catch {
+        skipped.push({ path: target, reason: 'not-found' })
         continue
       }
-      const dir = info.isDirectory() ? target : path.dirname(target)
       try {
-        await addFolderByPath(dir)
-        added++
+        if (info.isDirectory()) {
+          await addFolderByPath(target)
+          added++
+          continue
+        }
+        const resolved = await realpath(target).catch(() => target)
+        if (existing.has(resolved) || signatures.has(`${path.basename(target)}:${info.size || 0}`)) {
+          skipped.push({ path: target, reason: 'duplicate' })
+          continue
+        }
+        signatures.add(`${path.basename(target)}:${info.size || 0}`)
+        if (mode === 'reference') {
+          await addFolderByPath(path.dirname(target))
+          added++
+        } else {
+          const batch = `drop-${Date.now()}-${copied}`
+          const dir = path.join(IMPORTS_DIR, batch)
+          await mkdir(dir, { recursive: true })
+          await copyFile(target, path.join(dir, path.basename(target)))
+          await addFolderByPath(dir)
+          copied++
+        }
       } catch (error) {
-        if (error.status !== 409) throw error
+        if (error.status !== 409) skipped.push({ path: target, reason: error.message })
       }
     }
-    return json(res, 200, { added, folders: getState().folders })
+    return json(res, 200, { added: added + copied, copied, skipped, mode, folders: getState().folders })
+  }
+
+  const favoriteMatch = /^api\/episodes\/([^/]+)\/favorite$/.exec(routePath)
+  if (favoriteMatch) {
+    if (method !== 'PUT') return json(res, 405, { error: 'Method not allowed' })
+    const id = decodeURIComponent(favoriteMatch[1])
+    const body = await readJson(req)
+    const favorite = Boolean(body?.favorite)
+    const favorites = new Set(getState().favorites || [])
+    if (favorite) favorites.add(id)
+    else favorites.delete(id)
+    updateState({ favorites: [...favorites] })
+    return json(res, 200, { id, favorite })
+  }
+
+  const hideMatch = /^api\/episodes\/([^/]+)$/.exec(routePath)
+  if (hideMatch) {
+    if (method !== 'DELETE') return json(res, 405, { error: 'Method not allowed' })
+    const id = decodeURIComponent(hideMatch[1])
+    const hidden = new Set(getState().hidden || [])
+    hidden.add(id)
+    updateState({ hidden: [...hidden] })
+    return json(res, 200, { id, hidden: true })
+  }
+
+  if (routePath === 'api/import/settings') {
+    if (method === 'GET') {
+      const config = getSection('import') || {}
+      const { batches, bytes } = importOrphans()
+      return json(res, 200, { mode: config.mode === 'reference' ? 'reference' : 'copy', orphans: batches.length, orphanBytes: bytes })
+    }
+    if (method === 'PUT') {
+      const body = await readJson(req)
+      const mode = body?.mode === 'reference' ? 'reference' : 'copy'
+      const next = updateSection('import', { mode })
+      return json(res, 200, { mode: next.mode })
+    }
+    return json(res, 405, { error: 'Method not allowed' })
+  }
+
+  if (routePath === 'api/imports/orphans') {
+    if (method === 'GET') return json(res, 200, importOrphans())
+    if (method === 'DELETE') {
+      const { batches } = importOrphans()
+      for (const batch of batches) await rm(batch.path, { recursive: true, force: true }).catch(() => {})
+      return json(res, 200, { removed: batches.length })
+    }
+    return json(res, 405, { error: 'Method not allowed' })
   }
 
   if (routePath === 'api/folders') {
@@ -632,6 +746,7 @@ export default {
                 res.end()
                 return
               }
+              console.error('[podwave-error]', error && error.stack ? error.stack : error)
               json(res, error.status || 500, { error: error.message || '服务器错误' })
             }
           },
