@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { ffmpegAsset, llamaAsset, platformKey } from '../src/catalog.js'
-import { ffmpegPath, venvBin, venvPython } from '../src/platform.js'
+import { ffmpegPath, recommendEngine, venvBin, venvPython } from '../src/platform.js'
 
 test('platformKey 覆盖三大平台', () => {
   assert.equal(platformKey({ os: 'win32', arch: 'x64' }), 'win32-x64')
@@ -30,6 +30,11 @@ test('虚拟环境路径按平台布局', () => {
     assert.ok(venvPython(dir).endsWith('/bin/python'))
     assert.ok(venvBin('python', dir).endsWith('/bin/python'))
   }
+})
+
+test('低内存 Windows 也不会推荐无法加载的 1.25bit', () => {
+  const pick = recommendEngine({ mlxCapable: false, memoryGB: 8, osLabel: 'Windows', os: 'win32', arch: 'x64' })
+  assert.equal(pick.translate, 'hy-mt2-1.8b-2bit')
 })
 
 test('ffmpeg 能被探测到或明确为空', () => {
