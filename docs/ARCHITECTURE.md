@@ -16,8 +16,8 @@ UI（App.jsx / SettingsPage.jsx）
   ↓ /podwave/api/*
 host.js（路由 + 鉴权 + 扫描触发）
   ↓
-transcribe.js   translate.js
-  ↓                 ↓
+transcribe.js   translate.js   diarize.js
+  ↓                 ↓              ↓
 jobs.js（任务落盘）  config.js（统一配置）
   ↓
 library.js（媒体库）  state.js（播放进度/文件夹）
@@ -63,6 +63,7 @@ library.js（媒体库）  state.js（播放进度/文件夹）
 
 - 行级时间戳来自模型 chunk 与词级时间戳对齐；标点取自 chunk 文本。
 - 译文按行存放，`providers` 记录本集每个目标语言用的翻译来源（`api` / `local`）。
+- `speaker` 由说话人分离（sherpa-onnx）填充，从 0 开始；`speakers` 是标签表（如 `[{"id":0,"label":"说话人 1"}]`），分离失败时为空。
 - 旧格式（`segments` + `translations[target][id]`）会在读取或启动迁移时自动升级。
 
 ## job
@@ -87,7 +88,7 @@ library.js（媒体库）  state.js（播放进度/文件夹）
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/health` | 版本、转写运行时、翻译配置 |
+| GET | `/health` | 版本、转写运行时、翻译配置、说话人分离状态 |
 | GET | `/state` | 文件夹、播放进度、设置 |
 | GET | `/episodes` | 媒体库条目 |
 | POST | `/scan` | 重新扫描 |
@@ -99,6 +100,11 @@ library.js（媒体库）  state.js（播放进度/文件夹）
 | GET | `/episodes/:id/cover` | 封面 |
 | PUT | `/progress/:id` · PATCH `/settings` | 播放进度 / 播放器设置 |
 | GET/DELETE/POST | `/episodes/:id/transcript` · `/transcribe` | 读取/删除/开始转写 |
+| POST | `/episodes/:id/transcribe/cancel` | 取消正在进行的转写 |
+| POST | `/transcribe/batch` | 批量转写（{ids}） |
+| GET/PUT | `/transcribe/settings` | 热词、分块时长、是否自动识别说话人 |
+| POST | `/episodes/:id/diarize` | 对已有字幕补跑说话人分离 |
+| PUT/POST | `/episodes/:id/transcript/lines/:lineId` 及 `/split` `/merge` `/undo` `/validate` | 字幕行编辑 |
 | GET/DELETE/POST/GET | `/episodes/:id/translate` · `/translate/settings` | 翻译与配置 |
 | GET | `/episodes/:id/transcript/export?format=srt\|md` | 导出字幕 |
 | GET/PUT | `/models` | 模型列表 / 选择 |

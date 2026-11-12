@@ -1147,3 +1147,10 @@ select:focus-visible {
 .seg-edit textarea:focus { outline: none; border-color: rgba(230,165,74,.6); }
 .seg-edit-actions { display: flex; gap: 12px; }
 .tr-issues { margin: 6px 12px 8px; padding: 8px 10px; border: 1px solid rgba(224,122,95,.35); border-radius: 8px; background: rgba(224,122,95,.08); color: #e0927c; font-size: 12px; line-height: 1.6; }
+
+.seg-speaker { flex: none; align-self: flex-start; margin-top: 1px; padding: 1px 7px; border-radius: 999px; font-size: 11px; line-height: 1.5; background: #1c1c24; color: #9aa4b2; white-space: nowrap; }
+.spk-0 { color: #7aa2f7; background: rgba(122, 162, 247, 0.12); }
+.spk-1 { color: #9ece6a; background: rgba(158, 206, 106, 0.12); }
+.spk-2 { color: #e0af68; background: rgba(224, 175, 104, 0.12); }
+.spk-3 { color: #bb9af7; background: rgba(187, 154, 247, 0.12); }
+.spk-4 { color: #f7768e; background: rgba(247, 118, 142, 0.12); }

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.6.0 — 2026-11-12
+
+P3：说话人分离（自动识别 + 彩色标签）。
+
+- 新增本地说话人分离：sherpa-onnx（pyannote segmentation + 3D-Speaker 声纹），完全离线，不需要 HF token。
+- 转写完成后自动把说话人分配到字幕行（按时间重叠投票），同一说话人颜色一致；字幕头部显示「N 位说话人」。
+- 设置 → 播客 → 转写新增「自动识别说话人」开关；分离失败不影响转写结果。
+- 新接口：`POST /api/episodes/:id/diarize`（对已有字幕补跑说话人）；`transcribe/settings` 支持 `diarize`；`health` 版本 0.6.0 返回 diarize 就绪状态。
+- 运行时新增依赖 `sherpa-onnx`；模型放 `~/.podwave/models/diarization/`（约 34MB，下载命令见 README）。
+- 新截图：`docs/screenshot-speakers.png`。
+
 ## 0.5.0 — 2026-11-12
 
 P2：字幕编辑（改文本、拆分/合并、撤销、导出前校验）。

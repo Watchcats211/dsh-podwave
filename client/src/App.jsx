@@ -308,6 +308,7 @@ function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, 
         {transcript ? (
           <span className="transcript-meta">
             {transcript.language || '未知语言'} · {transcript.lines.length} 行
+            {transcript.speakers?.length ? ` · ${transcript.speakers.length} 位说话人` : ''}
           </span>
         ) : null}
         <div className="transcript-actions">
@@ -366,6 +367,9 @@ function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, 
                 </span>
               ) : (
                 <>
+                  {line.speaker != null ? (
+                    <span className={`seg-speaker spk-${line.speaker % 5}`}>{transcript.speakers?.[line.speaker]?.label || `说话人 ${line.speaker + 1}`}</span>
+                  ) : null}
                   <span className="seg-text">
                     {line.text}
                     {line.translations?.[target] ? <span className="seg-trans">{line.translations[target]}</span> : null}
@@ -1180,7 +1184,7 @@ export default function App() {
         <div className="brand">
           <span className="brand-mark"><Icon name="wave" size={20} /></span>
           <span className="brand-name">Podwave</span>
-          <span className="brand-version">0.5</span>
+          <span className="brand-version">0.6</span>
           <button className="icon-btn brand-collapse" title="收起侧边栏" onClick={toggleNav}>
             <Icon name="chevron-left" size={16} />
           </button>
