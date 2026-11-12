@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.10.0 — 2026-11-12
+
+环境与模型安装中心：换电脑或换系统时，先扫描再一键装。
+
+- **本机扫描**：设置页新增「环境与模型」卡片，显示系统、架构、内存、GPU、ffmpeg、Python 运行时、llama.cpp 与各模型的就绪状态，并给出推荐引擎与预计下载体积。
+- **自动选型**：Apple Silicon 用 MLX（Qwen3-ASR-1.7B-8bit + Hy-MT2-1.8B-4bit）；Windows / Linux / Intel Mac 用 sherpa-onnx（SenseVoiceSmall）+ llama.cpp（Hy-MT2-1.8B-Q4_K_M）。
+- **双源下载**：国际（Hugging Face / GitHub）与国内（hf-mirror / gh-proxy / ModelScope）两条线路，可自动测速或手动指定；下载支持断点续传。
+- **一键安装**：自动准备 uv + Python 虚拟环境、sherpa-onnx（MLX 平台加 mlx-qwen3-asr / mlx-lm）、llama.cpp 预编译包与缺失模型，完成后列出每项下载内容与体积。
+- **跨平台引擎**：新增 SenseVoice 转写与 llama.cpp 翻译适配；ffmpeg、虚拟环境路径、文件夹选择器按平台探测（macOS 用 osascript，Windows 用 PowerShell）。
+- **说明**：Hy-MT2 1.25bit 是自定义量化，主线 llama.cpp 加载失败，因此非 MLX 平台默认 Q4_K_M（约 1.1 GB）。
+- 已知限制：Windows / Linux 尚未在真机验证；安装进度与引擎切换先以 macOS 实测为准。
+
 ## 0.9.1 — 2026-11-12
 
 本地翻译换成小模型 Hy-MT2-1.8B，旧的 8B 已删除。

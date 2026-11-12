@@ -6,8 +6,10 @@ import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { DATA_DIR } from './state.js'
 import { loadModelConfig, modelDir } from './models.js'
+import { isWindows, venvPython } from './platform.js'
 import { getSection } from './config.js'
 import { assignSpeakers, diarizeInfo, runDiarization } from './diarize.js'
 import { flushJobs, getJob, jobKey, removeJob, upsertJob } from './jobs.js'
@@ -16,6 +18,7 @@ export const TRANSCRIPTS_DIR = path.join(DATA_DIR, 'transcripts')
 const WORK_DIR = path.join(TRANSCRIPTS_DIR, '.work')
 const RUNTIME_DIR = path.join(DATA_DIR, 'runtime')
 const CLI = path.join(RUNTIME_DIR, '.venv', 'bin', 'mlx-qwen3-asr')
+const SHERPA_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'asr_sherpa_batch.py')
 const FFMPEG = process.env.PODWAVE_FFMPEG || (fs.existsSync('/opt/homebrew/bin/ffmpeg') ? '/opt/homebrew/bin/ffmpeg' : 'ffmpeg')
 const FFPROBE = process.env.PODWAVE_FFPROBE || (fs.existsSync('/opt/homebrew/bin/ffprobe') ? '/opt/homebrew/bin/ffprobe' : 'ffprobe')
 
@@ -38,7 +41,12 @@ function round2(value) {
 export function currentAsrModel() {
   const name = loadModelConfig().asrModel
   const dir = modelDir(name)
-  return { name, dir, ready: fs.existsSync(path.join(dir, 'model.safetensors')) }
+  const engine = /sensevoice|sherpa/i.test(name) ? 'sherpa' : 'mlx'
+  const ready =
+    engine === 'sherpa'
+      ? fs.existsSync(path.join(dir, 'model.int8.onnx'))
+      : fs.existsSync(path.join(dir, 'model.safetensors'))
+  return { name, dir, ready, engine }
 }
 
 export function transcribeConfig() {
@@ -52,12 +60,14 @@ export function transcribeConfig() {
 export function runtimeInfo() {
   const model = currentAsrModel()
   const config = transcribeConfig()
+  const sherpa = model.engine === 'sherpa'
   return {
-    installed: fs.existsSync(CLI),
+    engine: model.engine,
+    installed: sherpa ? fs.existsSync(SHERPA_SCRIPT) && fs.existsSync(venvPython()) : fs.existsSync(CLI),
     modelReady: model.ready,
     model: model.dir,
     modelName: model.name,
-    cli: CLI,
+    cli: sherpa ? venvPython() : CLI,
     hotwords: config.hotwords,
     chunkMinutes: config.chunkMinutes,
     diarize: config.diarize,
@@ -252,12 +262,19 @@ async function probeDuration(file) {
 // 用 ffmpeg 把长音频切成若干块；先尝试不重编码（-c copy），失败再转 AAC。
 async function splitAudio(file, dir, chunkSeconds) {
   await mkdir(dir, { recursive: true })
-  const pattern = path.join(dir, 'chunk-%03d.m4a')
+  const sherpa = currentAsrModel().engine === 'sherpa'
+  const ext = sherpa ? 'wav' : 'm4a'
+  const pattern = path.join(dir, `chunk-%03d.${ext}`)
   const base = ['-hide_banner', '-loglevel', 'error', '-y', '-i', file, '-f', 'segment', '-segment_time', String(chunkSeconds), '-reset_timestamps', '1']
-  let code = await runProcess(FFMPEG, [...base, '-c', 'copy', pattern])
-  if (code !== 0) code = await runProcess(FFMPEG, [...base, '-c:a', 'aac', '-b:a', '96k', pattern])
+  let code
+  if (sherpa) {
+    code = await runProcess(FFMPEG, [...base, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', pattern])
+  } else {
+    code = await runProcess(FFMPEG, [...base, '-c', 'copy', pattern])
+    if (code !== 0) code = await runProcess(FFMPEG, [...base, '-c:a', 'aac', '-b:a', '96k', pattern])
+  }
   if (code !== 0) throw new Error('音频切分失败（ffmpeg）')
-  const names = (await readdir(dir)).filter((name) => /\.m4a$/i.test(name)).sort()
+  const names = (await readdir(dir)).filter((name) => new RegExp(`\\.${ext}$`, 'i').test(name)).sort()
   if (!names.length) throw new Error('音频切分后没有生成文件')
   const parts = []
   let start = 0
@@ -294,7 +311,7 @@ async function ensurePlan(episode, workDir) {
 
   await rm(path.join(workDir, 'parts'), { recursive: true, force: true })
   await rm(path.join(workDir, 'results'), { recursive: true, force: true })
-  const single = duration <= chunkSeconds * 1.2
+  const single = currentAsrModel().engine !== 'sherpa' && duration <= chunkSeconds * 1.2
   const parts = single
     ? [{ index: 0, start: 0, end: round2(duration), file: episode.file, duration: round2(duration) }]
     : await splitAudio(episode.file, path.join(workDir, 'parts'), chunkSeconds)
@@ -340,19 +357,22 @@ async function readPartOutput(dir) {
 }
 
 function wordsOf(raw) {
-  return Array.isArray(raw.segments)
-    ? raw.segments
-        .map((seg) => ({
-          start: Number(seg.start) || 0,
-          end: Number(seg.end) || 0,
-          text: String(seg.text || '').trim(),
-        }))
-        .filter((seg) => seg.text)
-    : []
+  const list = Array.isArray(raw.segments) ? raw.segments : Array.isArray(raw.tokens) ? raw.tokens : []
+  return list
+    .map((seg) => ({
+      start: Number(seg.start) || 0,
+      end: Number(seg.end) || 0,
+      text: String(seg.text || '').trim(),
+    }))
+    .filter((seg) => seg.text)
 }
 
 
 function buildBatchArgs(files, outDir) {
+  const model = currentAsrModel()
+  if (model.engine === 'sherpa') {
+    return [SHERPA_SCRIPT, ...files, '--model-dir', model.dir, '--out-dir', outDir, '--threads', '4']
+  }
   const { hotwords } = transcribeConfig()
   const args = [
     ...files,
@@ -497,7 +517,9 @@ async function runJob(item) {
     let stderrTail = ''
     let lastIngestAt = Date.now()
     if (missing.length) {
-      child = spawn(CLI, buildBatchArgs(missing.map((part) => part.file), cliDir), {
+      const model = currentAsrModel()
+      const command = model.engine === 'sherpa' ? venvPython() : CLI
+      child = spawn(command, buildBatchArgs(missing.map((part) => part.file), cliDir), {
         env: { ...process.env, HF_HUB_OFFLINE: '1', TOKENIZERS_PARALLELISM: 'false' },
         stdio: ['ignore', 'ignore', 'pipe'],
       })

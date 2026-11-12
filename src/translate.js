@@ -8,6 +8,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { DATA_DIR } from './state.js'
 import { readTranscript, saveTranscript } from './transcribe.js'
 import { loadModelConfig, modelDir } from './models.js'
+import { translateWithLlama } from './llama.js'
 import { getSection, updateSection } from './config.js'
 import { getJob, jobKey, upsertJob } from './jobs.js'
 
@@ -25,7 +26,9 @@ export function saveConfig(patch) {
 export function currentLocalModel() {
   const name = loadModelConfig().translateModel
   const dir = modelDir(name)
-  return { name, dir, ready: fs.existsSync(path.join(dir, 'model.safetensors')) }
+  const gguf = fs.existsSync(dir) ? fs.readdirSync(dir).find((file) => file.endsWith('.gguf')) : null
+  const mlx = fs.existsSync(path.join(dir, 'model.safetensors'))
+  return { name, dir, ready: Boolean(mlx || gguf), engine: mlx ? 'mlx' : gguf ? 'llama' : 'none' }
 }
 
 export function publicConfig() {
@@ -105,6 +108,16 @@ async function translateWithApi(items, target, config) {
 }
 
 async function translateWithLocal(items, target) {
+  const model = currentLocalModel()
+  if (model.engine === 'llama') {
+    const parsed = await translateWithLlama(items, target)
+    const result = new Map()
+    for (const entry of parsed) {
+      const line = items[entry.index]
+      if (line && entry.text) result.set(line.id, entry.text)
+    }
+    return result
+  }
   const work = path.join(DATA_DIR, 'transcripts', '.work')
   await mkdir(work, { recursive: true })
   const input = path.join(work, `translate-${Date.now()}.json`)
