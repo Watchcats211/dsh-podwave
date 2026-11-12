@@ -263,9 +263,9 @@ function AddFolderDialog({ onSubmit, onPick, onClose }) {
   )
 }
 
-function TranscriptPanel({ transcript, status, elapsed, error, position, onSeek, onClose, onStart, target, translations, job, onChangeTarget, onOpenSettings, inline = false }) {
+function TranscriptPanel({ transcript, status, elapsed, error, position, onSeek, onClose, onStart, target, job, onChangeTarget, onOpenSettings, inline = false }) {
   const bodyRef = useRef(null)
-  const activeIndex = transcript?.segments?.findIndex((seg) => position >= seg.start && position < seg.end) ?? -1
+  const activeIndex = transcript?.lines?.findIndex((line) => position >= line.start && position < line.end) ?? -1
 
   useEffect(() => {
     if (activeIndex < 0 || !bodyRef.current) return
@@ -281,7 +281,7 @@ function TranscriptPanel({ transcript, status, elapsed, error, position, onSeek,
         <h3>字幕</h3>
         {transcript ? (
           <span className="transcript-meta">
-            {transcript.language || '未知语言'} · {transcript.segments.length} 行
+            {transcript.language || '未知语言'} · {transcript.lines.length} 行
           </span>
         ) : null}
         <div className="transcript-actions">
@@ -304,17 +304,17 @@ function TranscriptPanel({ transcript, status, elapsed, error, position, onSeek,
         {job?.status === 'running' ? <div className="tr-running">翻译中…</div> : null}
         {job?.status === 'error' ? <div className="tr-running err">{job.error}</div> : null}
         {transcript ? (
-          transcript.segments.map((seg, index) => (
+          transcript.lines.map((line, index) => (
             <button
-              key={seg.id}
+              key={line.id}
               data-seg={index}
               className={`seg-row ${index === activeIndex ? 'active' : ''}`}
-              onClick={() => onSeek(seg.start)}
+              onClick={() => onSeek(line.start)}
             >
-              <span className="seg-time">{fmtTime(seg.start)}</span>
+              <span className="seg-time">{fmtTime(line.start)}</span>
               <span className="seg-text">
-                {seg.text}
-                {translations?.[seg.id] ? <span className="seg-trans">{translations[seg.id]}</span> : null}
+                {line.text}
+                {line.translations?.[target] ? <span className="seg-trans">{line.translations[target]}</span> : null}
               </span>
             </button>
           ))
@@ -669,8 +669,8 @@ export default function App() {
   const changeTarget = useCallback(async (value) => {
     setTrTarget(value)
     if (!value) return
-    const existing = transcript?.translations?.[value]
-    if (existing && Object.keys(existing).length) {
+    const existing = transcript?.lines?.some((line) => line.translations?.[value])
+    if (existing) {
       setTrJob({ status: 'done' })
       await refreshTranscript()
       return
@@ -987,7 +987,7 @@ export default function App() {
         <div className="brand">
           <span className="brand-mark"><Icon name="wave" size={20} /></span>
           <span className="brand-name">Podwave</span>
-          <span className="brand-version">0.2</span>
+          <span className="brand-version">0.3</span>
           <button className="icon-btn brand-collapse" title="收起侧边栏" onClick={toggleNav}>
             <Icon name="chevron-left" size={16} />
           </button>
@@ -1091,7 +1091,6 @@ export default function App() {
                   onClose={() => setDetailId(null)}
                   onStart={startTranscript}
                   target={trTarget}
-                  translations={transcript?.translations?.[trTarget] || null}
                   job={trJob}
                   onChangeTarget={changeTarget}
                   onOpenSettings={() => setTrSettingsOpen(true)}
@@ -1184,7 +1183,6 @@ export default function App() {
           onClose={() => setSubsOpen(false)}
           onStart={startTranscript}
           target={trTarget}
-          translations={transcript?.translations?.[trTarget] || null}
           job={trJob}
           onChangeTarget={changeTarget}
           onOpenSettings={() => setTrSettingsOpen(true)}

@@ -1,42 +1,25 @@
 // 字幕翻译：支持 DeepSeek API 与本地 MLX 模型（Qwen3-8B-4bit）。
-// 只翻译与目标语言不同的行：中文目标翻英文行，英文目标翻中文行；结果写回 transcript。
+// v2 transcript 下，译文存在 line.translations[target]，来源记在 transcript.providers[target]。
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { DATA_DIR } from './state.js'
-import { readTranscript } from './transcribe.js'
+import { readTranscript, saveTranscript } from './transcribe.js'
 import { loadModelConfig, modelDir } from './models.js'
+import { getSection, updateSection } from './config.js'
+import { getJob, jobKey, upsertJob } from './jobs.js'
 
-const TRANSCRIPTS_DIR = path.join(DATA_DIR, 'transcripts')
-const CONFIG_PATH = path.join(DATA_DIR, 'translate.json')
 const PYTHON = path.join(DATA_DIR, 'runtime', '.venv', 'bin', 'python')
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'translate_local.py')
 
-const DEFAULTS = {
-  provider: 'api',
-  target: 'zh',
-  apiBase: 'https://api.deepseek.com',
-  apiModel: 'deepseek-chat',
-  apiKey: '',
-}
-
-const jobs = new Map() // `${episodeId}:${target}` -> job
-
 export function loadConfig() {
-  try {
-    return { ...DEFAULTS, ...JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) }
-  } catch {
-    return { ...DEFAULTS }
-  }
+  return getSection('translate')
 }
 
 export function saveConfig(patch) {
-  const next = { ...loadConfig(), ...patch }
-  fs.mkdirSync(DATA_DIR, { recursive: true })
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(next, null, 2), { mode: 0o600 })
-  return next
+  return updateSection('translate', patch)
 }
 
 export function currentLocalModel() {
@@ -67,11 +50,10 @@ function cjkRatio(text) {
   return cjk / chars.length
 }
 
-function selectLines(segments, target) {
-  return segments.filter((segment) => {
-    const ratio = cjkRatio(segment.text)
-    return target === 'zh' ? ratio < 0.35 : ratio > 0.15
-  })
+// 只翻与目标语言不同的行：目标中文翻英文行，目标英文翻中文行。
+function needsTranslation(line, target) {
+  const ratio = cjkRatio(line.text)
+  return target === 'zh' ? ratio < 0.35 : ratio > 0.15
 }
 
 function parseNumbered(text, count) {
@@ -85,13 +67,13 @@ function parseNumbered(text, count) {
   return result
 }
 
-async function translateWithApi(lines, target, config) {
+async function translateWithApi(items, target, config) {
   const language = target === 'zh' ? 'Simplified Chinese' : 'English'
   const system = `You are a professional subtitle translator. Translate each numbered line into ${language}. Preserve proper names, numbers and terminology. Output only numbered lines in the format "1. translation".`
-  const result = {}
+  const result = new Map()
   const batchSize = 20
-  for (let start = 0; start < lines.length; start += batchSize) {
-    const batch = lines.slice(start, start + batchSize)
+  for (let start = 0; start < items.length; start += batchSize) {
+    const batch = items.slice(start, start + batchSize)
     const content = batch.map((line, index) => `${index + 1}. ${line.text}`).join('\n')
     const response = await fetch(`${config.apiBase.replace(/\/+$/, '')}/chat/completions`, {
       method: 'POST',
@@ -115,14 +97,15 @@ async function translateWithApi(lines, target, config) {
     const data = await response.json()
     const parsed = parseNumbered(data.choices?.[0]?.message?.content, batch.length)
     batch.forEach((line, index) => {
-      result[line.id] = parsed.get(index + 1) || ''
+      const text = parsed.get(index + 1)
+      if (text) result.set(line.id, text)
     })
   }
   return result
 }
 
-async function translateWithLocal(lines, target) {
-  const work = path.join(TRANSCRIPTS_DIR, '.work')
+async function translateWithLocal(items, target) {
+  const work = path.join(DATA_DIR, 'transcripts', '.work')
   await mkdir(work, { recursive: true })
   const input = path.join(work, `translate-${Date.now()}.json`)
   await writeFile(
@@ -130,7 +113,7 @@ async function translateWithLocal(lines, target) {
     JSON.stringify({
       model_dir: currentLocalModel().dir,
       target,
-      items: lines.map((line) => ({ id: line.id, text: line.text })),
+      items: items.map((line) => ({ id: line.id, text: line.text })),
     }),
     'utf8',
   )
@@ -149,19 +132,19 @@ async function translateWithLocal(lines, target) {
     })
     if (code !== 0) throw new Error(`本地翻译退出码 ${code}${stderr ? `\n${stderr.split('\n').slice(-4).join('\n')}` : ''}`)
     const parsed = JSON.parse(stdout)
-    const result = {}
-    for (const line of lines) result[line.id] = String(parsed[line.id] || '')
+    const result = new Map()
+    for (const line of items) {
+      const text = String(parsed[line.id] || '')
+      if (text) result.set(line.id, text)
+    }
     return result
   } finally {
     rm(input, { force: true }).catch(() => {})
   }
 }
 
-async function writeTranscript(transcript) {
-  const target = path.join(TRANSCRIPTS_DIR, `${transcript.id}.json`)
-  const tmp = `${target}.tmp`
-  await writeFile(tmp, JSON.stringify(transcript, null, 2), 'utf8')
-  await rename(tmp, target)
+function translationKey(episodeId, target) {
+  return jobKey({ type: 'translate', episodeId, target })
 }
 
 export async function startTranslation(episodeId, { target = 'zh', provider } = {}) {
@@ -174,55 +157,59 @@ export async function startTranslation(episodeId, { target = 'zh', provider } = 
     throw Object.assign(new Error('本地翻译模型还没下载好'), { status: 503 })
   }
 
-  const key = `${episodeId}:${target}`
-  const current = jobs.get(key)
+  const key = translationKey(episodeId, target)
+  const current = getJob(key)
   if (current && (current.status === 'queued' || current.status === 'running')) return { status: current.status }
-  if (transcript.translations?.[target] && Object.keys(transcript.translations[target]).length) {
-    return { status: 'done' }
+
+  const pending = transcript.lines.filter((line) => needsTranslation(line, target) && !line.translations?.[target])
+  if (!pending.length) {
+    const existing = transcript.lines.filter((line) => line.translations?.[target]).length
+    return { status: 'done', translated: existing }
   }
 
-  const job = { status: 'running', startedAt: Date.now(), error: null, done: 0, total: 0 }
-  jobs.set(key, job)
+  upsertJob({ key, type: 'translate', episodeId, target, status: 'running', startedAt: Date.now(), progress: { done: 0, total: pending.length }, error: null })
 
   ;(async () => {
     try {
-      const lines = selectLines(transcript.segments, target)
-      job.total = lines.length
-      if (!lines.length) {
-        transcript.translations = { ...(transcript.translations || {}), [target]: {} }
-        await writeTranscript(transcript)
-        job.status = 'done'
-        job.finishedAt = Date.now()
-        return
-      }
+      const items = pending.map((line) => ({ id: line.id, text: line.text }))
       const mapping = useProvider === 'api'
-        ? await translateWithApi(lines, target, config)
-        : await translateWithLocal(lines, target)
-      job.done = lines.length
-      transcript.translations = { ...(transcript.translations || {}), [target]: mapping }
-      transcript.translations[target]['_provider'] = useProvider
-      await writeTranscript(transcript)
-      job.status = 'done'
-      job.finishedAt = Date.now()
+        ? await translateWithApi(items, target, config)
+        : await translateWithLocal(items, target)
+
+      const fresh = await readTranscript(episodeId)
+      if (!fresh) throw new Error('转写记录不见了')
+      let done = 0
+      for (const line of fresh.lines) {
+        const text = mapping.get(line.id)
+        if (text) {
+          line.translations = { ...(line.translations || {}), [target]: text }
+          done += 1
+        }
+      }
+      fresh.providers = { ...(fresh.providers || {}), [target]: useProvider }
+      await saveTranscript(fresh)
+      upsertJob({ key, status: 'done', finishedAt: Date.now(), progress: { done: mapping.size, total: pending.length }, error: null })
     } catch (error) {
-      job.status = 'error'
-      job.error = error.message || String(error)
-      job.finishedAt = Date.now()
+      upsertJob({ key, status: 'error', finishedAt: Date.now(), error: error.message || String(error) })
     }
   })()
 
-  return { status: 'running' }
+  return { status: 'running', total: pending.length }
 }
 
 export async function getTranslationState(episodeId, target = 'zh') {
   const transcript = await readTranscript(episodeId)
-  const job = jobs.get(`${episodeId}:${target}`)
-  if (job && (job.status === 'running' || job.status === 'queued')) {
-    return { status: job.status, done: job.done, total: job.total }
+  const key = translationKey(episodeId, target)
+  const job = getJob(key)
+  if (job && (job.status === 'queued' || job.status === 'running')) {
+    return { status: job.status, progress: job.progress || { done: 0, total: 0 } }
   }
-  if (job && job.status === 'error') return { status: 'error', error: job.error }
-  if (transcript?.translations?.[target] && Object.keys(transcript.translations[target]).length) {
-    return { status: 'done', translations: transcript.translations[target] }
+  if (job && (job.status === 'error' || job.status === 'interrupted')) {
+    return { status: 'error', error: job.error || '任务已中断' }
   }
-  return { status: 'none' }
+  if (!transcript) return { status: 'none' }
+  const translated = transcript.lines.filter((line) => line.translations?.[target]).length
+  const eligible = transcript.lines.filter((line) => needsTranslation(line, target)).length
+  if (translated > 0) return { status: 'done', translated, total: eligible, provider: transcript.providers?.[target] || null }
+  return { status: 'none', translated: 0, total: eligible }
 }
