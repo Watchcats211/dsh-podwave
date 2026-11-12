@@ -224,7 +224,7 @@ function AddFolderDialog({ onSubmit, onClose }) {
   )
 }
 
-function TranscriptPanel({ transcript, status, elapsed, error, position, onSeek, onClose, onStart, target, translations, job, onChangeTarget, onOpenSettings }) {
+function TranscriptPanel({ transcript, status, elapsed, error, position, onSeek, onClose, onStart, target, translations, job, onChangeTarget, onOpenSettings, inline = false }) {
   const bodyRef = useRef(null)
   const activeIndex = transcript?.segments?.findIndex((seg) => position >= seg.start && position < seg.end) ?? -1
 
@@ -237,7 +237,7 @@ function TranscriptPanel({ transcript, status, elapsed, error, position, onSeek,
   const running = status === 'queued' || status === 'running'
 
   return (
-    <section className="transcript-panel">
+    <section className={`transcript-panel ${inline ? 'inline' : ''}`}>
       <header className="transcript-head">
         <h3>字幕</h3>
         {transcript ? (
@@ -258,7 +258,7 @@ function TranscriptPanel({ transcript, status, elapsed, error, position, onSeek,
               <a className="mini-link" href={`${API}/episodes/${transcript.id}/transcript/export?format=md`} download>Markdown</a>
             </>
           ) : null}
-          <button className="transcript-close" onClick={onClose} title="收起">×</button>
+          {inline ? null : <button className="transcript-close" onClick={onClose} title="收起">×</button>}
         </div>
       </header>
       <div className="transcript-body" ref={bodyRef}>
@@ -370,6 +370,7 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('recent')
   const [view, setView] = useState('all')
+  const [detailId, setDetailId] = useState(null)
   const [current, setCurrent] = useState(null)
   const [playing, setPlaying] = useState(false)
   const [position, setPosition] = useState(0)
@@ -648,6 +649,7 @@ export default function App() {
   const totalHours = Math.round((totalSeconds / 3600) * 10) / 10
 
   const viewTitle = view === 'inprogress' ? '继续收听' : view === 'finished' ? '已播完' : '全部单集'
+  const detailItem = detailId ? (items.find((item) => item.id === detailId) || (current?.id === detailId ? current : null)) : null
   const subline = loading
     ? '正在读取媒体库…'
     : scan.running
@@ -686,6 +688,7 @@ export default function App() {
     }
     currentRef.current = item
     setCurrent(item)
+    setDetailId((prev) => (prev ? item.id : prev))
     setDuration(item.duration || 0)
     const saved = progress[item.id]?.position || 0
     const resume = saved > 5 && (!item.duration || saved < item.duration - 10) ? saved : 0
@@ -698,6 +701,12 @@ export default function App() {
     if (autoplay) audio.play().catch(() => {})
     patchSettings({ lastEpisodeId: item.id })
   }, [progress, saveProgress, patchSettings, togglePlay])
+
+  const openEpisode = useCallback((item, autoplay = true) => {
+    if (!item) return
+    selectEpisode(item, autoplay)
+    setDetailId(item.id)
+  }, [selectEpisode])
 
   const seekTo = useCallback((value) => {
     const audio = audioRef.current
@@ -894,6 +903,48 @@ export default function App() {
           </div>
         ) : null}
 
+        {detailItem ? (
+          <>
+            <div className="detail-top">
+              <button className="back-link" onClick={() => setDetailId(null)}>← 全部单集</button>
+              <span className="detail-count">{detailItem.artist}{detailItem.album ? ` · ${detailItem.album}` : ''}</span>
+            </div>
+            <div className="episode-view">
+              <div className="episode-left">
+                <div className="episode-cover"><Cover item={detailItem} size={288} /></div>
+                <h2 className="episode-title">{detailItem.title}</h2>
+                <p className="episode-sub">{detailItem.artist}{detailItem.album ? ` · ${detailItem.album}` : ''}</p>
+                <p className="episode-path" title={detailItem.file}>{detailItem.location || detailItem.file}</p>
+                <p className="episode-stats">{fmtDuration(detailItem.duration)} · {fmtDate(detailItem.mtime)} · 已听 {Math.round(progressPct(detailItem))}%</p>
+                <div className="episode-actions">
+                  <button className="btn primary" onClick={togglePlay}>{playing && current?.id === detailItem.id ? '暂停' : '播放'}</button>
+                  <button className="btn ghost" onClick={startTranscript} disabled={txStatus === 'queued' || txStatus === 'running'}>
+                    {transcript ? '重新转写' : txStatus === 'queued' || txStatus === 'running' ? '转写中…' : '转写字幕'}
+                  </button>
+                </div>
+              </div>
+              <div className="episode-right">
+                <TranscriptPanel
+                  inline
+                  transcript={transcript}
+                  status={txStatus}
+                  elapsed={txElapsed}
+                  error={txError}
+                  position={position}
+                  onSeek={seekTo}
+                  onClose={() => setDetailId(null)}
+                  onStart={startTranscript}
+                  target={trTarget}
+                  translations={transcript?.translations?.[trTarget] || null}
+                  job={trJob}
+                  onChangeTarget={changeTarget}
+                  onOpenSettings={() => setTrSettingsOpen(true)}
+                />
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
         {view === 'all' && !query && continueList.length > 0 ? (
           <section className="continue">
             <h2>接着听</h2>
@@ -901,7 +952,7 @@ export default function App() {
               {continueList.map((item) => {
                 const pct = progressPct(item)
                 return (
-                  <button key={item.id} className={`continue-card ${current?.id === item.id ? 'is-current' : ''}`} onClick={() => selectEpisode(item, true)}>
+                  <button key={item.id} className={`continue-card ${current?.id === item.id ? 'is-current' : ''}`} onClick={() => openEpisode(item, true)}>
                     <Cover item={item} size={64} />
                     <div className="continue-text">
                       <div className="continue-title">{item.title}</div>
@@ -940,7 +991,7 @@ export default function App() {
                   <button
                     key={item.id}
                     className={`row ${active ? 'is-current' : ''} ${isFinished(item) ? 'is-finished' : ''}`}
-                    onClick={() => selectEpisode(item, true)}
+                    onClick={() => openEpisode(item, true)}
                   >
                     <span className="col-index row-index">
                       {active && playing ? <span className="playing-bars"><i /><i /><i /></span> : index + 1}
@@ -962,9 +1013,11 @@ export default function App() {
             </div>
           )}
         </section>
+          </>
+        )}
       </main>
 
-      {subsOpen && current ? (
+      {subsOpen && current && !detailItem ? (
         <TranscriptPanel
           transcript={transcript}
           status={txStatus}
