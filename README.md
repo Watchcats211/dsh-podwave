@@ -24,7 +24,7 @@ DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘�
 从 [Releases](https://github.com/Watchcats211/dsh-podwave/releases) 下载最新的 `dsh-podwave-*.tgz`，然后：
 
 ```bash
-dsh plugin --profile desktop add file:/path/to/dsh-podwave-0.2.6.tgz
+dsh plugin --profile desktop add file:/path/to/dsh-podwave-0.2.7.tgz
 ```
 
 也可以直接从源码目录装：
