@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import { stat } from 'node:fs/promises'
 import path from 'node:path'
 import { createReadStream } from 'node:fs'
+import { DATA_DIR } from './state.js'
 import {
   addFolderState,
   getState,
@@ -38,6 +39,24 @@ import { getTranslationState, publicConfig, saveConfig, startTranslation } from 
 import { listModels, loadModelConfig, saveModelConfig } from './models.js'
 
 export const name = 'dsh-podwave'
+
+const UI_CONFIG = path.join(DATA_DIR, 'ui.json')
+const UI_DEFAULTS = { showSidebarPanel: true }
+
+function loadUiSettings() {
+  try {
+    return { ...UI_DEFAULTS, ...JSON.parse(fs.readFileSync(UI_CONFIG, 'utf8')) }
+  } catch {
+    return { ...UI_DEFAULTS }
+  }
+}
+
+function saveUiSettings(patch) {
+  const next = { ...loadUiSettings(), ...patch }
+  fs.mkdirSync(DATA_DIR, { recursive: true })
+  fs.writeFileSync(UI_CONFIG, JSON.stringify(next, null, 2))
+  return next
+}
 
 const MIME = {
   '.mp3': 'audio/mpeg',
@@ -292,6 +311,17 @@ async function route(ctx, req, res) {
     }
     items.sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0))
     return json(res, 200, { items })
+  }
+
+  if (routePath === 'api/ui-settings') {
+    if (method === 'GET') return json(res, 200, loadUiSettings())
+    if (method === 'PUT') {
+      const body = await readJson(req)
+      const patch = {}
+      if (typeof body?.showSidebarPanel === 'boolean') patch.showSidebarPanel = body.showSidebarPanel
+      if (!Object.keys(patch).length) return json(res, 400, { error: '没有可保存的设置' })
+      return json(res, 200, saveUiSettings(patch))
+    }
   }
 
   if (routePath === 'api/translate/settings') {
