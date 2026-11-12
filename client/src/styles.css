@@ -992,3 +992,5 @@ select:focus-visible {
 .podwave-settings .field-row input:focus { border-color: rgba(230, 165, 74, 0.5); }
 .podwave-settings .settings-status { color: #7c7c88; font-size: 12px; }
 .podwave-settings .settings-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.podwave-settings .check-row { display: flex; align-items: center; gap: 9px; color: #d3d3da; font-size: 13px; }
+.podwave-settings .check-row input { width: 15px; height: 15px; accent-color: #e6a54a; }

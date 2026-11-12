@@ -15,7 +15,7 @@ DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘�
 - **双语字幕**：点「字幕」打开面板，选「中文对照 / English」，只翻译另一种语言的行；点字幕行可以跳到对应时间。
 - **导出**：SRT 或 Markdown。
 - **快捷键**：`空格` 播放/暂停，`← / →` ±15 秒，`↑ / ↓` 上/下一集，`/` 搜索。
-- **设置页**：DSH 设置 → 播客，可以看已完成的转写历史、配置 DeepSeek API、选择转写与翻译模型。
+- **设置页**：DSH 设置 → 播客，可以看已完成的转写历史、配置 DeepSeek API、选择转写与翻译模型、控制侧边栏入口是否显示。
 
 ## 安装
 
@@ -24,7 +24,7 @@ DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘�
 从 [Releases](https://github.com/Watchcats211/dsh-podwave/releases) 下载最新的 `dsh-podwave-*.tgz`，然后：
 
 ```bash
-dsh plugin --profile desktop add file:/path/to/dsh-podwave-0.2.5.tgz
+dsh plugin --profile desktop add file:/path/to/dsh-podwave-0.2.6.tgz
 ```
 
 也可以直接从源码目录装：
@@ -58,6 +58,7 @@ DSH 设置 →「播客」：
 - **历史记录**：所有已完成转写的单集（时长、语言、行数、已翻语言、完成时间）。
 - **API 与翻译引擎**：DeepSeek API 地址 / 模型 / API Key，或切到本地模型。
 - **模型**：在 `~/.podwave/models/` 下已就绪的模型里选转写模型（ASR）与翻译模型。
+- **界面**：开关「在主界面侧边栏显示播客入口」，保存后立即生效（不需要刷新）。
 
 ## 用法
 

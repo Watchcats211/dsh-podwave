@@ -26,18 +26,57 @@ function PodwavePage() {
 
 function apply(ctx) {
   ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'podwave' }, PodwavePage))
-  ctx.slots.inject('sidebar.panellist', () =>
-    ctx.slots.register(
-      { name: 'sidebar.panellist', id: 'podwave', order: 8, label: () => '播客' },
-      PodcastIcon,
-    ),
-  )
   ctx.slots.inject('settings.section', () =>
     ctx.slots.register(
       { name: 'settings.section', id: 'podwave', order: 40, label: () => '播客' },
       SettingsPage,
     ),
   )
+
+  let navEntry = null
+  const STYLE_ID = 'podwave-hide-nav'
+  const applyNavCss = (hide) => {
+    if (typeof document === 'undefined') return
+    let style = document.getElementById(STYLE_ID)
+    if (hide && !style) {
+      style = document.createElement('style')
+      style.id = STYLE_ID
+      style.textContent = 'button[aria-label="播客"]{display:none!important}'
+      document.head.appendChild(style)
+    } else if (!hide && style) {
+      style.remove()
+    }
+  }
+  const syncNav = (show) => {
+    applyNavCss(!show)
+    if (show && !navEntry) {
+      navEntry = ctx.slots.register(
+        { name: 'sidebar.panellist', id: 'podwave', order: 8, label: () => '播客' },
+        PodcastIcon,
+      )
+    } else if (!show && navEntry) {
+      const entry = navEntry
+      navEntry = null
+      try {
+        if (typeof entry?.dispose === 'function') entry.dispose()
+        else if (typeof entry === 'function') entry()
+        else if (typeof entry?.dispose === 'undefined' && typeof entry?.unregister === 'function') entry.unregister()
+      } catch {
+        /* 老版本不提供注销句柄，忽略 */
+      }
+    }
+  }
+
+  fetch('/podwave/api/ui-settings')
+    .then((res) => (res.ok ? res.json() : null))
+    .then((config) => syncNav(config?.showSidebarPanel !== false))
+    .catch(() => syncNav(true))
+
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('podwave:ui-settings', (event) => {
+      syncNav(event?.detail?.showSidebarPanel !== false)
+    })
+  }
 }
 
 export const inject = ['slots']

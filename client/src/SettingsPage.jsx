@@ -42,6 +42,7 @@ export default function SettingsPage() {
   const [modelConfig, setModelConfig] = useState({ asrModel: '', translateModel: '' })
   const [transcribeInfo, setTranscribeInfo] = useState(null)
   const [trConfig, setTrConfig] = useState(null)
+  const [uiSettings, setUiSettings] = useState({ showSidebarPanel: true })
 
   const [provider, setProvider] = useState('api')
   const [apiBase, setApiBase] = useState('https://api.deepseek.com')
@@ -57,11 +58,13 @@ export default function SettingsPage() {
 
   const load = useCallback(async () => {
     try {
-      const [historyData, modelsData, trData] = await Promise.all([
+      const [historyData, modelsData, trData, uiData] = await Promise.all([
         getJSON(`${API}/history`),
         getJSON(`${API}/models`),
         getJSON(`${API}/translate/settings`),
+        getJSON(`${API}/ui-settings`),
       ])
+      setUiSettings({ showSidebarPanel: uiData?.showSidebarPanel !== false })
       setHistory(historyData.items || [])
       setModels(modelsData.models || [])
       setModelConfig(modelsData.config || { asrModel: '', translateModel: '' })
@@ -127,6 +130,23 @@ export default function SettingsPage() {
   ]
   const asrOptions = allModels.filter((model) => /asr/i.test(model.name))
   const translateOptions = allModels.filter((model) => !/asr/i.test(model.name))
+  const saveUi = async () => {
+    setSaving('ui')
+    setError('')
+    try {
+      const data = await sendJSON(`${API}/ui-settings`, 'PUT', { showSidebarPanel: uiSettings.showSidebarPanel })
+      setUiSettings({ showSidebarPanel: data.showSidebarPanel !== false })
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('podwave:ui-settings', { detail: data }))
+      }
+      flash('界面设置已保存')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving('')
+    }
+  }
+
   const modelOptions = allModels
 
   return (
@@ -201,6 +221,25 @@ export default function SettingsPage() {
             {saving === 'api' ? '保存中…' : '保存 API 设置'}
           </button>
           <span className="settings-status">{trConfig?.hasApiKey ? 'API Key 已保存' : '尚未填写 API Key'}</span>
+        </div>
+      </section>
+
+      <section className="settings-card">
+        <h2>界面</h2>
+        <p className="settings-hint">控制播客入口在 DSH 主界面的显示方式。</p>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={uiSettings.showSidebarPanel}
+            onChange={(event) => setUiSettings({ showSidebarPanel: event.target.checked })}
+          />
+          <span>在主界面侧边栏显示「播客」入口</span>
+        </label>
+        <div className="settings-actions">
+          <button className="btn primary" onClick={saveUi} disabled={saving === 'ui'}>
+            {saving === 'ui' ? '保存中…' : '保存界面设置'}
+          </button>
+          <span className="settings-status">保存后立即生效</span>
         </div>
       </section>
 
