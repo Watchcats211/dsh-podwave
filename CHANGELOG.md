@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.11 — 2026-11-13
+
+Windows 运行时 CI 立刻抓到一个真实安装 bug：`sherpa-onnx` 在 Windows 上不会自动带 `numpy`，首次安装后转写会 `ModuleNotFoundError: numpy`。
+
+- 安装依赖改为显式 `sherpa-onnx numpy`（macOS 仍追加 mlx 组件）。
+- CI 的运行时任务同步显式安装 numpy。
+- 说明：这类「安装时看不见、第一次转写才炸」的问题，正是 Windows 运行时冒烟要覆盖的。
+
 ## 0.10.10 — 2026-11-13
 
 Windows 运行时冒烟：CI 在 windows-latest 上真正跑一次转写。
