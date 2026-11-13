@@ -53,23 +53,39 @@ globalThis.fetch = async (url, options = {}) => {
 
 const xyz = await import('../src/xyz.js')
 
+// 这些用例验证的是「小宇宙 App 登录态导入」的逻辑本身，与宿主平台无关：
+// 显式传 platform='darwin' + 假 HOME，这样 Linux / Windows 的 CI 也能跑到，
+// 而不是只能在 macOS 上人工点一遍。
+const appOpts = { platform: 'darwin', home }
+
+test('localAppStatus on non-macOS says the app is macOS-only', () => {
+  // 小宇宙桌面版只有 macOS 版；其它平台要如实说「不支持」，而不是报「没有登录」误导用户。
+  const state = xyz.localAppStatus({ platform: 'win32', home })
+  assert.equal(state.available, false)
+  assert.match(state.reason, /仅支持 macOS/)
+})
+
+test('loginFromLocalApp on non-macOS rejects instead of pretending', async () => {
+  await assert.rejects(() => xyz.loginFromLocalApp({ platform: 'linux', home }), /仅支持 macOS/)
+})
+
 test('localAppStatus reports missing plist clearly', () => {
   fs.rmSync(plistPath, { force: true })
-  const state = xyz.localAppStatus()
+  const state = xyz.localAppStatus(appOpts)
   assert.equal(state.available, false)
   assert.match(state.reason, /小宇宙/)
 })
 
 test('localAppStatus reports logged-out app', () => {
   writePlist({ device: 'dev-1' })
-  const state = xyz.localAppStatus()
+  const state = xyz.localAppStatus(appOpts)
   assert.equal(state.available, false)
   assert.match(state.reason, /还没有登录/)
 })
 
 test('loginFromLocalApp imports tokens, refreshes and loads profile', async () => {
   writePlist({ access: 'access-ok', refresh: 'refresh-ok', device: 'dev-1' })
-  const status = await xyz.loginFromLocalApp()
+  const status = await xyz.loginFromLocalApp(appOpts)
   assert.equal(status.loggedIn, true)
   assert.equal(status.profile.nickname, '本机用户')
   assert.equal(status.deviceId, 'dev-1')
@@ -86,7 +102,7 @@ test('loginFromLocalApp falls back to access token when refresh fails', async ()
   xyz.logout()
   refreshOk = false
   writePlist({ access: 'access-ok', refresh: 'refresh-ok', device: 'dev-1' })
-  const status = await xyz.loginFromLocalApp()
+  const status = await xyz.loginFromLocalApp(appOpts)
   assert.equal(status.loggedIn, true)
   assert.equal(status.profile.nickname, '本机用户')
 })
@@ -95,6 +111,6 @@ test('loginFromLocalApp rejects when app login expired', async () => {
   xyz.logout()
   refreshOk = false
   writePlist({ access: 'stale-access', refresh: 'stale-refresh', device: 'dev-1' })
-  await assert.rejects(() => xyz.loginFromLocalApp(), /登录已失效/)
+  await assert.rejects(() => xyz.loginFromLocalApp(appOpts), /登录已失效/)
   assert.equal(xyz.xyzStatus().loggedIn, false)
 })

@@ -12,7 +12,9 @@ Windows 兼容性修复（对应 Issue #1 的 8 条）。之前插件在 Windows
 - 修复 `scripts/diarize.py` 硬编码 `/opt/homebrew/bin/ffmpeg`（Windows 报 `[WinError 2]`）：默认改为走 PATH。
 - 修复 Windows 上结束子进程等于硬杀：统一走 `killTree()`，Windows 用 `taskkill /T` 连子孙进程一起收，其它平台仍是优雅 SIGTERM，避免 ffmpeg/llama-server 残留。
 - 文件夹路径支持 Windows 环境变量：`%USERPROFILE%\Music` 这类路径现在能正确展开，`~\Music` 也可以。
-- 新增 10 个 Windows 兼容回归测试（本次共 84 个），以及两个只在 CI 的 `windows-latest` 真机上跑的校验脚本（真实平台默认模型 / 真实 tar.bz2 解压）。
+- 小宇宙「一键连接」在非 macOS 上给出明确提示：以前点下去会变成 500 服务器错误，现在返回 400 +「仅支持 macOS 上的小宇宙 App」，前端能直接显示原因。
+- 修复 CI 在 Linux / Windows 上一直红：小宇宙登录态相关测试默认假设「运行在 macOS 且本机有小宇宙 App」，在 CI 上必然失败。现在平台通过参数注入，测试在任何系统上都能跑，同时新增「非 macOS 上必须如实报不支持」的断言。
+- 新增 12 个 Windows 兼容回归测试（本次共 86 个），以及两个只在 CI 的 `windows-latest` 真机上跑的校验脚本（真实平台默认模型 / 真实 tar.bz2 解压）。
 
 ## 0.11.20 — 2026-11-13
 

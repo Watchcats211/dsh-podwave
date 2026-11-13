@@ -581,7 +581,14 @@ async function route(ctx, req, res) {
     return json(res, 200, localAppStatus())
   }
   if (method === 'POST' && routePath === 'api/xyz/auth/from-app') {
-    return json(res, 200, await loginFromLocalApp())
+    try {
+      return json(res, 200, await loginFromLocalApp())
+    } catch (error) {
+      // 「这台机器上没有小宇宙 App / 登录已失效」是环境与凭据问题，不是服务器故障：
+      // 用 400 让前端能直接展示原因，而不是当成 500 崩掉。
+      if (!error.status) error.status = 400
+      throw error
+    }
   }
   if (method === 'POST' && routePath === 'api/xyz/auth/logout') {
     return json(res, 200, logout())

@@ -14,8 +14,9 @@ process.env.PODWAVE_DATA_DIR = dataDir
 
 const plistDir = path.join(home, 'Library', 'Group Containers', 'group.app.podcast.cosmos', 'Library', 'Preferences')
 fs.mkdirSync(plistDir, { recursive: true })
+const plistFile = path.join(plistDir, 'group.app.podcast.cosmos.plist')
 fs.writeFileSync(
-  path.join(plistDir, 'group.app.podcast.cosmos.plist'),
+  plistFile,
   `<?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
 <dict>
@@ -69,6 +70,24 @@ test('host: xyz local-app status and one-click connect', async () => {
     host.apply(ctx)
 
     const info = await (await fetch(`${base}/podwave/api/xyz/local-app`)).json()
+
+    if (process.platform !== 'darwin') {
+      // 小宇宙 App 只有 macOS 版：其它平台上该接口必须如实回报「不可用」，
+      // 而不是假装成功或直接 500。plist 解析逻辑由 test/xyz-app.test.mjs 跨平台覆盖。
+      assert.equal(info.available, false)
+      assert.match(info.reason, /macOS/)
+
+      const res = await fetch(`${base}/podwave/api/xyz/auth/from-app`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' },
+        body: '{}',
+      })
+      assert.equal(res.status, 400, '没有小宇宙 App 的平台，一键连接应返回 400 而不是假装成功')
+      const failed = await res.json()
+      assert.match(String(failed.error), /macOS/)
+      return
+    }
+
     assert.equal(info.available, true, '应能发现本机小宇宙登录数据')
     assert.ok(info.deviceId)
 
@@ -82,6 +101,20 @@ test('host: xyz local-app status and one-click connect', async () => {
 
     const status = await (await fetch(`${base}/podwave/api/xyz/status`)).json()
     assert.equal(status.loggedIn, true)
+
+    // 找不到 plist 时（没装/没登录）必须给 400 + 可读原因，而不是 500
+    fs.renameSync(plistFile, `${plistFile}.bak`)
+    try {
+      const missing = await fetch(`${base}/podwave/api/xyz/auth/from-app`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' },
+        body: '{}',
+      })
+      assert.equal(missing.status, 400, '没有登录数据时应返回 400')
+      assert.match(String((await missing.json()).error), /没有找到小宇宙/)
+    } finally {
+      fs.renameSync(`${plistFile}.bak`, plistFile)
+    }
   } finally {
     globalThis.fetch = originalFetch
     await new Promise((resolve) => server.close(resolve))
