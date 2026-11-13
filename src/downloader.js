@@ -94,6 +94,10 @@ function runCapture(cmd, args) {
   })
 }
 
+// 非 zip 压缩包（.tar.bz2 / .tar.gz / .tar.xz）的条目列表。
+// GNU tar（Git for Windows、MSYS、Cygwin 会把它的目录排到 PATH 前面）会把 C:/... 当成
+// host:path 远程语法，直接 `tar -tf C:/...` 会报 "Cannot connect to C: resolve failed"。
+// 所以这里也要多候选，否则安全检查会被静默跳过。
 async function listArchiveEntries(file) {
   const lower = file.toLowerCase()
   if (lower.endsWith('.zip')) {
@@ -108,8 +112,43 @@ async function listArchiveEntries(file) {
     }
     return null
   }
-  const output = await runCapture('tar', ['-tf', file])
-  return output ? output.split(/\r?\n/).filter(Boolean) : null
+  for (const [cmd, args] of tarListAttempts(file)) {
+    const output = await runCapture(cmd, args)
+    if (output) return output.split(/\r?\n/).filter(Boolean)
+  }
+  return null
+}
+
+function systemTar() {
+  if (process.platform !== 'win32') return null
+  const root = process.env.SystemRoot || process.env.windir || 'C:\\Windows'
+  return path.join(root, 'System32', 'tar.exe')
+}
+
+// 解压/列目录的候选命令。顺序有意义：
+// 1. 裸 tar：bsdtar（Windows 自带、macOS 自带）与 GNU tar 都能跑相对路径。
+// 2. --force-local：只有 GNU tar 认，用来救「绝对路径被当成远程主机」的情况。
+//    bsdtar 会明确拒绝这个选项，所以必须放在裸 tar 之后、失败后才轮到。
+// 3. Windows 自带的 System32\tar.exe：显式绕开 PATH 上被 Git-Bash 顶掉的 GNU tar。
+// 4. python -m tarfile：最后兜底，不依赖任何外部 tar。
+function tarAttempts(file, destDir) {
+  const list = [['tar', ['-xf', file, '-C', destDir]]]
+  list.push(['tar', ['--force-local', '-xf', file, '-C', destDir]])
+  const sysTar = systemTar()
+  if (sysTar) list.push([sysTar, ['-xf', file, '-C', destDir]])
+  list.push(['python', ['-m', 'tarfile', '-e', file, destDir]])
+  list.push(['python3', ['-m', 'tarfile', '-e', file, destDir]])
+  return list
+}
+
+function tarListAttempts(file) {
+  const list = [['tar', ['-tf', file]]]
+  list.push(['tar', ['--force-local', '-tf', file]])
+  const sysTar = systemTar()
+  if (sysTar) list.push([sysTar, ['-tf', file]])
+  list.push(['python', ['-c', 'import sys,tarfile;print("\n".join(tarfile.open(sys.argv[1]).getnames()))', file]])
+  list.push(['python3', ['-c', 'import sys,tarfile;print("\n".join(tarfile.open(sys.argv[1]).getnames()))', file]])
+  return list
 }
 
 async function sha256File(file) {
@@ -343,8 +382,13 @@ export async function extractArchive(file, destDir) {
     attempts.push(['tar', ['-xf', file, '-C', destDir]])
     attempts.push(['powershell.exe', ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${file}' -DestinationPath '${destDir}' -Force`]])
     attempts.push(['python3', ['-m', 'zipfile', '-e', file, destDir]])
+    attempts.push(['python', ['-m', 'zipfile', '-e', file, destDir]])
   } else {
-    attempts.push(['tar', ['-xf', file, '-C', destDir]])
+    // 之前这里只有一次裸 tar：只要 PATH 上的 tar 是 GNU tar（Git for Windows / MSYS / Cygwin
+    // 都会排到前面），Windows 的 C:/ 绝对路径就会被当成 host:path，报
+    // "tar: Cannot connect to C: resolve failed"（exit 128）。而这发生在安装最后一步
+    // （说话人分离模型），前面 1.6 GB 都下完了，整次安装却被判失败。
+    attempts.push(...tarAttempts(file, destDir))
   }
   let lastError = null
   for (const [cmd, args] of attempts) {

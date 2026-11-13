@@ -421,13 +421,17 @@ export default function SettingsPage() {
                 </div>
                 <div className="setup-progress"><span style={{ width: `${setup.job.progress || 0}%` }} /></div>
                 {setup.job.error ? <p className="settings-empty">失败：{setup.job.error}</p> : null}
+                {setup.job.warning ? <p className="settings-hint setup-warning">{setup.job.warning}</p> : null}
                 {setup.job.status === 'done' && (!setup.job.summary || !setup.job.summary.length) ? (
                   <p className="settings-empty">所有组件已就绪，没有需要下载的内容。</p>
                 ) : null}
                 {Array.isArray(setup.job.summary) && setup.job.summary.length ? (
                   <ul className="setup-summary">
                     {setup.job.summary.map((item) => (
-                      <li key={item.id}>{item.label} · {fmtBytes(item.bytes)}{item.source ? ` · ${item.source}` : ''}</li>
+                      <li key={item.id}>
+                        {item.label} · {item.skipped ? '已跳过（可选组件）' : fmtBytes(item.bytes)}
+                        {item.source ? ` · ${item.source}` : ''}
+                      </li>
                     ))}
                   </ul>
                 ) : null}

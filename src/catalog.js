@@ -212,6 +212,29 @@ export function artifactFor(platform, engine) {
   }
 }
 
+// 配置里存的是目录名（artifact.dir），不是 catalog 的 key。
+// 靠正则猜「这是不是 SenseVoice」在换模型后必错，所以按元数据反查。
+export function artifactByDir(dir, kind) {
+  if (!dir) return null
+  const name = String(dir)
+  for (const artifact of Object.values(CATALOG)) {
+    if (kind && artifact.kind !== kind) continue
+    if (artifact.dir === name || artifact.id === name) return artifact
+  }
+  return null
+}
+
+// 当前平台「应该用哪个模型/引擎」——配置默认值、安装检查、运行时判定都以它为准。
+export function expectedModels(platform, engine) {
+  const artifacts = artifactFor(platform, engine)
+  return {
+    asrModel: artifacts.asr.dir,
+    translateModel: artifacts.translate.dir,
+    asrEngine: artifacts.asr.engine,
+    translateEngine: artifacts.translate.engine,
+  }
+}
+
 export function llamaAsset(platform) {
   const name = LLAMA_BINARY.assets[platformKey(platform)]
   if (!name) return null

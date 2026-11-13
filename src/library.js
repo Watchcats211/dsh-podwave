@@ -19,11 +19,17 @@ const metaCache = new Map()
 let scanPromise = null
 let scanState = { running: false, startedAt: null, finishedAt: null, error: null }
 
+// Windows 用户经常直接粘资源管理器地址栏里的 %USERPROFILE%\Music、%HOMEPATH%，
+// 之前只认 ~ 和 ~/，这类路径会原样返回然后扫描失败。顺带支持 ~\ 与 %NAME%。
 export function expandHome(input) {
-  const value = String(input || '').trim()
+  let value = String(input || '').trim()
   if (!value) return ''
+  value = value.replace(/%([^%\\/]+)%/g, (whole, name) => {
+    const resolved = process.env[name] || process.env[name.toUpperCase()] || process.env[name.toLowerCase()]
+    return resolved || whole
+  })
   if (value === '~') return os.homedir()
-  if (value.startsWith('~/')) return path.join(os.homedir(), value.slice(2))
+  if (value.startsWith('~/') || value.startsWith('~\\')) return path.join(os.homedir(), value.slice(2))
   return path.resolve(value)
 }
 

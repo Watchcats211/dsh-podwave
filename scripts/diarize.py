@@ -42,7 +42,9 @@ def main():
     parser.add_argument('--emb-model', required=True)
     parser.add_argument('--threshold', type=float, default=0.6)
     parser.add_argument('--num-speakers', type=int, default=-1)
-    parser.add_argument('--ffmpeg', default=os.environ.get('PODWAVE_FFMPEG', '/opt/homebrew/bin/ffmpeg'))
+    # 默认走 PATH 上的 ffmpeg。之前写死 /opt/homebrew/bin/ffmpeg，
+    # 在 Windows 上是 [WinError 2] 系统找不到指定的文件。
+    parser.add_argument('--ffmpeg', default=os.environ.get('PODWAVE_FFMPEG') or 'ffmpeg')
     args = parser.parse_args()
 
     import sherpa_onnx as so

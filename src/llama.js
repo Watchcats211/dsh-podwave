@@ -7,7 +7,7 @@ import { DATA_DIR } from './state.js'
 import { getSection } from './config.js'
 import { llamaBinary } from './setup.js'
 import { CATALOG } from './catalog.js'
-import { detectPlatform, isWindows } from './platform.js'
+import { detectPlatform, isWindows, killTree } from './platform.js'
 
 const TARGET_NAMES = { zh: 'Simplified Chinese', en: 'English' }
 const IDLE_MS = 90_000
@@ -91,11 +91,9 @@ export async function ensureLlamaServer() {
 
 export function stopLlamaServer() {
   if (!server) return
-  try {
-    server.child.kill('SIGTERM')
-  } catch {
-    // ignore
-  }
+  // Windows 上 SIGTERM 等于 TerminateProcess，llama-server 的临时文件不会清理；
+  // killTree 在 Windows 走 taskkill /T，其它平台仍是优雅 SIGTERM。
+  killTree(server.child.pid)
   server = null
 }
 
