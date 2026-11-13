@@ -50,7 +50,7 @@ import {
 } from './transcribe.js'
 import { isLinux, isMac, isWindows } from './platform.js'
 import { listJobs, removeJob } from './jobs.js'
-import { scan as scanSetup, install as installSetup, cancelSetup, setupJob } from './setup.js'
+import { scan as scanSetup, install as installSetup, cancelSetup, setupJob, llamaBinary } from './setup.js'
 import { getSection, updateSection } from './config.js'
 import { diarizeInfo } from './diarize.js'
 import { getTranslationState, publicConfig, saveConfig, startTranslation } from './translate.js'
@@ -278,6 +278,32 @@ async function route(ctx, req, res) {
   if (routePath === 'api/setup') {
     return json(res, 200, { ...scanSetup(), job: setupJob() })
   }
+  if (routePath === 'api/setup/diagnose' && method === 'GET') {
+    const { detectPlatform, recommendEngine, ffmpegPath, venvPython } = await import('./platform.js')
+    const platform = detectPlatform()
+    let components = null
+    try {
+      components = (await scanSetup()).components
+    } catch (error) {
+      components = [{ id: 'scan', label: 'scan', ready: false, detail: String(error.message || error) }]
+    }
+    return json(res, 200, {
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      version: '0.10.3',
+      platform,
+      engine: recommendEngine(platform),
+      paths: {
+        data: DATA_DIR,
+        ffmpeg: ffmpegPath(),
+        python: venvPython(),
+        llama: llamaBinary(platform),
+      },
+      components,
+      setup: setupJob(),
+    })
+  }
+
   if (routePath === 'api/setup/install' && method === 'POST') {
     const body = await readJson(req)
     if (setupJob()?.running) return json(res, 409, { error: '安装已在进行中' })
@@ -288,7 +314,7 @@ async function route(ctx, req, res) {
     return json(res, 200, { cancelled: cancelSetup() })
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.10.2', transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.10.3', transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()

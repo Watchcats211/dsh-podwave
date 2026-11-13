@@ -67,6 +67,11 @@ function findUv() {
   return process.env.PODWAVE_UV || findExecutable('uv', [path.join(os.homedir(), '.local', 'bin'), path.join(os.homedir(), '.cargo', 'bin'), path.join(RUNTIME_DIR, 'bin')])
 }
 
+export function uvAssetName(platform) {
+  const target = uvTarget(platform)
+  return platform.os === 'win32' ? `uv-${target}.zip` : `uv-${target}.tar.gz`
+}
+
 function uvTarget(platform) {
   if (platform.os === 'darwin') return platform.arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin'
   if (platform.os === 'win32') return platform.arch === 'arm64' ? 'aarch64-pc-windows-msvc' : 'x86_64-pc-windows-msvc'
@@ -76,35 +81,32 @@ function uvTarget(platform) {
 async function ensureUv(platform, source, onProgress) {
   const existing = findUv()
   if (existing) return existing
-  const target = uvTarget(platform)
-  const asset = `uv-${target}.tar.gz`
+  const asset = uvAssetName(platform)
   const url = `https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${asset}`
-  const cnUrl = `https://gh-proxy.com/${url}`
-  const dest = path.join(RUNTIME_DIR, 'bin')
-  await fsp.mkdir(dest, { recursive: true })
-  const archive = path.join(dest, asset)
-  const chosen = source === 'cn' ? cnUrl : source === 'intl' ? url : url
-  try {
-    await downloadArtifact(
-      {
-        id: 'uv',
-        dir: '../runtime/bin',
-        source: { type: 'github-assets', assets: [{ url: chosen, file: asset }] },
-        approxBytes: 15_000_000,
-      },
-      { sourceId: 'intl', onProgress, signal: current?.signal },
-    )
-    // downloadArtifact 把文件放到了 models/../runtime/bin 下，这里直接解压到 runtime/bin。
-    const binDir = path.join(RUNTIME_DIR, 'bin')
-    await fsp.mkdir(binDir, { recursive: true })
-    const archivePath = path.join(binDir, asset)
-    if (fs.existsSync(archivePath)) {
-      const { extractArchive } = await import('./downloader.js')
-      await extractArchive(archivePath, binDir)
-      await fsp.rm(archivePath, { force: true })
+  const urls = source === 'cn' ? [`https://gh-proxy.com/${url}`] : source === 'intl' ? [url] : [url, `https://gh-proxy.com/${url}`]
+  const binDir = path.join(RUNTIME_DIR, 'bin')
+  await fsp.mkdir(binDir, { recursive: true })
+  const { extractArchive } = await import('./downloader.js')
+  for (const chosen of urls) {
+    try {
+      await downloadArtifact(
+        {
+          id: 'uv',
+          dir: '../runtime/bin',
+          source: { type: 'github-assets', assets: [{ url: chosen, file: asset }] },
+          approxBytes: 30_000_000,
+        },
+        { sourceId: 'intl', onProgress, signal: current?.signal },
+      )
+      const archivePath = path.join(binDir, asset)
+      if (fs.existsSync(archivePath)) {
+        await extractArchive(archivePath, binDir)
+        await fsp.rm(archivePath, { force: true })
+      }
+      if (findUv()) break
+    } catch {
+      // 换下一条线路
     }
-  } catch {
-    // 下载失败时回退到 PATH 上的 uv（可能由用户自己安装）
   }
   const found = findUv()
   if (!found) throw new Error('uv 安装失败，请手动安装 uv 后重试（https://docs.astral.sh/uv/）')
