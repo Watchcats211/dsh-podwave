@@ -25,6 +25,8 @@ import {
   sendCode,
   loginWithSms,
   loginWithRefreshToken,
+  loginFromLocalApp,
+  localAppStatus,
   logout,
   getSubscriptions,
   getPodcastEpisodes,
@@ -209,7 +211,7 @@ function boot() {
   if (!booted) {
     booted = (async () => {
       await initState()
-    loadXyz()
+      loadXyz()
       await migrateAllTranscripts().catch((error) => console.error('[dsh-podwave] transcript migration failed:', error.message))
       if (getState().folders.length) {
         scanLibrary()
@@ -463,7 +465,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.18',
+      version: '0.11.19',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -492,7 +494,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.18', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.19', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -509,6 +511,14 @@ async function route(ctx, req, res) {
     const withTranscript = new Set(transcriptIds)
     const favorites = new Set(state.favorites || [])
     const hidden = new Set(state.hidden || [])
+    // 每个本地单集归属到哪个「已添加的文件夹」：按路径前缀匹配，取最长的那个，
+    // 这样嵌套添加（例如 Downloads 与 Downloads/播客）时算在最具体的文件夹下。
+    const roots = [...(state.folders || [])].sort((a, b) => b.length - a.length)
+    const rootOf = new Map()
+    for (const { id, file } of getEpisodePaths()) {
+      const root = roots.find((folder) => file === folder || file.startsWith(folder.endsWith(path.sep) ? folder : `${folder}${path.sep}`))
+      if (root) rootOf.set(id, root)
+    }
     return json(res, 200, {
       items: listAllEpisodes()
         .filter((episode) => !hidden.has(episode.id))
@@ -516,6 +526,7 @@ async function route(ctx, req, res) {
           ...episode,
           hasTranscript: withTranscript.has(episode.id),
           favorite: favorites.has(episode.id),
+          root: rootOf.get(episode.id) || null,
         }))
         .sort((a, b) => (b.mtime || 0) - (a.mtime || 0)),
       folders: state.folders,
@@ -565,6 +576,12 @@ async function route(ctx, req, res) {
     const body = await readJson(req)
     if (!body?.refreshToken) return json(res, 400, { error: '缺少 refresh token' })
     return json(res, 200, await loginWithRefreshToken(body.refreshToken, body.deviceId || ''))
+  }
+  if (method === 'GET' && routePath === 'api/xyz/local-app') {
+    return json(res, 200, localAppStatus())
+  }
+  if (method === 'POST' && routePath === 'api/xyz/auth/from-app') {
+    return json(res, 200, await loginFromLocalApp())
   }
   if (method === 'POST' && routePath === 'api/xyz/auth/logout') {
     return json(res, 200, logout())

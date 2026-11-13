@@ -143,12 +143,96 @@ async function saveTranscript(transcript) {
 
 export { saveTranscript }
 
+// 单集 id 由文件绝对路径哈希而来，文件被改名/移动/换盘后历史字幕会变成"孤儿"：
+// 文件还在 transcripts/ 里，但按新路径算出的 id 找不到它。这里按内容特征把孤儿认领回来。
+const claimMisses = new Map() // id → 失败时间，带 TTL，避免媒体库还没扫描完时被永久判死
+const CLAIM_RETRY_MS = 60_000
+
+function normalizeTitle(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+async function claimOrphanTranscript(id) {
+  const lastMiss = claimMisses.get(id)
+  if (lastMiss && Date.now() - lastMiss < CLAIM_RETRY_MS) return null
+  let episode = null
+  try {
+    const { findEpisode } = await import('./providers.js')
+    episode = findEpisode(id)
+  } catch {
+    return null
+  }
+  const title = normalizeTitle(episode?.title)
+  const duration = Number(episode?.duration) || 0
+  // 媒体库还没扫到这个单集时不要记失败，等下次扫描后再试。
+  if (!title || !duration) return null
+
+  let names = []
+  try {
+    names = await readdir(TRANSCRIPTS_DIR)
+  } catch {
+    claimMisses.set(id, Date.now())
+    return null
+  }
+
+  const matches = []
+  for (const name of names) {
+    if (!name.endsWith('.json') || name === `${id}.json`) continue
+    const file = path.join(TRANSCRIPTS_DIR, name)
+    let raw
+    try {
+      raw = JSON.parse(await readFile(file, 'utf8'))
+    } catch {
+      continue
+    }
+    if (!Array.isArray(raw?.lines) || !raw.lines.length) continue
+    if (normalizeTitle(raw.title) !== title) continue
+    if (Math.abs((Number(raw.duration) || 0) - duration) > 2) continue
+    matches.push({ file, raw })
+  }
+
+  // 只有唯一候选才认领，避免把另一个同名同长的单集字幕错挂过来。
+  if (matches.length !== 1) {
+    if (matches.length > 1) {
+      console.warn(`[dsh-podwave] 字幕认领放弃：${title} 有 ${matches.length} 个候选字幕`)
+    }
+    claimMisses.set(id, Date.now())
+    return null
+  }
+
+  const [{ file, raw }] = matches
+  const claimed = normalizeTranscript(
+    {
+      ...raw,
+      id,
+      schemaVersion: 2,
+      source: episode?.file
+        ? { path: episode.file, size: episode.size || null, mtime: episode.mtime || null }
+        : raw.source || null,
+      claimedFrom: raw.id || path.basename(file, '.json'),
+    },
+    id,
+  )
+  if (!claimed) {
+    claimMisses.set(id, Date.now())
+    return null
+  }
+  try {
+    await saveTranscript(claimed)
+  } catch {
+    claimMisses.set(id, Date.now())
+    return null
+  }
+  console.warn(`[dsh-podwave] 字幕认领：${path.basename(file)} → ${id}.json（${title}）`)
+  return claimed
+}
+
 export async function readTranscript(id) {
   let raw
   try {
     raw = JSON.parse(await readFile(transcriptPath(id), 'utf8'))
   } catch {
-    return null
+    return claimOrphanTranscript(id)
   }
   const normalized = normalizeTranscript(raw, id)
   if (normalized && raw.schemaVersion !== 2) {

@@ -3,7 +3,9 @@
 import fs from 'node:fs'
 import { createWriteStream } from 'node:fs'
 import { mkdir, rename, rm } from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
+import * as childProcess from 'node:child_process'
 import { DATA_DIR } from './state.js'
 
 const CONFIG_PATH = path.join(DATA_DIR, 'xyz.json')
@@ -28,6 +30,11 @@ export function loadXyz() {
     items = new Map((raw.items || []).map((item) => [item.id, item]))
   } catch { items = new Map() }
 }
+
+// 模块加载时就把本机登录态读进来。之前只有宿主启动时调 loadXyz()，
+// 任何没调用它就直接发请求的路径（脚本、测试、以后新增的调用方）都会看到空 token，
+// 于是一次 401 就把磁盘上还能用的登录态覆盖掉了。
+loadXyz()
 
 function saveConfig() {
   fs.mkdirSync(DATA_DIR, { recursive: true })
@@ -79,24 +86,38 @@ async function rawRequest(pathname, { method = 'POST', body, headers = {}, auth 
 async function request(pathname, { method = 'POST', body, auth = true } = {}) {
   let res = await rawRequest(pathname, { method, body, auth })
   if (res.status === 401 && auth) {
-    let ok = false
+    // 401 有两种可能：token 真过期，或者单次请求被风控/网关挡下。
+    // 先尝试刷新再重试一次；仍然 401 时不要再顺手清空登录态——
+    // 之前就是一次瞬时 401 把 token 抹掉，用户看到「登录已失效」却不知道为什么。
+    // 内存里没有 refresh token 也不一定是真过期：脚本、测试、刚重启的宿主
+    // 都可能还没读过磁盘，所以先补读一次再决定。
+    if (!config.refreshToken) loadXyz()
     if (config.refreshToken) {
       lastRefreshAuthFailed = false
-      ok = await refreshToken()
+      const ok = await refreshToken()
       if (ok) res = await rawRequest(pathname, { method, body, auth })
     }
-    if (!ok && res.status === 401) {
+    if (res.status === 401) {
+      // refresh 接口明确拒绝（401/403）、或者根本没有 refresh token 可换，
+      // 才算真过期；这时才清掉本地 token。
       const definitive = lastRefreshAuthFailed || !config.refreshToken
       if (definitive) {
+        // refresh 接口明确拒绝（401/403）：这才是真的过期，清掉本地 token，
+        // 但提示用户去小宇宙 App 重新登录，而不是让他手动粘 token。
         config.accessToken = ''
-        if (lastRefreshAuthFailed) config.refreshToken = ''
+        config.refreshToken = ''
         config.profile = null
         saveConfig()
-        const expired = new Error('登录已失效，请重新粘贴 token')
+        const expired = new Error('小宇宙登录已过期，请打开小宇宙 App 确认已登录，再点「读取小宇宙 App 的登录态」重新连接')
         expired.status = 401
         expired.code = 'AUTH_EXPIRED'
         throw expired
       }
+      const rejected = new Error('小宇宙这次请求被拒绝了（401），可能只是瞬时问题；登录态已保留，请稍后重试')
+      rejected.status = 401
+      rejected.code = 'AUTH_REJECTED'
+      rejected.retryable = true
+      throw rejected
     }
   }
   const text = await res.text()
@@ -116,9 +137,11 @@ export async function refreshToken() {
   if (refreshing) return refreshing
   refreshing = (async () => {
     try {
+      // 小宇宙要求 refresh 时同时带上当前 access token：
+      // 只带 refresh → 401，只带 access → 401，两个一起才 200。
       const res = await fetch(`${BASE}/app_auth_tokens.refresh`, {
         method: 'POST',
-        headers: appHeaders(),
+        headers: appHeaders({ 'x-jike-refresh-token': config.refreshToken }),
         signal: AbortSignal.timeout(TIMEOUT),
       })
       const access = res.headers.get('x-jike-access-token')
@@ -241,10 +264,108 @@ export function logout() {
   return xyzStatus()
 }
 
+// 小宇宙桌面版是 iOS App（Apple Silicon 上直跑），登录态存在共享容器的偏好设置 plist 里。
+// 这样用户只要在小宇宙 App 里登录过，就能一键把登录态搬过来，不必再开网页、按 F12 抄 header。
+function appPlistPath() {
+  return path.join(
+    os.homedir(),
+    'Library',
+    'Group Containers',
+    'group.app.podcast.cosmos',
+    'Library',
+    'Preferences',
+    'group.app.podcast.cosmos.plist',
+  )
+}
+
+function readAppPlistText(file) {
+  const { execFileSync } = childProcess
+  return execFileSync('/usr/bin/plutil', ['-convert', 'xml1', '-o', '-', file], {
+    maxBuffer: 16 * 1024 * 1024,
+  }).toString('utf8')
+}
+
+function plistString(xml, key) {
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = new RegExp(`<key>${escaped}</key>\\s*<string>([\\s\\S]*?)</string>`).exec(xml)
+  return match ? match[1].trim() : ''
+}
+
+export function localAppStatus() {
+  const platform = process.platform
+  if (platform !== 'darwin') {
+    return { available: false, reason: platform === 'win32' ? '仅支持 macOS 上的小宇宙 App' : '仅支持 macOS 上的小宇宙 App' }
+  }
+  if (!fs.existsSync(appPlistPath())) {
+    return { available: false, reason: '没有找到小宇宙 App 的登录数据，请先打开小宇宙并登录一次' }
+  }
+  try {
+    const xml = readAppPlistText(appPlistPath())
+    const accessToken = plistString(xml, 'default-apiAccessToken')
+    const refreshToken = plistString(xml, 'default-apiRefreshToken')
+    const deviceId = plistString(xml, 'app.podcast.cosmos.deviceId')
+    if (!accessToken && !refreshToken) {
+      return { available: false, reason: '小宇宙 App 里还没有登录，请先在 App 里登录' }
+    }
+    return { available: true, hasAccess: Boolean(accessToken), hasRefresh: Boolean(refreshToken), deviceId }
+  } catch (error) {
+    return { available: false, reason: `读取小宇宙登录数据失败：${error?.message || error}` }
+  }
+}
+
+export async function loginFromLocalApp() {
+  const state = localAppStatus()
+  if (!state.available) throw new Error(state.reason)
+  const xml = readAppPlistText(appPlistPath())
+  const appAccess = plistString(xml, 'default-apiAccessToken')
+  const appRefresh = plistString(xml, 'default-apiRefreshToken')
+  const appDevice = plistString(xml, 'app.podcast.cosmos.deviceId')
+  if (!appAccess && !appRefresh) throw new Error('小宇宙 App 里还没有登录，请先在 App 里登录')
+  const previous = { ...config }
+  config.accessToken = appAccess
+  config.refreshToken = appRefresh
+  config.deviceId = appDevice || config.deviceId || ''
+  config.profile = null
+  // 先试着刷新一次（两个 token 一起发），失败了说明 App 里的登录也已失效。
+  const refreshed = await refreshToken()
+  if (!refreshed) {
+    // 有些情况下 refresh 接口抽风，但 access token 本身还有效，直接验一次。
+    try {
+      await ensureProfile()
+      saveConfig()
+      return xyzStatus()
+    } catch (error) {
+      // 导入失败不要把原来还能用的登录态一起抹掉。
+      config = previous
+      saveConfig()
+      if (error?.code === 'AUTH_EXPIRED') {
+        throw new Error('小宇宙 App 的登录已失效，请打开 App 重新登录后再回来点一次')
+      }
+      throw new Error(`没能用小宇宙 App 的登录态完成连接：${error?.message || error}`)
+    }
+  }
+  await ensureProfile()
+  saveConfig()
+  return xyzStatus()
+}
+
 export async function getSubscriptions({ refresh = false } = {}) {
   if (!refresh && subsCache && Date.now() - subsCachedAt < SUBS_CACHE_TTL) return subsCache
-  const data = await request('/v1/subscription', { body: { limit: 200 } })
-  const rows = data?.data || []
+  // 正确形态是 POST /v1/subscription/list，且 sortBy 必填（subscribedAt / latestEpisodePubDate）。
+  // 服务端固定每页 30 条，分页靠 loadMoreKey.skip。
+  const rows = []
+  let loadMoreKey = null
+  for (let page = 0; page < 20; page += 1) {
+    const body = { limit: 30, sortBy: 'subscribedAt' }
+    if (loadMoreKey) body.loadMoreKey = loadMoreKey
+    const data = await request('/v1/subscription/list', { body })
+    const batch = data?.data || []
+    rows.push(...batch)
+    const next = data?.loadMoreKey
+    if (!next || (!next.skip && next.skip !== 0) || !batch.length) break
+    if (loadMoreKey && next.skip === loadMoreKey.skip) break
+    loadMoreKey = next
+  }
   const items = rows
     .map((row) => row.podcast || row)
     .filter((pod) => pod && pod.pid)
@@ -254,7 +375,8 @@ export async function getSubscriptions({ refresh = false } = {}) {
       author: pod.author || '',
       brief: pod.brief || '',
       cover: pod.image?.picUrl || pod.image?.smallPicUrl || '',
-      subscribers: pod.subscribersCount || 0,
+      subscribers: pod.subscriptionCount || pod.subscribersCount || 0,
+      episodeCount: pod.episodeCount || 0,
       updatedAt: pod.latestEpisodePubDate || pod.updatedAt || '',
     }))
   subsCache = items
@@ -278,7 +400,8 @@ export async function getPodcastEpisodes(pid, { limit = 30, loadMoreKey = null }
 }
 
 export async function getEpisode(eid) {
-  const data = await request('/v1/episode/get', { body: { eid } })
+  // 单集接口从 POST /v1/episode/get 改成了 GET /v1/episode/get?eid=
+  const data = await request(`/v1/episode/get?eid=${encodeURIComponent(eid)}`, { method: 'GET' })
   return mapEpisode(data?.data || data)
 }
 
