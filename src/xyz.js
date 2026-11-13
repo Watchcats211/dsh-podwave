@@ -293,7 +293,7 @@ function mapEpisode(ep) {
     duration: Number(ep.duration || 0),
     pubDate: ep.pubDate || '',
     cover: podcast.image?.picUrl || podcast.image?.smallPicUrl || '',
-    shownotes: ep.shownotes || ep.description || '',
+    shownotes: typeof ep.shownotes === 'string' ? ep.shownotes : (typeof ep.description === 'string' ? ep.description : ''),
     isPrivate: Boolean(ep.isPrivateMedia),
     audioUrl: ep.enclosure?.url || ep.media?.source?.url || '',
     payType: ep.payType || '',
@@ -321,6 +321,10 @@ function parseNextData(html) {
 }
 
 function mapPublicEpisode(ep, pid, podcastTitle) {
+  const rawNotes = ep.shownotes
+  const notes = typeof rawNotes === 'string' && rawNotes.trim()
+    ? rawNotes
+    : (typeof ep.description === 'string' ? ep.description : '')
   return {
     eid: ep.eid,
     pid,
@@ -332,7 +336,7 @@ function mapPublicEpisode(ep, pid, podcastTitle) {
     audioUrl: ep.enclosure?.url || ep.media?.source?.url || '',
     isPrivate: Boolean(ep.isPrivateMedia) || (ep.payType && ep.payType !== 'FREE'),
     payType: ep.payType || '',
-    shownotes: ep.shownotes || '',
+    shownotes: notes,
   }
 }
 
@@ -386,6 +390,7 @@ export function playPublicEpisode(pid, eid) {
     public: true,
     audioUrl: episode.audioUrl,
     cover: episode.cover,
+    shownotes: typeof episode.shownotes === 'string' ? episode.shownotes : '',
   }
   items.set(id, item)
   saveItems()
@@ -435,6 +440,7 @@ export async function playEpisode(eid) {
     hasCover: Boolean(ep.cover),
     location: '小宇宙',
     remote: true,
+    shownotes: typeof ep.shownotes === 'string' ? ep.shownotes : '',
   }
   items.set(id, item)
   saveItems()

@@ -178,6 +178,7 @@ export default function App() {
   const [scan, setScan] = useState({ running: false })
   const [settings, setSettings] = useState({ rate: 1, volume: 0.9, lastEpisodeId: null })
   const [rateOpen, setRateOpen] = useState(false)
+  const [notesOpen, setNotesOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [hits, setHits] = useState([])
   const [sort, setSort] = useState('recent')
@@ -225,6 +226,7 @@ export default function App() {
   const restoredRef = useRef(false)
   const seekDraggingRef = useRef(false)
 
+  useEffect(() => { setNotesOpen(false) }, [detailId])
   useEffect(() => { settingsRef.current = settings }, [settings])
   useEffect(() => { currentRef.current = current }, [current])
   useEffect(() => { durationRef.current = duration }, [duration])
@@ -1150,6 +1152,14 @@ export default function App() {
                 <p className="episode-sub">{detailItem.artist}{detailItem.album ? ` · ${detailItem.album}` : ''}</p>
                 <p className="episode-path" title={detailItem.file}>{detailItem.location || detailItem.file}</p>
                 <p className="episode-stats">{fmtDuration(detailItem.duration)} · {fmtDate(detailItem.mtime)} · 已听 {Math.round(progressPct(detailItem))}%</p>
+                {detailItem.shownotes ? (
+                  <div className={`episode-notes ${notesOpen ? 'is-open' : ''}`}>
+                    <button className="notes-head" onClick={() => setNotesOpen((prev) => !prev)}>
+                      单集介绍 {notesOpen ? '收起' : '展开'}
+                    </button>
+                    <p className="notes-body">{detailItem.shownotes}</p>
+                  </div>
+                ) : null}
                 <div className="episode-actions">
                   <button className="btn primary" onClick={togglePlay}>{playing && current?.id === detailItem.id ? '暂停' : '播放'}</button>
                   {txStatus === 'queued' || txStatus === 'running' ? (
