@@ -210,6 +210,7 @@ export default function App() {
   const [txIssues, setTxIssues] = useState([])
 
   const audioRef = useRef(null)
+  const mediaBaseRef = useRef('')
   const seekRef = useRef(null)
   const currentRef = useRef(null)
   const durationRef = useRef(0)
@@ -268,6 +269,8 @@ export default function App() {
     let cancelled = false
     ;(async () => {
       try {
+        const health = await getJSON(`${API}/health`).catch(() => ({}))
+        if (health.mediaBase) mediaBaseRef.current = health.mediaBase
         const state = await getJSON(`${API}/state`)
         if (cancelled) return
         setSettings(state.settings)
@@ -284,7 +287,9 @@ export default function App() {
           setPosition(pendingSeekRef.current)
           const audio = audioRef.current
           if (audio) {
-            audio.src = `${API}/episodes/${last.id}/audio`
+            audio.src = mediaBaseRef.current
+              ? `${mediaBaseRef.current}/episodes/${last.id}/audio`
+              : `${API}/episodes/${last.id}/audio`
             audio.load()
             audio.playbackRate = state.settings?.rate || 1
             audio.volume = state.settings?.volume ?? 0.9
@@ -686,7 +691,9 @@ export default function App() {
     const resume = saved > 5 && (!item.duration || saved < item.duration - 10) ? saved : 0
     pendingSeekRef.current = resume
     setPosition(resume)
-    audio.src = `${API}/episodes/${item.id}/audio`
+    audio.src = mediaBaseRef.current
+      ? `${mediaBaseRef.current}/episodes/${item.id}/audio`
+      : `${API}/episodes/${item.id}/audio`
     audio.load()
     audio.playbackRate = settingsRef.current.rate || 1
     audio.volume = settingsRef.current.volume ?? 0.9

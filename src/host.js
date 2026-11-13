@@ -1,6 +1,8 @@
 // dsh-podwave host 半片：在 DSH 的 webServer 上挂 /podwave/api/*。
 // 数据仍然放在 ~/.podwave，和独立版 Podwave 共用媒体库与进度。
 import fs from 'node:fs'
+import http from 'node:http'
+import crypto from 'node:crypto'
 import { copyFile, mkdir, realpath, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { createReadStream, createWriteStream } from 'node:fs'
@@ -214,6 +216,66 @@ async function sendFile(req, res, file, cacheControl = 'private, max-age=3600') 
   return createReadStream(file).pipe(res)
 }
 
+// 桌面端页面是 dsh-app:// 自定义 scheme，媒体经它代理时可能拿不到 Range，
+// 导致 audio.currentTime 赋值被忽略（拖了回起点）。这里另起一个只监听回环的
+// 小 HTTP 服务专门提供音频/封面，路径带随机密钥，浏览器可用 Range 正常拖动。
+let mediaBase = ''
+let mediaServer = null
+let mediaReadyResolve = null
+const mediaReady = new Promise((resolve) => {
+  mediaReadyResolve = resolve
+})
+
+function startMediaServer() {
+  const secret = crypto.randomBytes(16).toString('hex')
+  mediaServer = http.createServer(async (req, res) => {
+    try {
+      const prefix = `/m/${secret}/`
+      const url = new URL(req.url || '/', 'http://127.0.0.1')
+      if (!url.pathname.startsWith(prefix)) {
+        res.statusCode = 404
+        return res.end()
+      }
+      res.setHeader('access-control-allow-origin', '*')
+      const rest = url.pathname.slice(prefix.length)
+      const match = /^episodes\/([^/]+)\/(audio|cover)$/.exec(rest)
+      if (!match) {
+        res.statusCode = 404
+        return res.end()
+      }
+      const episode = getEpisode(decodeURIComponent(match[1]))
+      if (!episode) {
+        res.statusCode = 404
+        return res.end()
+      }
+      if (match[2] === 'cover') {
+        const cover = getCoverPath(episode.id)
+        if (!cover) {
+          res.statusCode = 404
+          return res.end()
+        }
+        return sendFile(req, res, cover, 'public, max-age=86400')
+      }
+      if (!episode.file) {
+        res.statusCode = 404
+        return res.end()
+      }
+      return sendFile(req, res, episode.file, 'no-store')
+    } catch (error) {
+      res.statusCode = 500
+      res.end()
+    }
+  })
+  mediaServer.on('error', (error) => console.error('[podwave-media]', error.message))
+  mediaServer.listen(0, '127.0.0.1', () => {
+    const { port } = mediaServer.address()
+    mediaBase = `http://127.0.0.1:${port}/m/${secret}`
+    mediaReadyResolve()
+  })
+  mediaServer.unref()
+  return mediaServer
+}
+
 function safeName(name) {
   return String(name || 'audio')
     .replace(/[\\/\u0000-\u001f]/g, '_')
@@ -323,7 +385,8 @@ async function route(ctx, req, res) {
     return json(res, 200, { cancelled: cancelSetup() })
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.10.12', transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    await mediaReady
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.10.14', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -794,6 +857,14 @@ export default {
   inject: ['webServer', 'connection'],
   apply(ctx) {
     const ready = boot()
+    startMediaServer()
+    ctx.effect(() => () => {
+      try {
+        mediaServer?.close()
+      } catch {
+        /* ignore */
+      }
+    }, 'dsh-podwave: media server')
     ctx.effect(
       () =>
         ctx.webServer.register({
