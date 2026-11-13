@@ -7,7 +7,7 @@ import { jobLabel } from './lib/jobLabel.js'
 
 const API = '/podwave/api'
 
-const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2]
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
 
 async function getJSON(url) {
   const res = await fetch(url)
@@ -176,6 +176,7 @@ export default function App() {
   const [progress, setProgress] = useState({})
   const [scan, setScan] = useState({ running: false })
   const [settings, setSettings] = useState({ rate: 1, volume: 0.9, lastEpisodeId: null })
+  const [rateOpen, setRateOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [sort, setSort] = useState('recent')
   const [view, setView] = useState('all')
@@ -785,13 +786,27 @@ export default function App() {
     selectEpisode(ordered[nextIndex], true)
   }, [ordered, selectEpisode])
 
-  const cycleRate = useCallback(() => {
-    const index = SPEEDS.indexOf(settingsRef.current.rate)
-    const next = SPEEDS[(index + 1) % SPEEDS.length]
+  const pickRate = useCallback((next) => {
     const audio = audioRef.current
     if (audio) audio.playbackRate = next
     patchSettings({ rate: next })
+    setRateOpen(false)
   }, [patchSettings])
+
+  useEffect(() => {
+    if (!rateOpen) return
+    const close = (event) => {
+      if (event.type === 'keydown' && event.key !== 'Escape') return
+      if (event.type === 'pointerdown' && event.target.closest?.('.rate-wrap')) return
+      setRateOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', close)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', close)
+    }
+  }, [rateOpen])
 
   const changeVolume = useCallback((value) => {
     const volume = Math.max(0, Math.min(1, value))
@@ -1357,7 +1372,33 @@ export default function App() {
               <span>{transcript ? '字幕' : txStatus === 'queued' || txStatus === 'running' ? '转写中' : '转写'}</span>
             </button>
             <span className="time">{fmtTime(position)} / {fmtTime(duration)}</span>
-            <button className="rate-btn" onClick={cycleRate} title="播放速度">{settings.rate}×</button>
+            <span className="rate-wrap">
+              <button
+                className="rate-btn"
+                onClick={() => setRateOpen((value) => !value)}
+                title="播放速度"
+                aria-haspopup="menu"
+                aria-expanded={rateOpen}
+              >
+                {settings.rate}×
+              </button>
+              {rateOpen ? (
+                <span className="rate-menu" role="menu">
+                  {SPEEDS.map((rate) => (
+                    <button
+                      key={rate}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={rate === settings.rate}
+                      className={rate === settings.rate ? 'is-on' : ''}
+                      onClick={() => pickRate(rate)}
+                    >
+                      {rate}×
+                    </button>
+                  ))}
+                </span>
+              ) : null}
+            </span>
             <button className="icon-btn" onClick={toggleMute} title="静音">
               <Icon name={settings.volume > 0 ? 'volume' : 'mute'} />
             </button>
