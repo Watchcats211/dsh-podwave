@@ -587,6 +587,19 @@ export default function App() {
     await startTranslate(value)
   }, [transcript, startTranslate, refreshTranscript])
 
+  const openEpisodeWeb = async () => {
+    if (!detailItem?.eid) return
+    try {
+      await fetch(`${API}/xyz/open-web`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: `https://www.xiaoyuzhoufm.com/episode/${detailItem.eid}` }),
+      })
+    } catch {
+      flash('无法打开浏览器')
+    }
+  }
+
   const toggleFavorite = (item) => {
     const favorite = !item.favorite
     setItems((list) => list.map((entry) => (entry.id === item.id ? { ...entry, favorite } : entry)))
@@ -1169,6 +1182,9 @@ export default function App() {
                       {detailItem.source === 'xyz' ? (transcript ? '重新下载并转写' : '下载并转写') : transcript ? '重新转写' : '转写字幕'}
                     </button>
                   )}
+                  {detailItem.source === 'xyz' ? (
+                    <button className="btn ghost" onClick={openEpisodeWeb}>在浏览器打开</button>
+                  ) : null}
                   <button className="btn ghost danger" onClick={() => removeEpisodes([detailItem.id])}>从播放器移除</button>
                 </div>
               </div>

@@ -454,7 +454,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.10',
+      version: '0.11.11',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -518,7 +518,20 @@ async function route(ctx, req, res) {
     return json(res, 200, xyzStatus())
   }
   if (method === 'POST' && routePath === 'api/xyz/open-web') {
-    const url = 'https://www.xiaoyuzhoufm.com'
+    let url = 'https://www.xiaoyuzhoufm.com'
+    const body = await readJson(req)
+    if (body?.url) {
+      let parsed
+      try {
+        parsed = new URL(String(body.url))
+      } catch {
+        return json(res, 400, { error: '链接格式不对' })
+      }
+      if (parsed.protocol !== 'https:' || !['www.xiaoyuzhoufm.com', 'xiaoyuzhoufm.com'].includes(parsed.hostname)) {
+        return json(res, 400, { error: '只支持打开小宇宙链接' })
+      }
+      url = parsed.toString()
+    }
     const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open'
     const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url]
     try {
