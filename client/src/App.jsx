@@ -1341,13 +1341,13 @@ export default function App() {
         <div className="player-body">
           <div className="now">
             {current ? (
-              <>
+              <button className="now-open" onClick={() => setDetailId(current.id)} aria-label="打开当前单集详情" title="打开详情">
                 <Cover item={current} size={48} />
                 <div className="now-text">
                   <div className="now-title" title={current.title}>{current.title}</div>
                   <div className="now-artist">{current.artist}</div>
                 </div>
-              </>
+              </button>
             ) : (
               <div className="now-empty">选择一集开始播放</div>
             )}

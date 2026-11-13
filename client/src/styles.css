@@ -1302,3 +1302,20 @@ select:focus-visible {
 }
 .rate-menu button:hover { background: #22222a; color: var(--text); }
 .rate-menu button.is-on { color: var(--accent); }
+
+.now-open {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 8px;
+}
+.now-open:hover .now-title { color: var(--accent); }
+.now-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.now-open .now-text { min-width: 0; }
