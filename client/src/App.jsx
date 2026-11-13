@@ -218,6 +218,7 @@ export default function App() {
   const durationRef = useRef(0)
   const settingsRef = useRef(settings)
   const pendingSeekRef = useRef(0)
+  const lastTickRef = useRef(0)
   const lastSaveRef = useRef(0)
   const toastedRef = useRef(0)
   const restoredRef = useRef(false)
@@ -410,9 +411,9 @@ export default function App() {
       }
     }
     refresh()
-    const timer = setInterval(refresh, 2500)
+    const timer = setInterval(refresh, jobsOpen ? 2500 : 20000)
     return () => { cancelled = true; clearInterval(timer) }
-  }, [])
+  }, [jobsOpen])
 
   const saveProgress = useCallback((id, pos, dur, immediate = false) => {
     if (!id) return
@@ -852,6 +853,9 @@ export default function App() {
   const onTimeUpdate = () => {
     const audio = audioRef.current
     if (!audio || !currentRef.current) return
+    const now = performance.now()
+    if (now - (lastTickRef.current || 0) < 400) return
+    lastTickRef.current = now
     setPosition(audio.currentTime)
     saveProgress(currentRef.current.id, audio.currentTime, audio.duration || durationRef.current)
   }
@@ -1018,7 +1022,7 @@ export default function App() {
         <div className="brand">
           <span className="brand-mark"><Icon name="wave" size={20} /></span>
           <span className="brand-name">Podwave</span>
-          <span className="brand-version">0.10.20</span>
+          <span className="brand-version">0.10.21</span>
           <button className="icon-btn brand-collapse" title="收起侧边栏" onClick={toggleNav}>
             <Icon name="chevron-left" size={16} />
           </button>
