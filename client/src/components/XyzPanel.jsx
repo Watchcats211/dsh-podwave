@@ -55,10 +55,10 @@ export default function XyzPanel({ onPlay, currentId }) {
   const [publicData, setPublicData] = useState(null)
   const [publicLoading, setPublicLoading] = useState(false)
 
-  const loadSubs = useCallback(async () => {
+  const loadSubs = useCallback(async (refresh = false) => {
     setSubsLoading(true)
     try {
-      const data = await getJSON(`${API}/xyz/subscriptions`)
+      const data = await getJSON(`${API}/xyz/subscriptions${refresh ? '?refresh=1' : ''}`)
       setSubs(data.items || [])
     } catch (err) {
       fail(err)
@@ -398,7 +398,12 @@ export default function XyzPanel({ onPlay, currentId }) {
           <div className="xyz-podcast-title">小宇宙</div>
           <div className="xyz-hint">{status.profile?.nickname ? `已登录：${status.profile.nickname}` : '已登录'}{status.profile?.avatar ? '' : ''}</div>
         </div>
-        <button className="btn ghost" disabled={busy === 'logout'} onClick={logout}>退出登录</button>
+        <div className="xyz-head-actions">
+          <button className="btn ghost" disabled={subsLoading} onClick={() => loadSubs(true)}>
+            {subsLoading ? '刷新中…' : '刷新订阅'}
+          </button>
+          <button className="btn ghost" disabled={busy === 'logout'} onClick={logout}>退出登录</button>
+        </div>
       </div>
       {subsLoading ? <p className="xyz-hint">正在加载订阅…</p> : null}
       <div className="xyz-subs">

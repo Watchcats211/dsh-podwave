@@ -1380,3 +1380,4 @@ select:focus-visible {
 .xyz-public .xyz-eps {
   margin-top: 6px;
 }
+.xyz-head-actions { display: flex; gap: 8px; align-items: center; }

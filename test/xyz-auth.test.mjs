@@ -99,7 +99,7 @@ test('getPodcastEpisodes maps episode fields and loadMoreKey', async () => {
 
 test('authenticated requests include access token header', async () => {
   calls.length = 0
-  await xyz.getSubscriptions()
+  await xyz.getSubscriptions({ refresh: true })
   assert.ok(calls.some((call) => call.url.endsWith('/v1/subscription')))
 })
 
@@ -115,12 +115,27 @@ test('login falls back to access token when refresh fails', async () => {
   assert.equal(saved.deviceId, 'device-2')
 })
 
+test('getSubscriptions caches results and refresh bypasses cache', async () => {
+  mode = 'refresh'
+  await xyz.loginWithRefreshToken('refresh-1', 'device-1')
+  calls.length = 0
+  const subCalls = () => calls.filter((call) => call.url.includes('/v1/subscription')).length
+  const first = await xyz.getSubscriptions({ refresh: true })
+  assert.equal(first.length, 2)
+  assert.equal(subCalls(), 1)
+  const second = await xyz.getSubscriptions()
+  assert.equal(second.length, 2)
+  assert.equal(subCalls(), 1, '10 分钟内应命中缓存')
+  await xyz.getSubscriptions({ refresh: true })
+  assert.equal(subCalls(), 2)
+})
+
 test('expired tokens are cleared and report AUTH_EXPIRED', async () => {
   mode = 'refresh'
   await xyz.loginWithRefreshToken('refresh-1', 'device-1')
   assert.equal(xyz.xyzStatus().loggedIn, true)
   globalThis.fetch = async (url) => new Response('{}', { status: 401 })
-  await assert.rejects(() => xyz.getSubscriptions(), (err) => err.code === 'AUTH_EXPIRED')
+  await assert.rejects(() => xyz.getSubscriptions({ refresh: true }), (err) => err.code === 'AUTH_EXPIRED')
   assert.equal(xyz.xyzStatus().loggedIn, false)
   const saved = JSON.parse(fs.readFileSync(path.join(dataDir, 'xyz.json'), 'utf8'))
   assert.equal(saved.accessToken || '', '')
