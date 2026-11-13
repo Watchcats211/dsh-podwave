@@ -59,7 +59,7 @@ function needsTranslation(line, target) {
   return target === 'zh' ? ratio < 0.35 : ratio > 0.15
 }
 
-function parseNumbered(text, count) {
+export function parseNumbered(text, count) {
   const result = new Map()
   for (const line of String(text || '').split('\n')) {
     const match = /^\s*(\d+)[.、)]\s*(.+?)\s*$/.exec(line)
@@ -70,19 +70,28 @@ function parseNumbered(text, count) {
   return result
 }
 
+// API 对超长或不完整输出不能假装成功：只保存已确认的行，并明确指出哪些行需要重试。
+export function missingNumberedItems(batch, parsed) {
+  const missing = []
+  batch.forEach((line, index) => {
+    if (!String(parsed.get(index + 1) || '').trim()) missing.push(line)
+  })
+  return missing
+}
+
 async function fetchWithRetry(url, init, { attempts = 3, timeoutMs = 120000 } = {}) {
   let lastError = null
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
       if (response.status === 429 || response.status >= 500) {
-        lastError = new Error(`翻译 API ${response.status}`)
+        const detail = await response.text().catch(() => '')
+        lastError = new Error(`翻译 API ${response.status}：${detail.slice(0, 200)}`)
         if (attempt < attempts) {
           await new Promise((resolve) => setTimeout(resolve, attempt * 1500))
           continue
         }
-        const detail = await response.text().catch(() => '')
-        throw new Error(`翻译 API ${response.status}：${detail.slice(0, 200)}`)
+        throw lastError
       }
       return response
     } catch (error) {
@@ -98,12 +107,14 @@ async function fetchWithRetry(url, init, { attempts = 3, timeoutMs = 120000 } = 
   throw lastError
 }
 
-async function translateWithApi(items, target, config) {
+export async function translateWithApi(items, target, config, { onBatch, shouldContinue = () => true } = {}) {
   const language = target === 'zh' ? 'Simplified Chinese' : 'English'
   const system = `You are a professional subtitle translator. Translate each numbered line into ${language}. Preserve proper names, numbers and terminology. Output only numbered lines in the format "1. translation".`
   const result = new Map()
   const batchSize = 20
+  let incomplete = 0
   for (let start = 0; start < items.length; start += batchSize) {
+    if (!shouldContinue()) throw new Error('翻译已取消')
     const batch = items.slice(start, start + batchSize)
     const content = batch.map((line, index) => `${index + 1}. ${line.text}`).join('\n')
     const response = await fetchWithRetry(`${config.apiBase.replace(/\/+$/, '')}/chat/completions`, {
@@ -125,12 +136,24 @@ async function translateWithApi(items, target, config) {
       const detail = await response.text().catch(() => '')
       throw new Error(`翻译 API ${response.status}：${detail.slice(0, 200)}`)
     }
-    const data = await response.json()
-    const parsed = parseNumbered(data.choices?.[0]?.message?.content, batch.length)
+    const data = await response.json().catch(() => null)
+    if (!data || !Array.isArray(data.choices) || typeof data.choices[0]?.message?.content !== 'string') {
+      throw new Error(data?.error?.message ? `翻译 API：${String(data.error.message).slice(0, 200)}` : '翻译 API 返回格式不正确：没有字幕内容')
+    }
+    const parsed = parseNumbered(data.choices[0].message.content, batch.length)
+    const missing = missingNumberedItems(batch, parsed)
+    incomplete += missing.length
     batch.forEach((line, index) => {
       const text = parsed.get(index + 1)
       if (text) result.set(line.id, text)
     })
+    // 先落盘当前批，后续 API 失败时不会把前面成功的译文一起丢掉。
+    await onBatch?.(parsed, batch)
+  }
+  if (incomplete) {
+    const error = new Error(`API 返回不完整：${incomplete} 行缺少编号译文；已保存其它行，可重试缺失部分`)
+    error.incomplete = incomplete
+    throw error
   }
   return result
 }
@@ -200,57 +223,87 @@ export async function startTranslation(episodeId, { target = 'zh', provider } = 
 
   const key = translationKey(episodeId, target)
   const current = getJob(key)
-  if (current && (current.status === 'queued' || current.status === 'running')) return { status: current.status }
-
-  const pending = transcript.lines.filter((line) => needsTranslation(line, target) && !line.translations?.[target])
-  if (!pending.length) {
-    const existing = transcript.lines.filter((line) => line.translations?.[target]).length
-    return { status: 'done', translated: existing }
+  // 已有任务在跑时不重复开一个（避免重复计费），直接把当前状态回给调用方。
+  if (current && (current.status === 'queued' || current.status === 'running')) {
+    return getTranslationState(episodeId, target)
   }
 
-  upsertJob({ key, type: 'translate', episodeId, target, status: 'running', startedAt: Date.now(), progress: { done: 0, total: pending.length }, error: null })
+  const pending = transcript.lines.filter((line) => needsTranslation(line, target) && !line.translations?.[target])
+  const eligible = transcript.lines.filter((line) => needsTranslation(line, target)).length
+  if (!pending.length) {
+    const existing = transcript.lines.filter((line) => line.translations?.[target]).length
+    upsertJob({ key, type: 'translate', episodeId, target, provider: useProvider, status: 'done', finishedAt: Date.now(), progress: { done: existing, total: eligible }, error: null })
+    return getTranslationState(episodeId, target)
+  }
+
+  upsertJob({ key, type: 'translate', episodeId, target, provider: useProvider, status: 'running', startedAt: Date.now(), finishedAt: null, progress: { done: 0, total: pending.length }, error: null })
 
   ;(async () => {
-    try {
-      const items = pending.map((line) => ({ id: line.id, text: line.text }))
-      const mapping = useProvider === 'api'
-        ? await translateWithApi(items, target, config)
-        : await translateWithLocal(items, target)
-
+    let saved = 0
+    const saveBatch = async (mapping) => {
+      if (!mapping.size) return
       const fresh = await readTranscript(episodeId)
       if (!fresh) throw new Error('转写记录不见了')
-      let done = 0
+      let batchDone = 0
       for (const line of fresh.lines) {
         const text = mapping.get(line.id)
         if (text) {
           line.translations = { ...(line.translations || {}), [target]: text }
-          done += 1
+          batchDone += 1
         }
       }
       fresh.providers = { ...(fresh.providers || {}), [target]: useProvider }
       await saveTranscript(fresh)
-      upsertJob({ key, status: 'done', finishedAt: Date.now(), progress: { done: mapping.size, total: pending.length }, error: null })
+      saved += batchDone
+      upsertJob({ key, progress: { done: saved, total: pending.length } })
+    }
+    try {
+      const items = pending.map((line) => ({ id: line.id, text: line.text }))
+      const mapping = useProvider === 'api'
+        ? await translateWithApi(items, target, config, {
+            onBatch: async (parsed, batch) => {
+              const translated = new Map()
+              batch.forEach((line, index) => {
+                const text = parsed.get(index + 1)
+                if (text) translated.set(line.id, text)
+              })
+              await saveBatch(translated)
+            },
+          })
+        : await translateWithLocal(items, target)
+      if (useProvider !== 'api') await saveBatch(mapping)
+      upsertJob({ key, status: 'done', finishedAt: Date.now(), progress: { done: saved, total: pending.length }, error: null })
     } catch (error) {
-      upsertJob({ key, status: 'error', finishedAt: Date.now(), error: error.message || String(error) })
+      const message = error.message || String(error)
+      console.error(`[dsh-podwave] translation failed (${episodeId}, ${target}, ${useProvider}, ${saved}/${pending.length} saved): ${message}`)
+      upsertJob({ key, status: 'error', finishedAt: Date.now(), progress: { done: saved, total: pending.length }, error: message })
     }
   })()
 
-  return { status: 'running', total: pending.length }
+  return getTranslationState(episodeId, target)
 }
 
+// 后端以 transcript 为准统计「已翻/待翻」，并保留持久 job 的错误与进度。
+// status: none（未开始）/ running|queued / error（含已落盘进度）/ partial（部分完成）/ done。
 export async function getTranslationState(episodeId, target = 'zh') {
   const transcript = await readTranscript(episodeId)
   const key = translationKey(episodeId, target)
   const job = getJob(key)
+  const lines = transcript?.lines || []
+  const eligible = lines.filter((line) => needsTranslation(line, target)).length
+  const translated = lines.filter((line) => needsTranslation(line, target) && line.translations?.[target]).length
+  const missing = Math.max(0, eligible - translated)
+  const progress = job?.progress || { done: 0, total: 0 }
+  const base = { translated, total: eligible, missing, provider: transcript?.providers?.[target] || null, progress }
+
   if (job && (job.status === 'queued' || job.status === 'running')) {
-    return { status: job.status, progress: job.progress || { done: 0, total: 0 } }
+    return { ...base, status: job.status }
   }
+  // 字幕是落盘结果的唯一事实来源：全部翻完时，清掉可能残留的旧错误/中断标记。
+  if (lines.length && !missing) return { ...base, status: 'done' }
   if (job && (job.status === 'error' || job.status === 'interrupted')) {
-    return { status: 'error', error: job.error || '任务已中断' }
+    return { ...base, status: 'error', error: job.error || '任务已中断' }
   }
-  if (!transcript) return { status: 'none' }
-  const translated = transcript.lines.filter((line) => line.translations?.[target]).length
-  const eligible = transcript.lines.filter((line) => needsTranslation(line, target)).length
-  if (translated > 0) return { status: 'done', translated, total: eligible, provider: transcript.providers?.[target] || null }
-  return { status: 'none', translated: 0, total: eligible }
+  if (!transcript) return { ...base, status: 'none' }
+  return { ...base, status: translated > 0 ? 'partial' : 'none' }
 }

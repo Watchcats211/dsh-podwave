@@ -357,6 +357,25 @@ export default function App() {
     getJSON(`${API}/translate/settings`).then(setTrConfig).catch(() => {})
   }, [])
 
+  // 切换单集或对照语言时，从后端读取持久状态：报错、已翻/待翻行数都要能在刷新页面后恢复。
+  useEffect(() => {
+    let cancelled = false
+    const id = current?.id
+    if (!id || !trTarget) {
+      setTrJob({ status: 'none' })
+      return () => { cancelled = true }
+    }
+    ;(async () => {
+      try {
+        const state = await getJSON(`${API}/episodes/${id}/translate?target=${trTarget}`)
+        if (!cancelled) setTrJob(state)
+      } catch {
+        if (!cancelled) setTrJob({ status: 'none' })
+      }
+    })()
+    return () => { cancelled = true }
+  }, [current?.id, trTarget])
+
   useEffect(() => {
     if (txStatus !== 'queued' && txStatus !== 'running') return
     let cancelled = false
@@ -385,24 +404,26 @@ export default function App() {
     return () => { cancelled = true; clearInterval(timer) }
   }, [txStatus, flash])
 
+  // 轮询只读后端状态：翻译按批落盘，这里把增量译文同步到列表。
   useEffect(() => {
-    if (trJob.status !== 'running') return
+    if (trJob.status !== 'running' && trJob.status !== 'queued') return
     let cancelled = false
-    const timer = setInterval(async () => {
+    const sync = async (id) => {
+      const state = await getJSON(`${API}/episodes/${id}/translate?target=${trTarget}`)
+      if (cancelled) return
+      setTrJob(state)
+      if (state.status === 'done') flash('翻译完成')
+      try {
+        const fresh = await getJSON(`${API}/episodes/${id}/transcript`)
+        if (!cancelled && fresh.transcript) setTranscript(fresh.transcript)
+      } catch {
+        /* 字幕读不到就先不刷新，等下一次 */
+      }
+    }
+    const timer = setInterval(() => {
       const id = currentRef.current?.id
       if (!id) return
-      try {
-        const state = await getJSON(`${API}/episodes/${id}/translate?target=${trTarget}`)
-        if (cancelled) return
-        setTrJob(state)
-        if (state.status === 'done') {
-          const fresh = await getJSON(`${API}/episodes/${id}/transcript`)
-          if (!cancelled && fresh.transcript) setTranscript(fresh.transcript)
-          flash('翻译完成')
-        }
-      } catch {
-        /* 忽略轮询错误 */
-      }
+      sync(id).catch(() => { /* 忽略轮询错误，等下一次 */ })
     }, 2000)
     return () => { cancelled = true; clearInterval(timer) }
   }, [trJob.status, trTarget, flash])
@@ -564,32 +585,30 @@ export default function App() {
     if (fresh.transcript) setTranscript(fresh.transcript)
   }, [])
 
-  const startTranslate = useCallback(async (target) => {
-    if (!currentRef.current?.id) return
+  // 显式动作：只有用户点「开始翻译 / 补翻缺失」才会发起（可能计费的）请求。
+  const startTranslate = useCallback(async () => {
+    const id = currentRef.current?.id
+    const target = trTarget
+    if (!id || !target) return
+    if (trJob.status === 'running' || trJob.status === 'queued') return
     setTrJob({ status: 'running' })
     try {
-      const res = await sendJSON(`${API}/episodes/${currentRef.current.id}/translate`, 'POST', { target })
+      const res = await sendJSON(`${API}/episodes/${id}/translate`, 'POST', { target })
       setTrJob(res)
       if (res.status === 'done') {
         await refreshTranscript()
         flash('翻译完成')
       }
     } catch (err) {
-      setTrJob({ status: 'error', error: err.message })
+      // 保留上一次的行数统计，别让「没有 API key」这类错误把待翻行数抹成 0。
+      setTrJob((prev) => ({ ...prev, status: 'error', error: err.message }))
     }
-  }, [refreshTranscript, flash])
+  }, [trTarget, trJob.status, refreshTranscript, flash])
 
-  const changeTarget = useCallback(async (value) => {
-    setTrTarget(value)
-    if (!value) return
-    const existing = transcript?.lines?.some((line) => line.translations?.[value])
-    if (existing) {
-      setTrJob({ status: 'done' })
-      await refreshTranscript()
-      return
-    }
-    await startTranslate(value)
-  }, [transcript, startTranslate, refreshTranscript])
+  // 切换对照语言只换显示目标并读取后端持久状态，绝不自动触发翻译。
+  const changeTarget = useCallback((value) => {
+    setTrTarget(value || '')
+  }, [])
 
   const openEpisodeWeb = async () => {
     if (!detailItem?.eid) return
@@ -1122,7 +1141,7 @@ export default function App() {
         <div className="brand">
           <span className="brand-mark"><Icon name="wave" size={20} /></span>
           <span className="brand-name">Podwave</span>
-          <span className="brand-version">0.11.17</span>
+          <span className="brand-version">0.11.18</span>
           <button className="icon-btn brand-collapse" title="收起侧边栏" onClick={toggleNav}>
             <Icon name="chevron-left" size={16} />
           </button>
@@ -1282,6 +1301,7 @@ export default function App() {
                   target={trTarget}
                   job={trJob}
                   onChangeTarget={changeTarget}
+                  onTranslate={startTranslate}
                   onOpenSettings={() => setTrSettingsOpen(true)}
                 />
               </div>
@@ -1436,6 +1456,7 @@ export default function App() {
           target={trTarget}
           job={trJob}
           onChangeTarget={changeTarget}
+          onTranslate={startTranslate}
           onOpenSettings={() => setTrSettingsOpen(true)}
         />
       ) : null}
