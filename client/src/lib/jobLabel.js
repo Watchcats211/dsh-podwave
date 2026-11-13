@@ -1,5 +1,10 @@
 // 把任务对象转成一行中文状态。
 export function jobLabel(job) {
+  if (job.type === 'download') {
+    if (job.status === 'done') return '已下载'
+    if (job.status === 'error' || job.status === 'interrupted') return job.error || '下载失败'
+    return `下载中${job.progress ? ` ${job.progress}%` : ''}`
+  }
   const pct = job.progress?.percent
   const chunk = job.chunks?.total ? ` · ${job.chunks.done}/${job.chunks.total} 块` : ''
   if (job.status === 'done') return `完成${job.lineCount ? ` · ${job.lineCount} 行` : ''}${job.language ? ` · ${job.language}` : ''}`
