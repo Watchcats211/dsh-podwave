@@ -340,6 +340,44 @@ function mapPublicEpisode(ep, pid, podcastTitle) {
   }
 }
 
+export function extractEpisodeId(input) {
+  const value = String(input || '').trim()
+  const match = value.match(/xiaoyuzhoufm\.com\/episode\/([0-9a-f]{24})/i)
+  return match ? match[1] : ''
+}
+
+export async function getPublicEpisode(input) {
+  const eid = extractEpisodeId(input)
+  if (!eid) throw new Error('请输入单集链接（xiaoyuzhoufm.com/episode/…）')
+  const res = await fetch(`https://www.xiaoyuzhoufm.com/episode/${eid}`, {
+    headers: { 'user-agent': BROWSER_UA, 'accept-language': 'zh-CN,zh;q=0.9' },
+    signal: AbortSignal.timeout(20000),
+  })
+  if (!res.ok) throw new Error(`获取单集页面失败（${res.status}）`)
+  const nextData = parseNextData(await res.text())
+  const raw = nextData?.props?.pageProps?.episode
+  if (!raw) throw new Error('页面里没有找到单集数据，可能链接不对')
+  const podcastTitle = raw.podcast?.title || ''
+  const episode = mapPublicEpisode(raw, raw.pid || raw.podcast?.pid, podcastTitle)
+  const data = {
+    pid: episode.pid,
+    title: podcastTitle || '未命名播客',
+    author: raw.podcast?.author || '',
+    brief: '',
+    cover: raw.podcast?.image?.picUrl || '',
+    episodeCount: raw.podcast?.episodeCount || 1,
+    episodes: [episode],
+  }
+  if (data.pid) {
+    const cached = PUBLIC_CACHE.get(String(data.pid))
+    const merged = cached?.data
+      ? { ...cached.data, episodes: [...cached.data.episodes.filter((item) => item.eid !== episode.eid), episode] }
+      : data
+    PUBLIC_CACHE.set(String(data.pid), { fetchedAt: Date.now(), data: merged })
+  }
+  return { episode, podcast: { pid: data.pid, title: data.title, author: data.author } }
+}
+
 export async function getPublicPodcast(input) {
   const pid = extractPid(input)
   if (!pid) throw new Error('请输入播客链接（xiaoyuzhoufm.com/podcast/…）或 24 位 pid')

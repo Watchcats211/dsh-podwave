@@ -23,8 +23,22 @@ const podcast = {
   ],
 }
 
-function fixtureHtml() {
-  const next = JSON.stringify({ props: { pageProps: { podcast } } })
+const episodePage = {
+  eid: '6aed7b615b7c4709bfe1fe12',
+  pid: podcast.pid,
+  title: '第一集',
+  duration: 222,
+  pubDate: '2026-03-13T00:00:00.000Z',
+  shownotes: '第一集的单集介绍',
+  image: { picUrl: 'https://img.example/e1.jpg' },
+  enclosure: { url: 'https://media.xyzcdn.net/a.m4a' },
+  payType: 'FREE',
+  podcast: { pid: podcast.pid, title: podcast.title, author: podcast.author, image: podcast.image, episodeCount: 2 },
+}
+
+function fixtureHtml(which = 'podcast') {
+  const pageProps = which === 'episode' ? { episode: episodePage } : { podcast }
+  const next = JSON.stringify({ props: { pageProps } })
   return `<!doctype html><html><body><script id="__NEXT_DATA__" type="application/json">${next}</script></body></html>`
 }
 
@@ -32,7 +46,10 @@ test('host: xyz public routes serve podcast, play and status', async () => {
   const originalFetch = globalThis.fetch
   globalThis.fetch = async (url, init) => {
     if (String(url).includes('xiaoyuzhoufm.com/podcast/')) {
-      return new Response(fixtureHtml(), { status: 200, headers: { 'content-type': 'text/html' } })
+      return new Response(fixtureHtml('podcast'), { status: 200, headers: { 'content-type': 'text/html' } })
+    }
+    if (String(url).includes('xiaoyuzhoufm.com/episode/')) {
+      return new Response(fixtureHtml('episode'), { status: 200, headers: { 'content-type': 'text/html' } })
     }
     return originalFetch(url, init)
   }
@@ -76,6 +93,10 @@ test('host: xyz public routes serve podcast, play and status', async () => {
     assert.equal(pod.episodes.length, 2)
     assert.equal(pod.episodes[0].eid, 'ep1')
     assert.equal(pod.episodes[0].audioUrl, 'https://media.xyzcdn.net/a.m4a')
+
+    const epBody = await (await fetch(`${base}/podwave/api/xyz/public/episode?url=${encodeURIComponent('https://www.xiaoyuzhoufm.com/episode/6aed7b615b7c4709bfe1fe12')}`)).json()
+    assert.equal(epBody.episode.title, '第一集')
+    assert.equal(epBody.podcast.pid, podcast.pid)
 
     const played = await (await fetch(`${base}/podwave/api/xyz/public/play`, {
       method: 'POST',

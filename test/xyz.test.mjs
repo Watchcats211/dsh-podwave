@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { extractPid, isXyzId, eidFromId } from '../src/xyz.js'
+import { extractPid, extractEpisodeId, isXyzId, eidFromId } from '../src/xyz.js'
 
 test('extractPid accepts raw pid and podcast links', () => {
   assert.equal(extractPid('6013f9f58e2f7ee375cf4216'), '6013f9f58e2f7ee375cf4216')
@@ -8,6 +8,13 @@ test('extractPid accepts raw pid and podcast links', () => {
   assert.equal(extractPid('https://www.xiaoyuzhoufm.com/podcast/6013f9f58e2f7ee375cf4216?utm=x'), '6013f9f58e2f7ee375cf4216')
   assert.equal(extractPid(''), '')
   assert.equal(extractPid('not a link'), '')
+})
+
+test('extractEpisodeId accepts episode links only', () => {
+  assert.equal(extractEpisodeId('https://www.xiaoyuzhoufm.com/episode/69b2b5a152cc900b9df1f42d'), '69b2b5a152cc900b9df1f42d')
+  assert.equal(extractEpisodeId('https://www.xiaoyuzhoufm.com/episode/69b2b5a152cc900b9df1f42d?utm=x'), '69b2b5a152cc900b9df1f42d')
+  assert.equal(extractEpisodeId('69b2b5a152cc900b9df1f42d'), '')
+  assert.equal(extractEpisodeId('https://www.xiaoyuzhoufm.com/podcast/6013f9f58e2f7ee375cf4216'), '')
 })
 
 test('xyz id helpers round trip', () => {

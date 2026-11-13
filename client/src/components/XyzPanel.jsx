@@ -234,8 +234,14 @@ export default function XyzPanel({ onPlay, currentId }) {
     }
     setPublicLoading(true)
     try {
-      const data = await getJSON(`${API}/xyz/public/podcast?url=${encodeURIComponent(publicUrl.trim())}`)
-      setPublicData(data.podcast)
+      const value = publicUrl.trim()
+      if (/\/episode\//i.test(value)) {
+        const data = await getJSON(`${API}/xyz/public/episode?url=${encodeURIComponent(value)}`)
+        setPublicData({ pid: data.podcast.pid, title: data.podcast.title, author: data.podcast.author, episodes: [data.episode] })
+      } else {
+        const data = await getJSON(`${API}/xyz/public/podcast?url=${encodeURIComponent(value)}`)
+        setPublicData(data.podcast)
+      }
     } catch (err) {
       fail(err)
     } finally {
@@ -319,7 +325,7 @@ export default function XyzPanel({ onPlay, currentId }) {
           <div className="xyz-public">
             <h3>不登录也能听：公开播客</h3>
             <p className="xyz-hint">
-              粘贴任意小宇宙播客链接，可直接在线播放并下载转写公开单集。
+              粘贴小宇宙播客链接（/podcast/…）或单集链接（/episode/…），可直接在线播放并下载转写公开单集。
             </p>
             <div className="xyz-fields">
               <label>
