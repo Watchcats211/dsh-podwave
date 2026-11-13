@@ -326,10 +326,6 @@ export default function App() {
       setTxStatus('none')
       return () => { cancelled = true }
     }
-    if (String(current.id).startsWith('xyz')) {
-      setTxStatus('none')
-      return () => { cancelled = true }
-    }
     ;(async () => {
       try {
         const state = await getJSON(`${API}/episodes/${current.id}/transcript`)
@@ -1156,13 +1152,11 @@ export default function App() {
                 <p className="episode-stats">{fmtDuration(detailItem.duration)} · {fmtDate(detailItem.mtime)} · 已听 {Math.round(progressPct(detailItem))}%</p>
                 <div className="episode-actions">
                   <button className="btn primary" onClick={togglePlay}>{playing && current?.id === detailItem.id ? '暂停' : '播放'}</button>
-                  {detailItem.source === 'xyz' ? (
-                    <span className="hint-text">小宇宙在线单集：先播放；需要转写请用「选择文件夹」导入本地文件。</span>
-                  ) : txStatus === 'queued' || txStatus === 'running' ? (
+                  {txStatus === 'queued' || txStatus === 'running' ? (
                     <button className="btn ghost" onClick={cancelTranscript}>取消转写</button>
                   ) : (
                     <button className="btn ghost" onClick={startTranscript}>
-                      {transcript ? '重新转写' : '转写字幕'}
+                      {detailItem.source === 'xyz' ? (transcript ? '重新下载并转写' : '下载并转写') : transcript ? '重新转写' : '转写字幕'}
                     </button>
                   )}
                   <button className="btn ghost danger" onClick={() => removeEpisodes([detailItem.id])}>从播放器移除</button>

@@ -1,6 +1,8 @@
 // 小宇宙（Xiaoyuzhou FM）接入：登录、订阅、单集、音频代理。
 // 私有接口逆向自公开客户端，仅用于用户本人账号的收听与本地转写；接口可能随时变化。
 import fs from 'node:fs'
+import { createWriteStream } from 'node:fs'
+import { mkdir, rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { DATA_DIR } from './state.js'
 
@@ -8,6 +10,8 @@ const CONFIG_PATH = path.join(DATA_DIR, 'xyz.json')
 const ITEMS_PATH = path.join(DATA_DIR, 'xyz-items.json')
 const BASE = 'https://api.xiaoyuzhoufm.com'
 const TIMEOUT = 20000
+const BROWSER_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36'
 
 let config = { accessToken: '', refreshToken: '', deviceId: '', profile: null }
 let items = new Map()
@@ -296,7 +300,7 @@ export async function proxyStream(id, req, res) {
   const url = await resolveAudioUrl(eid)
   const headers = {}
   if (req.headers.range) headers.range = req.headers.range
-  const upstream = await fetch(url, { headers, signal: AbortSignal.timeout(120000) })
+  const upstream = await fetch(url, { headers: { 'user-agent': BROWSER_UA, ...headers }, signal: AbortSignal.timeout(120000) })
   const pass = {}
   for (const key of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag']) {
     const value = upstream.headers.get(key)
@@ -331,4 +335,56 @@ export async function proxyCover(id, req, res) {
     'cache-control': 'private, max-age=86400',
   })
   res.end(Buffer.from(await upstream.arrayBuffer()))
+}
+
+export const XYZ_MEDIA_DIR = path.join(DATA_DIR, 'xyz-media')
+
+export function xyzLocalPath(eid) {
+  return path.join(XYZ_MEDIA_DIR, `${eid}.m4a`)
+}
+
+export function hasXyzAudio(eid) {
+  try {
+    return fs.statSync(xyzLocalPath(eid)).size > 0
+  } catch {
+    return false
+  }
+}
+
+export async function downloadUrlToFile(url, dest, onProgress, { headers = {} } = {}) {
+  const res = await fetch(url, { headers: { 'user-agent': BROWSER_UA, ...headers }, signal: AbortSignal.timeout(30 * 60 * 1000) })
+  if (!res.ok) throw new Error(`下载音频失败（${res.status}）`)
+  const total = Number(res.headers.get('content-length') || 0)
+  await mkdir(path.dirname(dest), { recursive: true })
+  const tmp = `${dest}.part`
+  const file = createWriteStream(tmp)
+  const reader = res.body.getReader()
+  let received = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      received += value.byteLength
+      if (!file.write(Buffer.from(value))) await new Promise((resolve) => file.once('drain', resolve))
+      if (typeof onProgress === 'function') {
+        onProgress(total ? Math.min(99, Math.round((received / total) * 100)) : null, received, total)
+      }
+    }
+  } finally {
+    file.end()
+  }
+  await new Promise((resolve, reject) => file.on('finish', resolve).on('error', reject))
+  if (total && received !== total) {
+    await rm(tmp, { force: true })
+    throw new Error('下载不完整，请重试')
+  }
+  await rename(tmp, dest)
+  return dest
+}
+
+export async function ensureEpisodeAudio(eid, { onProgress } = {}) {
+  const dest = xyzLocalPath(eid)
+  if (hasXyzAudio(eid)) return dest
+  const url = await resolveAudioUrl(eid)
+  return downloadUrlToFile(url, dest, onProgress)
 }

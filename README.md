@@ -196,4 +196,6 @@ CI（GitHub Actions）在每次 push / PR 跑 `npm test` 与 `npm run build`。
 3. 点任意一个 `web-api.xiaoyuzhoufm.com` 的请求，在 Request Headers 里复制 `x-jike-refresh-token`。
 4. 粘贴到插件里点「连接」。
 
+在线单集可以点「下载并转写」：插件会先把音频下载到 `~/.podwave/xyz-media`，再用本地 ASR 生成字幕，过程在任务面板里可见。
+
 > 注意：这是第三方逆向接口，有极小概率触发账号风控；音频与逐字稿版权归原平台与创作者所有，仅建议个人收听使用。短信验证码登录已被平台限制，界面作为降级选项保留。

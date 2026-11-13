@@ -48,7 +48,7 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
         {transcript && running ? (
           <div className="tr-strip">
             <span>
-              {status === 'queued' ? '排队中…' : stage === 'preparing' ? '正在准备音频…' : stage === 'diarizing' ? '正在分离说话人…' : '正在转写…'}
+              {status === 'queued' ? '排队中…' : stage === 'preparing' ? '正在准备音频…' : stage === 'downloading' ? '正在下载音频…' : stage === 'diarizing' ? '正在分离说话人…' : '正在转写…'}
               {progress?.percent != null ? ` ${progress.percent}%` : ''}
               {chunks?.total ? ` · 第 ${Math.min((chunks.done || 0) + 1, chunks.total)}/${chunks.total} 块` : ''}
               {` · 已出 ${transcript.lines.length} 行`}
@@ -121,7 +121,7 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
           ))
         ) : running ? (
           <div className="transcript-status">
-            {status === 'queued' ? '排队中…' : stage === 'merging' ? '正在合并字幕…' : stage === 'preparing' ? '正在准备音频…' : '正在转写…'}
+            {status === 'queued' ? '排队中…' : stage === 'merging' ? '正在合并字幕…' : stage === 'preparing' ? '正在准备音频…' : stage === 'downloading' ? '正在下载音频…' : '正在转写…'}
             {progress?.percent != null ? ` ${progress.percent}%` : ''}
             {chunks?.total ? ` · 第 ${Math.min(chunks.done + 1, chunks.total)}/${chunks.total} 块` : ''}
             {' · 已用 ' + Math.round((elapsed || 0) / 1000) + ' 秒'}

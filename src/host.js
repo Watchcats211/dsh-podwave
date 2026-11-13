@@ -33,6 +33,8 @@ import {
   isXyzId,
   proxyStream,
   proxyCover,
+  getXyzItem,
+  ensureEpisodeAudio,
 } from './xyz.js'
 import {
   addFolder,
@@ -66,7 +68,7 @@ import {
   validateTranscript,
 } from './transcribe.js'
 import { isLinux, isMac, isWindows } from './platform.js'
-import { listJobs, removeJob } from './jobs.js'
+import { listJobs, removeJob, upsertJob, getJob } from './jobs.js'
 import { scan as scanSetup, plan as planSetup, install as installSetup, cancelSetup, setupJob, llamaBinary, verify as verifySetup } from './setup.js'
 import { getSection, updateSection } from './config.js'
 import { diarizeInfo } from './diarize.js'
@@ -403,6 +405,23 @@ async function addFolderByPath(rawPath) {
   return folder
 }
 
+async function startXyzDownloadAndTranscribe(id) {
+  const item = getXyzItem(id)
+  if (!item) throw new Error('单集不存在')
+  const key = `download:${id}`
+  upsertJob({ key, type: 'download', episodeId: id, status: 'running', stage: 'downloading', progress: 0, startedAt: Date.now() })
+  try {
+    const file = await ensureEpisodeAudio(item.eid, {
+      onProgress: (progress) => upsertJob({ key, progress: progress ?? 0 }),
+    })
+    upsertJob({ key, stage: 'transcribing', progress: 99 })
+    await startTranscription({ id, file, title: item.title, duration: item.duration }, { force: true })
+    upsertJob({ key, status: 'done', stage: 'done', progress: 100 })
+  } catch (error) {
+    upsertJob({ key, status: 'error', error: error.message })
+  }
+}
+
 async function route(ctx, req, res) {
   const url = new URL(req.url || '/', 'http://local')
   const routePath = url.pathname.replace(/^\/podwave\/?/, '')
@@ -432,7 +451,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.0',
+      version: '0.11.1',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -755,8 +774,18 @@ async function route(ctx, req, res) {
   const transcriptMatch = /^api\/episodes\/([^/]+)\/transcript$/.exec(routePath)
   if (transcriptMatch) {
     const id = decodeURIComponent(transcriptMatch[1])
-    if (!getEpisode(id)) return json(res, 404, { error: '单集不存在' })
-    if (method === 'GET') return json(res, 200, await getTranscriptionState(id))
+    if (!getEpisode(id) && !isXyzId(id)) return json(res, 404, { error: '单集不存在' })
+    if (method === 'GET') {
+      const state = await getTranscriptionState(id)
+      if (isXyzId(id) && (state.status === 'none' || state.status === 'error')) {
+        const dl = getJob(`download:${id}`)
+        if (dl && (dl.status === 'queued' || dl.status === 'running')) {
+          return json(res, 200, { status: 'queued', stage: 'downloading', progress: dl.progress || 0, elapsedMs: 0 })
+        }
+        if (dl && dl.status === 'error') return json(res, 200, { status: 'error', error: dl.error || '下载失败' })
+      }
+      return json(res, 200, state)
+    }
     if (method === 'DELETE') {
       const ok = await deleteTranscript(id)
       return ok ? json(res, 200, { ok: true }) : json(res, 409, { error: '正在转写，完成后再试' })
@@ -765,7 +794,16 @@ async function route(ctx, req, res) {
 
   const transcribeMatch = /^api\/episodes\/([^/]+)\/transcribe$/.exec(routePath)
   if (transcribeMatch && method === 'POST') {
-    const episode = getEpisode(decodeURIComponent(transcribeMatch[1]))
+    const transcribeId = decodeURIComponent(transcribeMatch[1])
+    let episode = getEpisode(transcribeId)
+    if (!episode && isXyzId(transcribeId)) {
+      const current = await getTranscriptionState(transcribeId)
+      if (current.status === 'queued' || current.status === 'running') return json(res, 200, current)
+      const dl = getJob(`download:${transcribeId}`)
+      if (dl && dl.status === 'running') return json(res, 200, { status: 'queued', stage: 'downloading', progress: dl.progress || 0 })
+      startXyzDownloadAndTranscribe(transcribeId).catch(() => {})
+      return json(res, 200, { status: 'queued', stage: 'downloading', progress: 0 })
+    }
     if (!episode) return json(res, 404, { error: '单集不存在' })
     const body = await readJson(req)
     const result = await startTranscription(episode, { force: Boolean(body?.force), resume: Boolean(body?.resume) })
