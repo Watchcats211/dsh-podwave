@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
+import { useTheme } from './lib/theme.js'
 import css from './styles.prefixed.css'
 
 const API = '/podwave/api'
@@ -45,6 +46,7 @@ function fmtDate(ms) {
 }
 
 export default function SettingsPage() {
+  const theme = useTheme()
   const [history, setHistory] = useState([])
   const [models, setModels] = useState([])
   const [modelConfig, setModelConfig] = useState({ asrModel: '', translateModel: '' })
@@ -315,7 +317,7 @@ export default function SettingsPage() {
   const modelOptions = allModels
 
   return (
-    <div className="podwave-root" style={{ height: 'auto', overflow: 'visible', background: 'transparent', color: 'inherit' }}>
+    <div className="podwave-root" data-pw-theme={theme} style={{ height: 'auto', overflow: 'visible', background: 'transparent', color: 'inherit' }}>
       <style>{css}</style>
       <div className="podwave-settings">
 

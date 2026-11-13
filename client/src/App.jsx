@@ -981,9 +981,11 @@ export default function App() {
         </div>
       ) : null}
       {navCollapsed ? (
-        <button className="nav-reopen" title="展开侧边栏" onClick={toggleNav}>
-          <Icon name="chevron-right" size={16} />
-        </button>
+        <div className="nav-rail">
+          <button className="nav-reopen" title="展开侧边栏" onClick={toggleNav}>
+            <Icon name="chevron-right" size={16} />
+          </button>
+        </div>
       ) : null}
       <aside className="sidebar">
         <div className="brand">
