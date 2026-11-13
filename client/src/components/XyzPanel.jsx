@@ -281,6 +281,7 @@ export default function XyzPanel({ onPlay, currentId }) {
             <label>
               <span>refresh token 或 access token</span>
               <input value={token} onChange={(event) => setToken(event.target.value)} placeholder="x-jike-refresh-token / x-jike-access-token" />
+              <button className="xyz-link" type="button" onClick={pasteToken}>从剪贴板粘贴</button>
             </label>
             <label>
               <span>device id（可选，换设备时填）</span>

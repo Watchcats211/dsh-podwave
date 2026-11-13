@@ -90,6 +90,13 @@ test('host: xyz public routes serve podcast, play and status', async () => {
     const remote = episodes.items.find((item) => item.id === 'xyzep1')
     assert.ok(remote, '播放过的公开单集应出现在媒体列表')
 
+    const badUrl = await fetch(`${base}/podwave/api/xyz/open-web`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' },
+      body: JSON.stringify({ url: 'https://evil.example/phish' }),
+    })
+    assert.equal(badUrl.status, 400, '非小宇宙链接应被拒绝')
+
     const denied = await fetch(`${base}/podwave/api/xyz/public/play`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' },
