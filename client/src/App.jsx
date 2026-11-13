@@ -178,6 +178,7 @@ export default function App() {
   const [settings, setSettings] = useState({ rate: 1, volume: 0.9, lastEpisodeId: null })
   const [rateOpen, setRateOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const [hits, setHits] = useState([])
   const [sort, setSort] = useState('recent')
   const [view, setView] = useState('all')
   const [filter, setFilter] = useState('all')
@@ -702,6 +703,20 @@ export default function App() {
     patchSettings({ lastEpisodeId: item.id })
   }, [progress, saveProgress, patchSettings, togglePlay])
 
+  useEffect(() => {
+    const text = query.trim()
+    if (text.length < 2) {
+      setHits([])
+      return undefined
+    }
+    const timer = window.setTimeout(() => {
+      getJSON(`${API}/search?q=${encodeURIComponent(text)}`)
+        .then((data) => setHits(Array.isArray(data.items) ? data.items : []))
+        .catch(() => setHits([]))
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [query])
+
   const openEpisode = useCallback((item, autoplay = true) => {
     if (!item) return
     selectEpisode(item, autoplay)
@@ -726,6 +741,18 @@ export default function App() {
     setPosition(target)
     saveProgress(currentRef.current.id, target, total || fallback, true)
   }, [saveProgress])
+
+  const jumpToHit = useCallback((hit) => {
+    const item = items.find((entry) => entry.id === hit.episodeId)
+    if (!item) return
+    if (currentRef.current?.id === hit.episodeId) {
+      seekTo(hit.start)
+      setDetailId(item.id)
+      return
+    }
+    pendingSeekRef.current = hit.start
+    openEpisode(item, false)
+  }, [items, openEpisode, seekTo])
 
   const seekRatio = useCallback((event) => {
     const el = seekRef.current
@@ -991,7 +1018,7 @@ export default function App() {
         <div className="brand">
           <span className="brand-mark"><Icon name="wave" size={20} /></span>
           <span className="brand-name">Podwave</span>
-          <span className="brand-version">0.10.19</span>
+          <span className="brand-version">0.10.20</span>
           <button className="icon-btn brand-collapse" title="收起侧边栏" onClick={toggleNav}>
             <Icon name="chevron-left" size={16} />
           </button>
@@ -1176,6 +1203,22 @@ export default function App() {
                 )
               })}
             </div>
+          </section>
+        ) : null}
+
+        {query.trim().length >= 2 && hits.length > 0 ? (
+          <section className="search-hits">
+            <div className="list-head">
+              <span>字幕匹配</span>
+              <span className="col-duration">{hits.length}</span>
+            </div>
+            {hits.map((hit) => (
+              <button key={`${hit.episodeId}-${hit.lineId}`} className="hit-row" onClick={() => jumpToHit(hit)}>
+                <span className="hit-time">{fmtTime(hit.start)}</span>
+                <span className="hit-text">{hit.text}</span>
+                <span className="hit-title">{hit.title}</span>
+              </button>
+            ))}
           </section>
         ) : null}
 

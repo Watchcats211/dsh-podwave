@@ -225,6 +225,24 @@ function waitChild(child) {
   })
 }
 
+function runCapture(command, args) {
+  return new Promise((resolve) => {
+    let output = ''
+    let child
+    try {
+      child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'] })
+    } catch {
+      resolve('')
+      return
+    }
+    child.stderr.on('data', (chunk) => {
+      output += chunk.toString('utf8')
+    })
+    child.on('error', () => resolve(''))
+    child.on('close', () => resolve(output))
+  })
+}
+
 function runProcess(command, args) {
   return new Promise((resolve) => {
     let child
@@ -260,6 +278,64 @@ async function probeDuration(file) {
 }
 
 // 用 ffmpeg 把长音频切成若干块；先尝试不重编码（-c copy），失败再转 AAC。
+async function detectSilenceMidpoints(file) {
+  const output = await runCapture(FFMPEG, [
+    '-hide_banner',
+    '-nostats',
+    '-i', file,
+    '-af', 'silencedetect=noise=-30dB:d=0.45',
+    '-f', 'null',
+    '-',
+  ])
+  const starts = []
+  const mids = []
+  for (const line of output.split(/\r?\n/)) {
+    const start = /silence_start: (-?[\d.]+)/.exec(line)
+    if (start) starts.push(Number(start[1]))
+    const end = /silence_end: ([\d.]+)/.exec(line)
+    if (end && starts.length) {
+      const from = starts.pop()
+      const to = Number(end[1])
+      if (to > from) mids.push((from + to) / 2)
+    }
+  }
+  return mids
+}
+
+function planCuts(duration, chunkSeconds, silences) {
+  const cuts = [0]
+  let target = chunkSeconds
+  while (target < duration - 20) {
+    const floor = cuts[cuts.length - 1] + Math.min(chunkSeconds * 0.5, 30)
+    const window = chunkSeconds * 0.45
+    const candidates = silences.filter((time) => time > floor && time < duration - 8 && Math.abs(time - target) <= window)
+    const pick = candidates.sort((a, b) => Math.abs(a - target) - Math.abs(b - target))[0]
+    cuts.push(round2(pick ?? target))
+    target = (pick ?? target) + chunkSeconds
+  }
+  cuts.push(round2(duration))
+  return cuts.filter((value, index, list) => index === 0 || value > list[index - 1] + 5)
+}
+
+async function splitAudioAt(file, dir, cuts) {
+  await mkdir(dir, { recursive: true })
+  const sherpa = currentAsrModel().engine === 'sherpa'
+  const parts = []
+  for (let index = 0; index < cuts.length - 1; index += 1) {
+    const start = cuts[index]
+    const end = cuts[index + 1]
+    const ext = sherpa ? 'wav' : 'm4a'
+    const out = path.join(dir, `chunk-${String(index).padStart(3, '0')}.${ext}`)
+    const code = sherpa
+      ? await runProcess(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-y', '-i', file, '-ss', String(start), '-to', String(end), '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', out])
+      : await runProcess(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-y', '-i', file, '-ss', String(start), '-to', String(end), '-vn', '-c:a', 'aac', '-b:a', '96k', out])
+    if (code !== 0) throw new Error('音频切分失败（ffmpeg）')
+    const actual = (await probeDuration(out)) || end - start
+    parts.push({ index, start: round2(start), end: round2(start + actual), file: out, duration: round2(actual) })
+  }
+  return parts
+}
+
 async function splitAudio(file, dir, chunkSeconds) {
   await mkdir(dir, { recursive: true })
   const sherpa = currentAsrModel().engine === 'sherpa'
@@ -312,9 +388,16 @@ async function ensurePlan(episode, workDir) {
   await rm(path.join(workDir, 'parts'), { recursive: true, force: true })
   await rm(path.join(workDir, 'results'), { recursive: true, force: true })
   const single = currentAsrModel().engine !== 'sherpa' && duration <= chunkSeconds * 1.2
-  const parts = single
-    ? [{ index: 0, start: 0, end: round2(duration), file: episode.file, duration: round2(duration) }]
-    : await splitAudio(episode.file, path.join(workDir, 'parts'), chunkSeconds)
+  let parts
+  if (single) {
+    parts = [{ index: 0, start: 0, end: round2(duration), file: episode.file, duration: round2(duration) }]
+  } else {
+    const silences = await detectSilenceMidpoints(episode.file).catch(() => [])
+    const cuts = planCuts(duration, chunkSeconds, silences)
+    parts = cuts.length > 2
+      ? await splitAudioAt(episode.file, path.join(workDir, 'parts'), cuts)
+      : await splitAudio(episode.file, path.join(workDir, 'parts'), chunkSeconds)
+  }
   const plan = { duration: round2(duration), chunkSeconds, chunked: !single, parts }
   await writeFile(metaPath, JSON.stringify(plan, null, 2), 'utf8')
   return plan
@@ -705,9 +788,9 @@ function groupWords(words) {
     const elapsed = current.end - current.start
     if (
       /[。！？!?…]$/.test(joined) ||
-      (/[，,;；:：]$/.test(joined) && joined.length > 28) ||
-      joined.length >= 60 ||
-      elapsed >= 12
+      (/[，,;；:：]$/.test(joined) && joined.length > 42) ||
+      joined.length >= 90 ||
+      elapsed >= 15
     ) {
       flush()
     }
@@ -814,18 +897,21 @@ function buildSegments(raw, words) {
         cursor += 1
       }
       appendWord(token.text, matched ? matched.start : chunkStart, matched ? matched.end : chunkEnd)
-      if (current && (current.text.length >= 60 || current.end - current.start >= 12)) flush()
+      if (current && /[，,；;]$/.test(current.text) && current.text.length >= 48) flush()
+      if (current && (current.text.length >= 90 || current.end - current.start >= 15)) flush()
     }
-    flush()
+    if (current && /[。！？!?…]$/.test(current.text) && current.text.length > 2) flush()
   }
   flush()
 
-  return lines.map((line, index) => ({
-    id: index + 1,
-    start: round2(line.start),
-    end: round2(line.end),
-    text: line.text.trim(),
-  }))
+  return lines
+    .filter((line) => line.text.trim() && line.end - line.start >= 0.2)
+    .map((line, index) => ({
+      id: index + 1,
+      start: round2(line.start),
+      end: round2(line.end),
+      text: line.text.trim(),
+    }))
 }
 
 export async function startTranscription(episode, { force = false, resume = false } = {}) {
