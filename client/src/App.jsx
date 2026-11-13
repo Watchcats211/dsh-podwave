@@ -187,6 +187,7 @@ export default function App() {
   const [hits, setHits] = useState([])
   const [sort, setSort] = useState('recent')
   const [view, setView] = useState('all')
+  const [folderView, setFolderView] = useState('')
   const [filter, setFilter] = useState('all')
   const [detailId, setDetailId] = useState(null)
   const [current, setCurrent] = useState(null)
@@ -656,6 +657,8 @@ export default function App() {
   const visible = useMemo(() => {
     const text = query.trim().toLowerCase()
     return ordered.filter((item) => {
+      // 选中某个文件夹时只看这个文件夹里的内容（小宇宙等远端条目不归任何本地文件夹）。
+      if (folderView && item.root !== folderView) return false
       if (text && !`${item.title} ${item.artist} ${item.album}`.toLowerCase().includes(text)) return false
       const saved = progress[item.id]
       const pos = saved?.position || 0
@@ -668,7 +671,7 @@ export default function App() {
       if (filter === 'favorites') return Boolean(item.favorite)
       return true
     })
-  }, [ordered, query, view, filter, progress])
+  }, [ordered, query, view, filter, progress, folderView])
 
   const activeJobs = useMemo(() => jobs.filter((job) => job.status === 'queued' || job.status === 'running'), [jobs])
   const unTranscribed = useMemo(() => visible.filter((item) => !item.hasTranscript), [visible])
@@ -687,13 +690,17 @@ export default function App() {
   const totalSeconds = useMemo(() => items.reduce((sum, item) => sum + (item.duration || 0), 0), [items])
   const totalHours = Math.round((totalSeconds / 3600) * 10) / 10
 
-  const viewTitle = view === 'inprogress' ? '继续收听' : view === 'finished' ? '已播完' : view === 'xyz' ? '小宇宙' : '全部单集'
+  const viewTitle = folderView
+    ? shortPath(folderView)
+    : view === 'inprogress' ? '继续收听' : view === 'finished' ? '已播完' : view === 'xyz' ? '小宇宙' : '全部单集'
   const detailItem = detailId ? (items.find((item) => item.id === detailId) || (current?.id === detailId ? current : null)) : null
   const subline = loading
     ? '正在读取媒体库…'
     : scan.running
       ? '正在扫描文件夹…'
-      : `${visible.length} 集 · 共 ${totalHours} 小时 · ${folders.length} 个文件夹`
+      : folderView
+        ? `${visible.length} 集 · 只显示这个文件夹`
+        : `${visible.length} 集 · 共 ${totalHours} 小时 · ${folders.length} 个文件夹`
 
   const currentIndex = useMemo(() => {
     if (!current) return -1
@@ -1082,6 +1089,7 @@ export default function App() {
     if (!window.confirm(`从媒体库移除这个文件夹？\n${folderPath}\n\n不会删除你的文件。`)) return
     try {
       await sendJSON(`${API}/folders`, 'DELETE', { path: folderPath })
+      setFolderView((prev) => (prev === folderPath ? '' : prev))
       await loadLibrary()
       flash('已移除文件夹')
     } catch (err) {
@@ -1141,7 +1149,7 @@ export default function App() {
         <div className="brand">
           <span className="brand-mark"><Icon name="wave" size={20} /></span>
           <span className="brand-name">Podwave</span>
-          <span className="brand-version">0.11.18</span>
+          <span className="brand-version">0.11.19</span>
           <button className="icon-btn brand-collapse" title="收起侧边栏" onClick={toggleNav}>
             <Icon name="chevron-left" size={16} />
           </button>
@@ -1154,7 +1162,14 @@ export default function App() {
             ['finished', '已播完', items.filter(isFinished).length],
             ['xyz', '小宇宙', ''],
           ].map(([key, label, count]) => (
-            <button key={key} className={`nav-item ${view === key ? 'active' : ''}`} onClick={() => setView(key)}>
+            <button
+              key={key}
+              className={`nav-item ${view === key && !folderView ? 'active' : ''}`}
+              onClick={() => {
+                setFolderView('')
+                setView(key)
+              }}
+            >
               <span>{label}</span>
               <span className="nav-count">{count || ''}</span>
             </button>
@@ -1173,10 +1188,37 @@ export default function App() {
           ) : (
             <ul className="folder-list">
               {folders.map((folder) => (
-                <li key={folder} title={folder}>
+                <li
+                  key={folder}
+                  title={folder}
+                  className={folderView === folder ? 'is-active' : ''}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => {
+                    setView('all')
+                    setFilter('all')
+                    setQuery('')
+                    setFolderView((prev) => (prev === folder ? '' : folder))
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    setView('all')
+                    setFilter('all')
+                    setQuery('')
+                    setFolderView((prev) => (prev === folder ? '' : folder))
+                  }}
+                >
                   <Icon name="folder" size={16} />
                   <span className="folder-name">{shortPath(folder)}</span>
-                  <button className="folder-remove" title="移除" onClick={() => removeFolder(folder)}>×</button>
+                  <button
+                    className="folder-remove"
+                    title="移除"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      removeFolder(folder)
+                    }}
+                  >×</button>
                 </li>
               ))}
             </ul>
@@ -1373,8 +1415,15 @@ export default function App() {
           ) : visible.length === 0 ? (
             <div className="empty">
               <p>{items.length === 0 ? '媒体库还是空的' : '没有符合条件的单集'}</p>
-              <p className="empty-hint">{items.length === 0 ? '添加一个存放播客音频的文件夹，Podwave 会自动列出所有单集。' : '换个关键词或切回全部单集。'}</p>
+              <p className="empty-hint">
+                {items.length === 0
+                  ? '添加一个存放播客音频的文件夹，Podwave 会自动列出所有单集。'
+                  : folderView
+                    ? `这个文件夹里没有可播放的内容。点「全部单集」看其它文件夹。`
+                    : '换个关键词或切回全部单集。'}
+              </p>
               {items.length === 0 ? <button className="btn primary" onClick={() => setAddOpen(true)}>添加文件夹</button> : null}
+              {items.length > 0 && folderView ? <button className="btn" onClick={() => setFolderView('')}>清除文件夹筛选</button> : null}
             </div>
           ) : (
             <div className="episode-list">

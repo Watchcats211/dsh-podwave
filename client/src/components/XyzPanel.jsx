@@ -54,6 +54,8 @@ export default function XyzPanel({ onPlay, currentId }) {
   const [publicUrl, setPublicUrl] = useState('')
   const [publicData, setPublicData] = useState(null)
   const [publicLoading, setPublicLoading] = useState(false)
+  const [appState, setAppState] = useState(null)
+  const [showManual, setShowManual] = useState(false)
 
   const loadSubs = useCallback(async (refresh = false) => {
     setSubsLoading(true)
@@ -69,13 +71,14 @@ export default function XyzPanel({ onPlay, currentId }) {
 
   function fail(err) {
     const message = String(err?.message || '')
-    if (message.includes('登录已失效')) {
+    // 只有「确认过期」才清空本地展示；瞬时 401 只提示、不动登录态。
+    if (message.includes('登录已过期') || message.includes('登录已失效')) {
       setStatus((prev) => ({ ...(prev || {}), loggedIn: false }))
       setSubs([])
       setPodcast(null)
       setEpisodes([])
       setToken('')
-      setError('登录已失效，请重新粘贴 refresh token 或 access token。')
+      setError('小宇宙登录已过期。打开小宇宙 App 确认已登录，再点上面的按钮重新连接。')
       return
     }
     setError(friendly(message))
@@ -83,7 +86,7 @@ export default function XyzPanel({ onPlay, currentId }) {
 
   function friendly(message) {
     if (!message) return '登录失败'
-    if (message.includes('请升级')) return '小宇宙的短信接口要求新版客户端验证，暂时不可用，请改用 refresh token 登录。'
+    if (message.includes('请升级')) return '小宇宙的短信接口要求新版客户端验证，暂时不可用，请直接读取 App 的登录态。'
     return message
   }
 
@@ -102,6 +105,9 @@ export default function XyzPanel({ onPlay, currentId }) {
         if (data.loggedIn) loadSubs()
       })
       .catch((err) => fail(err))
+    getJSON(`${API}/xyz/local-app`)
+      .then((data) => setAppState(data))
+      .catch(() => setAppState({ available: false }))
   }, [loadSubs])
 
   useEffect(() => {
@@ -163,6 +169,36 @@ export default function XyzPanel({ onPlay, currentId }) {
     } catch (err) {
       fail(err)
     } finally {
+      setBusy('')
+    }
+  }
+
+  async function pasteToken() {
+    setError('')
+    try {
+      if (!navigator.clipboard?.readText) throw new Error('浏览器不允许读取剪贴板，请手动粘贴')
+      const text = await navigator.clipboard.readText()
+      if (!text.trim()) throw new Error('剪贴板是空的')
+      setToken(text.trim())
+    } catch (err) {
+      setError(err?.message || '读取剪贴板失败，请手动粘贴')
+    }
+  }
+
+  async function connectFromApp() {
+    setError('')
+    setBusy('app')
+    try {
+      await postJSON(`${API}/xyz/auth/from-app`, {})
+      const data = await getJSON(`${API}/xyz/status`)
+      setStatus(data)
+      await loadSubs(true)
+    } catch (err) {
+      fail(err)
+    } finally {
+      getJSON(`${API}/xyz/local-app`)
+        .then((data) => setAppState(data))
+        .catch(() => {})
       setBusy('')
     }
   }
@@ -271,55 +307,74 @@ export default function XyzPanel({ onPlay, currentId }) {
         <div className="xyz-login">
           <h2>连接小宇宙</h2>
           <p className="xyz-notice">
-            小宇宙没有开放 API。插件用你账号的 refresh token 读取订阅并在线播放，token 只保存在本机。
+            小宇宙没有开放 API。插件读取你账号的登录态来同步订阅并在线播放，token 只保存在本机。
             第三方接口有极小概率触发风控，请自行判断是否使用。
           </p>
-          <ol className="xyz-steps">
-            <li>点下面按钮打开小宇宙网页版，用手机 App 扫码登录。</li>
-            <li>按 F12 打开开发者工具，切到 Network 面板，刷新页面。</li>
-            <li>点任意一个 web-api.xiaoyuzhoufm.com 的请求，在 Request Headers 里复制 <code>x-jike-refresh-token</code>（拿不到就复制 <code>x-jike-access-token</code>，也能临时用）。</li>
-            <li>粘贴到下面，点「连接」。</li>
-          </ol>
           <div className="xyz-actions">
-            <button className="btn ghost" onClick={openWeb}>打开小宇宙网页</button>
-          </div>
-          <div className="xyz-advanced">
-            <label>
-              <span>refresh token 或 access token</span>
-              <input value={token} onChange={(event) => setToken(event.target.value)} placeholder="x-jike-refresh-token / x-jike-access-token" />
-              <button className="xyz-link" type="button" onClick={pasteToken}>从剪贴板粘贴</button>
-            </label>
-            <label>
-              <span>device id（可选，换设备时填）</span>
-              <input value={deviceId} onChange={(event) => setDeviceId(event.target.value)} placeholder="x-jike-device-id" />
-            </label>
-            <button className="btn primary" disabled={busy === 'token'} onClick={loginWithToken}>
-              {busy === 'token' ? '验证中…' : '连接'}
+            <button className="btn primary" disabled={busy === 'app'} onClick={connectFromApp}>
+              {busy === 'app' ? '读取中…' : '读取小宇宙 App 的登录态'}
             </button>
           </div>
-          <button className="xyz-link" onClick={() => setAdvanced((value) => !value)}>
-            {advanced ? '收起' : '手机验证码登录（小宇宙可能已限制，成功率低）'}
+          <p className="xyz-hint">
+            {appState === null
+              ? '正在检查本机小宇宙 App…'
+              : appState.available
+                ? `已找到本机小宇宙 App 的登录数据${appState.deviceId ? `（设备 ${appState.deviceId.slice(0, 8)}…）` : ''}，点上面按钮即可连接，不用再开网页或按 F12。`
+                : `${appState.reason || '没有找到本机小宇宙登录态'}。在小宇宙 App 里登录后回到这里再点一次即可。`}
+          </p>
+          <button className="xyz-link" onClick={() => setShowManual((value) => !value)}>
+            {showManual ? '收起手动连接' : '手动连接（网页版复制 token / 验证码登录）'}
           </button>
-          {advanced ? (
+          {showManual ? (
             <>
-              <div className="xyz-fields">
+              <ol className="xyz-steps">
+                <li>点下面按钮打开小宇宙网页版，登录。</li>
+                <li>按 F12 打开开发者工具，切到 Network 面板，刷新页面。</li>
+                <li>点任意一个 web-api.xiaoyuzhoufm.com 的请求，在 Request Headers 里复制 <code>x-jike-refresh-token</code>（拿不到就复制 <code>x-jike-access-token</code>，也能临时用）。</li>
+                <li>粘贴到下面，点「连接」。</li>
+              </ol>
+              <div className="xyz-actions">
+                <button className="btn ghost" onClick={openWeb}>打开小宇宙网页</button>
+              </div>
+              <div className="xyz-advanced">
                 <label>
-                  <span>手机号</span>
-                  <input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="11 位手机号" inputMode="numeric" />
+                  <span>refresh token 或 access token</span>
+                  <input value={token} onChange={(event) => setToken(event.target.value)} placeholder="x-jike-refresh-token / x-jike-access-token" />
+                  <button className="xyz-link" type="button" onClick={pasteToken}>从剪贴板粘贴</button>
                 </label>
-                <button className="btn ghost" disabled={busy === 'send' || cooldown > 0} onClick={sendCode}>
-                  {cooldown > 0 ? `${cooldown}s 后重发` : busy === 'send' ? '发送中…' : '发送验证码'}
+                <label>
+                  <span>device id（可选，换设备时填）</span>
+                  <input value={deviceId} onChange={(event) => setDeviceId(event.target.value)} placeholder="x-jike-device-id" />
+                </label>
+                <button className="btn primary" disabled={busy === 'token'} onClick={loginWithToken}>
+                  {busy === 'token' ? '验证中…' : '连接'}
                 </button>
               </div>
-              <div className="xyz-fields">
-                <label>
-                  <span>验证码</span>
-                  <input value={code} onChange={(event) => setCode(event.target.value)} placeholder="短信验证码" inputMode="numeric" />
-                </label>
-                <button className="btn primary" disabled={busy === 'login'} onClick={login}>
-                  {busy === 'login' ? '登录中…' : '登录'}
-                </button>
-              </div>
+              <button className="xyz-link" onClick={() => setAdvanced((value) => !value)}>
+                {advanced ? '收起' : '手机验证码登录（小宇宙可能已限制，成功率低）'}
+              </button>
+              {advanced ? (
+                <>
+                  <div className="xyz-fields">
+                    <label>
+                      <span>手机号</span>
+                      <input value={phone} onChange={(event) => setPhone(event.target.value)} placeholder="11 位手机号" inputMode="numeric" />
+                    </label>
+                    <button className="btn ghost" disabled={busy === 'send' || cooldown > 0} onClick={sendCode}>
+                      {cooldown > 0 ? `${cooldown}s 后重发` : busy === 'send' ? '发送中…' : '发送验证码'}
+                    </button>
+                  </div>
+                  <div className="xyz-fields">
+                    <label>
+                      <span>验证码</span>
+                      <input value={code} onChange={(event) => setCode(event.target.value)} placeholder="短信验证码" inputMode="numeric" />
+                    </label>
+                    <button className="btn primary" disabled={busy === 'login'} onClick={login}>
+                      {busy === 'login' ? '登录中…' : '登录'}
+                    </button>
+                  </div>
+                </>
+              ) : null}
             </>
           ) : null}
           <div className="xyz-public">

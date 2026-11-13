@@ -186,9 +186,16 @@ select:focus-visible {
   border-radius: 7px;
   color: var(--muted);
   font-size: 12.5px;
+  cursor: pointer;
 }
 
 .folder-list li:hover { background: var(--hover); color: var(--text); }
+
+.folder-list li.is-active {
+  background: var(--accent-soft);
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
 
 .folder-name {
   flex: 1;
