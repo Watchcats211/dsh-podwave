@@ -266,9 +266,9 @@ export function logout() {
 
 // 小宇宙桌面版是 iOS App（Apple Silicon 上直跑），登录态存在共享容器的偏好设置 plist 里。
 // 这样用户只要在小宇宙 App 里登录过，就能一键把登录态搬过来，不必再开网页、按 F12 抄 header。
-function appPlistPath() {
+function appPlistPath(home = os.homedir()) {
   return path.join(
-    os.homedir(),
+    home,
     'Library',
     'Group Containers',
     'group.app.podcast.cosmos',
@@ -280,9 +280,26 @@ function appPlistPath() {
 
 function readAppPlistText(file) {
   const { execFileSync } = childProcess
-  return execFileSync('/usr/bin/plutil', ['-convert', 'xml1', '-o', '-', file], {
-    maxBuffer: 16 * 1024 * 1024,
-  }).toString('utf8')
+  try {
+    return execFileSync('/usr/bin/plutil', ['-convert', 'xml1', '-o', '-', file], {
+      maxBuffer: 16 * 1024 * 1024,
+    }).toString('utf8')
+  } catch (error) {
+    // 没有 plutil（非 macOS）或 plutil 打不开时，文件本身可能已经是 XML plist——直接当文本读。
+    // 这样这条链路在没有 plutil 的环境里也能被测到，而不是只能靠「macOS 上人工点一下」。
+    if (error?.code !== 'ENOENT') {
+      try {
+        const raw = fs.readFileSync(file, 'utf8')
+        if (raw.includes('<plist')) return raw
+      } catch {
+        /* 落到下面统一抛错 */
+      }
+    } else {
+      const raw = fs.readFileSync(file, 'utf8')
+      if (raw.includes('<plist')) return raw
+    }
+    throw error
+  }
 }
 
 function plistString(xml, key) {
@@ -291,16 +308,17 @@ function plistString(xml, key) {
   return match ? match[1].trim() : ''
 }
 
-export function localAppStatus() {
-  const platform = process.platform
+// options 只给测试用（模拟 darwin + 假 HOME），宿主调用时不传。
+export function localAppStatus({ platform = process.platform, home = os.homedir() } = {}) {
   if (platform !== 'darwin') {
-    return { available: false, reason: platform === 'win32' ? '仅支持 macOS 上的小宇宙 App' : '仅支持 macOS 上的小宇宙 App' }
+    return { available: false, reason: '仅支持 macOS 上的小宇宙 App' }
   }
-  if (!fs.existsSync(appPlistPath())) {
+  const file = appPlistPath(home)
+  if (!fs.existsSync(file)) {
     return { available: false, reason: '没有找到小宇宙 App 的登录数据，请先打开小宇宙并登录一次' }
   }
   try {
-    const xml = readAppPlistText(appPlistPath())
+    const xml = readAppPlistText(file)
     const accessToken = plistString(xml, 'default-apiAccessToken')
     const refreshToken = plistString(xml, 'default-apiRefreshToken')
     const deviceId = plistString(xml, 'app.podcast.cosmos.deviceId')
@@ -313,10 +331,10 @@ export function localAppStatus() {
   }
 }
 
-export async function loginFromLocalApp() {
-  const state = localAppStatus()
+export async function loginFromLocalApp(options = {}) {
+  const state = localAppStatus(options)
   if (!state.available) throw new Error(state.reason)
-  const xml = readAppPlistText(appPlistPath())
+  const xml = readAppPlistText(appPlistPath(options.home ?? os.homedir()))
   const appAccess = plistString(xml, 'default-apiAccessToken')
   const appRefresh = plistString(xml, 'default-apiRefreshToken')
   const appDevice = plistString(xml, 'app.podcast.cosmos.deviceId')
