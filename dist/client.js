@@ -23,7 +23,7 @@ var Po=Object.create;var ft=Object.defineProperty;var Eo=Object.getOwnPropertyDe
   container-type: inline-size;
   height: 100%;
   overflow: hidden;
-  background: #0c0c0f;
+  background: var(--bg);
   color: var(--text);
   font-size: 14px;
   line-height: 1.45;
@@ -863,7 +863,7 @@ var Po=Object.create;var ft=Object.defineProperty;var Eo=Object.getOwnPropertyDe
   border-radius: 8px;
   border: 1px solid var(--line-strong);
   background: var(--hover);
-  color: #d8d8de;
+  color: var(--text);
   font-size: 12px;
   cursor: pointer;
 }
@@ -880,7 +880,7 @@ var Po=Object.create;var ft=Object.defineProperty;var Eo=Object.getOwnPropertyDe
   display: flex;
   flex-direction: column;
   background: var(--elev);
-  border: 1px solid #2a2a32;
+  border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: 0 18px 44px rgba(0, 0, 0, .5);
   z-index: 30;
@@ -921,12 +921,12 @@ var Po=Object.create;var ft=Object.defineProperty;var Eo=Object.getOwnPropertyDe
   cursor: pointer;
   font: inherit;
 }
-.podwave-root .seg-row:hover { background: #191920; }
-.podwave-root .seg-row.active { background: #201c14; }
+.podwave-root .seg-row:hover { background: var(--hover); }
+.podwave-root .seg-row.active { background: var(--accent-soft); }
 .podwave-root .seg-time { flex: none; width: 56px; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; padding-top: 2px; }
-.podwave-root .seg-text { font-size: 13px; line-height: 1.55; color: #dcdce3; }
-.podwave-root .seg-row.active .seg-text { color: #f2e7d2; }
-.podwave-root .transcript-status { padding: 16px; font-size: 13px; color: #9a9aa5; line-height: 1.6; }
+.podwave-root .seg-text { font-size: 13px; line-height: 1.55; color: var(--text); }
+.podwave-root .seg-row.active .seg-text { color: var(--text); }
+.podwave-root .transcript-status { padding: 16px; font-size: 13px; color: var(--muted); line-height: 1.6; }
 .podwave-root .transcript-status .err { color: var(--danger); white-space: pre-wrap; }
 
 
@@ -940,16 +940,16 @@ var Po=Object.create;var ft=Object.defineProperty;var Eo=Object.getOwnPropertyDe
   font-size: 12px;
   padding: 0 4px;
 }
-.podwave-root .seg-trans { display: block; margin-top: 2px; color: #8f9aa6; font-size: 12px; line-height: 1.5; }
+.podwave-root .seg-trans { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .podwave-root .tr-running { padding: 8px 12px; color: var(--accent); font-size: 12px; }
 .podwave-root .tr-running.err { color: var(--danger); white-space: pre-wrap; }
-.podwave-root .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font-size: 12px; color: #a8a8b2; }
+.podwave-root .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font-size: 12px; color: var(--muted); }
 .podwave-root .field select, .podwave-root .field input {
   height: 34px;
   border-radius: 8px;
   border: 1px solid var(--line-strong);
   background: var(--hover);
-  color: #e6e6ec;
+  color: var(--text);
   padding: 0 10px;
   font-size: 13px;
 }
