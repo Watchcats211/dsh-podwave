@@ -136,7 +136,7 @@ export default function XyzPanel({ onPlay, currentId }) {
   async function loginWithToken() {
     setError('')
     if (!token.trim()) {
-      setError('请粘贴 refresh token')
+      setError('请粘贴 refresh token 或 access token')
       return
     }
     setBusy('token')
@@ -257,7 +257,7 @@ export default function XyzPanel({ onPlay, currentId }) {
           <ol className="xyz-steps">
             <li>点下面按钮打开小宇宙网页版，用手机 App 扫码登录。</li>
             <li>按 F12 打开开发者工具，切到 Network 面板，刷新页面。</li>
-            <li>点任意一个 web-api.xiaoyuzhoufm.com 的请求，在 Request Headers 里复制 <code>x-jike-refresh-token</code>。</li>
+            <li>点任意一个 web-api.xiaoyuzhoufm.com 的请求，在 Request Headers 里复制 <code>x-jike-refresh-token</code>（拿不到就复制 <code>x-jike-access-token</code>，也能临时用）。</li>
             <li>粘贴到下面，点「连接」。</li>
           </ol>
           <div className="xyz-actions">
@@ -265,8 +265,8 @@ export default function XyzPanel({ onPlay, currentId }) {
           </div>
           <div className="xyz-advanced">
             <label>
-              <span>refresh token</span>
-              <input value={token} onChange={(event) => setToken(event.target.value)} placeholder="x-jike-refresh-token" />
+              <span>refresh token 或 access token</span>
+              <input value={token} onChange={(event) => setToken(event.target.value)} placeholder="x-jike-refresh-token / x-jike-access-token" />
             </label>
             <label>
               <span>device id（可选，换设备时填）</span>

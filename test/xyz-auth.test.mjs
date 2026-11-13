@@ -8,6 +8,7 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'podwave-xyz-'))
 process.env.PODWAVE_DATA_DIR = dataDir
 
 const calls = []
+let mode = 'refresh'
 
 function jsonResponse(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
@@ -20,12 +21,16 @@ globalThis.fetch = async (url, options = {}) => {
   const target = String(url)
   calls.push({ url: target, method: options.method || 'GET' })
   if (target.includes('app_auth_tokens.refresh')) {
+    if (mode === 'access') return new Response('{}', { status: 401 })
     return new Response('{}', {
       status: 200,
       headers: { 'x-jike-access-token': 'access-1', 'x-jike-refresh-token': 'refresh-2' },
     })
   }
   if (target.includes('/v1/profile/get')) {
+    const headers = options.headers || {}
+    const token = headers['x-jike-access-token']
+    if (mode === 'access' && token !== 'access-token-1') return new Response('{}', { status: 401 })
     return jsonResponse({ data: { nickname: '测试用户' } })
   }
   if (target.includes('/v1/subscription')) {
@@ -96,4 +101,16 @@ test('authenticated requests include access token header', async () => {
   calls.length = 0
   await xyz.getSubscriptions()
   assert.ok(calls.some((call) => call.url.endsWith('/v1/subscription')))
+})
+
+test('login falls back to access token when refresh fails', async () => {
+  xyz.logout()
+  mode = 'access'
+  const status = await xyz.loginWithRefreshToken('access-token-1', 'device-2')
+  assert.equal(status.loggedIn, true)
+  assert.equal(status.profile.nickname, '测试用户')
+  const saved = JSON.parse(fs.readFileSync(path.join(dataDir, 'xyz.json'), 'utf8'))
+  assert.equal(saved.accessToken, 'access-token-1')
+  assert.equal(saved.refreshToken, '')
+  assert.equal(saved.deviceId, 'device-2')
 })
