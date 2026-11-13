@@ -25,6 +25,15 @@ library.js（媒体库）  state.js（播放进度/文件夹）
 ~/.podwave/*
 ```
 
+## 节目适配器（providers）
+
+所有节目来源统一走 `src/providers.js`：
+
+- `providers/local.js`：本地音频库（`library.js`）。
+- `providers/xyz.js`：小宇宙单集（`xyz.js`），已下载音频会自动挂上本地 `file`。
+- `getProviderById(id)` 先让显式适配器匹配，`local` 只做兜底；`findEpisode(id)` 跨适配器查找，`listAllEpisodes()` 合并列表。
+- 新增平台（RSS、喜马拉雅等）：在 `src/providers/` 加一个文件，注册进 `providers.js` 即可，宿主路由无需改动。
+
 ## 数据文件（~/.podwave）
 
 | 文件 | 作用 |

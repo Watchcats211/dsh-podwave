@@ -20,7 +20,11 @@ export function modelDir(name) {
 
 export function modelReady(name) {
   try {
-    return fs.existsSync(path.join(modelDir(name), 'model.safetensors'))
+    const dir = modelDir(name)
+    if (!fs.existsSync(dir)) return false
+    if (fs.existsSync(path.join(dir, 'model.safetensors'))) return true
+    if (fs.existsSync(path.join(dir, 'model.int8.onnx'))) return true
+    return fs.readdirSync(dir).some((file) => file.endsWith('.gguf'))
   } catch {
     return false
   }
