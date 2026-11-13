@@ -51,6 +51,9 @@ export default function XyzPanel({ onPlay, currentId }) {
   const [episodes, setEpisodes] = useState([])
   const [moreKey, setMoreKey] = useState(null)
   const [epsLoading, setEpsLoading] = useState(false)
+  const [publicUrl, setPublicUrl] = useState('')
+  const [publicData, setPublicData] = useState(null)
+  const [publicLoading, setPublicLoading] = useState(false)
 
   const loadSubs = useCallback(async () => {
     setSubsLoading(true)
@@ -209,6 +212,35 @@ export default function XyzPanel({ onPlay, currentId }) {
     }
   }
 
+  async function loadPublic() {
+    setError('')
+    if (!publicUrl.trim()) {
+      setError('请粘贴播客链接或 24 位 pid')
+      return
+    }
+    setPublicLoading(true)
+    try {
+      const data = await getJSON(`${API}/xyz/public/podcast?url=${encodeURIComponent(publicUrl.trim())}`)
+      setPublicData(data.podcast)
+    } catch (err) {
+      setError(friendly(err.message))
+    } finally {
+      setPublicLoading(false)
+    }
+  }
+
+  async function playPublic(episode) {
+    setBusy(`pplay:${episode.eid}`)
+    setError('')
+    try {
+      await onPlay({ ...episode, public: true })
+    } catch (err) {
+      setError(friendly(err.message))
+    } finally {
+      setBusy('')
+    }
+  }
+
   if (!status) {
     return <div className="xyz-panel"><p className="xyz-hint">正在读取小宇宙登录状态…</p></div>
   }
@@ -269,6 +301,44 @@ export default function XyzPanel({ onPlay, currentId }) {
               </div>
             </>
           ) : null}
+          <div className="xyz-public">
+            <h3>不登录也能听：公开播客</h3>
+            <p className="xyz-hint">
+              粘贴任意小宇宙播客链接，可直接在线播放并下载转写公开单集。
+            </p>
+            <div className="xyz-fields">
+              <label>
+                <span>播客链接 / pid</span>
+                <input
+                  value={publicUrl}
+                  onChange={(event) => setPublicUrl(event.target.value)}
+                  placeholder="https://www.xiaoyuzhoufm.com/podcast/…"
+                />
+              </label>
+              <button className="btn ghost" disabled={publicLoading} onClick={loadPublic}>
+                {publicLoading ? '加载中…' : '浏览'}
+              </button>
+            </div>
+            {publicData ? (
+              <div className="xyz-eps">
+                <div className="xyz-ep-title">
+                  {publicData.title}
+                  <span className="xyz-hint"> · {publicData.author}</span>
+                </div>
+                {publicData.episodes.map((episode) => (
+                  <div key={episode.eid} className={`xyz-ep ${currentId === `xyz${episode.eid}` ? 'is-current' : ''}`}>
+                    <div className="xyz-ep-main">
+                      <div className="xyz-ep-title">{episode.title}</div>
+                      <div className="xyz-ep-meta">{fmtDate(episode.pubDate)} · {fmtDuration(episode.duration)}</div>
+                    </div>
+                    <button className="btn primary" disabled={busy === `pplay:${episode.eid}`} onClick={() => playPublic(episode)}>
+                      {busy === `pplay:${episode.eid}` ? '打开中…' : '播放'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
           {error ? <p className="xyz-error">{error}</p> : null}
         </div>
       </div>

@@ -1364,3 +1364,19 @@ select:focus-visible {
 .xyz-steps { margin: 14px 0 6px; padding-left: 20px; color: var(--muted); font-size: 13px; line-height: 1.9; }
 .xyz-steps code { background: var(--line-soft); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 12px; }
 .xyz-actions { margin-top: 12px; }
+.xyz-public {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.xyz-public h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.xyz-public .xyz-eps {
+  margin-top: 6px;
+}
