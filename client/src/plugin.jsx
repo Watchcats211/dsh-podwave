@@ -1,6 +1,7 @@
 import React from 'react'
 import css from './styles.prefixed.css'
 import App from './App.jsx'
+import { useTheme } from './lib/theme.js'
 import SettingsPage from './SettingsPage.jsx'
 
 function PodcastIcon({ size = 16 }) {
@@ -16,8 +17,9 @@ function PodcastIcon({ size = 16 }) {
 }
 
 function PodwavePage() {
+  const theme = useTheme()
   return (
-    <div className="podwave-root">
+    <div className="podwave-root" data-pw-theme={theme}>
       <style>{css}</style>
       <App />
     </div>
