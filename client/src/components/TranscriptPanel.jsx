@@ -3,7 +3,7 @@ import React, { useEffect, useRef } from 'react'
 import Icon from './Icon.jsx'
 import { fmtTime } from '../lib/format.js'
 
-export default function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onOpenSettings, inline = false, editingId = null, draft = '', onDraftChange, onEditLine, onSaveLine, onCancelEdit, onSplitLine, onMergeLine, onUndo, onValidate, issues = [] }) {
+export default function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onTranslate, onOpenSettings, inline = false, editingId = null, draft = '', onDraftChange, onEditLine, onSaveLine, onCancelEdit, onSplitLine, onMergeLine, onUndo, onValidate, issues = [] }) {
   const bodyRef = useRef(null)
   const editRef = useRef(null)
   const activeIndex = transcript?.lines?.findIndex((line) => position >= line.start && position < line.end) ?? -1
@@ -62,8 +62,30 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
             {issues.length > 5 ? <div>…共 {issues.length} 条</div> : null}
           </div>
         ) : null}
-        {job?.status === 'running' ? <div className="tr-running">翻译中…</div> : null}
-        {job?.status === 'error' ? <div className="tr-running err">{job.error}</div> : null}
+        {job?.status === 'running' || job?.status === 'queued' ? (
+          <div className="tr-running">
+            翻译中…{job.progress?.total ? ` ${job.progress.done || 0}/${job.progress.total}` : ''}
+          </div>
+        ) : null}
+        {job?.status === 'error' ? (
+          <div className="tr-running err">
+            {job.error}
+            待翻 {job.missing ?? 0} 行
+            {onTranslate ? <button className="seg-tool" onClick={onTranslate}>重试</button> : null}
+          </div>
+        ) : null}
+        {job?.status === 'partial' ? (
+          <div className="tr-running">
+            已翻 {job.translated ?? 0}/{job.total ?? 0} 行，还缺 {job.missing ?? 0} 行
+            {onTranslate ? <button className="seg-tool" onClick={onTranslate}>补翻缺失部分</button> : null}
+          </div>
+        ) : null}
+        {job?.status === 'none' && target && transcript && (job.missing ?? 0) > 0 ? (
+          <div className="tr-running">
+            还没有译文（共 {job.missing} 行待翻）
+            {onTranslate ? <button className="seg-tool" onClick={onTranslate}>开始翻译</button> : null}
+          </div>
+        ) : null}
         {transcript ? (
           transcript.lines.map((line, index) => (
             <div
