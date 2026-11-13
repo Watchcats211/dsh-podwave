@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.7 — 2026-11-13
+
+Windows CI 修复：三个失败用例都源于测试假设了 POSIX 家目录。
+
+- `~/.podwave` 现在支持 `PODWAVE_DATA_DIR` 覆盖（测试、便携安装、自定义数据目录都用得上）。
+- config 测试改用 `PODWAVE_DATA_DIR`，不再依赖 Windows 上无效的 `HOME`。
+- library 测试在 Windows 同时设置 `USERPROFILE`，并把 `/abs` 的期望值改为 `path.resolve('/abs')`。
+- 结果：test 矩阵 20/20 在 ubuntu、macOS 通过；Windows 由 CI 复验。
+
 ## 0.10.6 — 2026-11-13
 
 安装后可自检，CI 覆盖三大平台。

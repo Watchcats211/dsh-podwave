@@ -7,6 +7,7 @@ import path from 'node:path'
 const home = mkdtempSync(path.join(os.tmpdir(), 'podwave-config-'))
 process.env.HOME = home
 const dataDir = path.join(home, '.podwave')
+process.env.PODWAVE_DATA_DIR = dataDir
 mkdirSync(dataDir, { recursive: true })
 writeFileSync(path.join(dataDir, 'ui.json'), JSON.stringify({ sidebarCollapsed: true }))
 writeFileSync(path.join(dataDir, 'models.json'), JSON.stringify({ asrModel: 'custom-asr' }))
