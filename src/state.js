@@ -3,7 +3,10 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 
-export const DATA_DIR = path.join(os.homedir(), '.podwave')
+// 允许用 PODWAVE_DATA_DIR 覆盖数据目录（测试、便携安装或自定义位置）。
+export const DATA_DIR = process.env.PODWAVE_DATA_DIR
+  ? path.resolve(process.env.PODWAVE_DATA_DIR)
+  : path.join(os.homedir(), '.podwave')
 export const COVERS_DIR = path.join(DATA_DIR, 'covers')
 const STATE_FILE = path.join(DATA_DIR, 'state.json')
 

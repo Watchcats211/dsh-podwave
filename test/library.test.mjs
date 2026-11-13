@@ -4,7 +4,9 @@ import { mkdtempSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-process.env.HOME = mkdtempSync(path.join(os.tmpdir(), 'podwave-library-'))
+const home = mkdtempSync(path.join(os.tmpdir(), 'podwave-library-'))
+process.env.HOME = home
+if (process.platform === 'win32') process.env.USERPROFILE = home
 const { AUDIO_EXTENSIONS, episodeId, expandHome } = await import('../src/library.js')
 
 test('episodeId is a stable 16 hex sha1 prefix', () => {
@@ -18,6 +20,6 @@ test('audio extensions include common containers', () => {
 })
 
 test('expandHome expands ~', () => {
-  assert.equal(expandHome('~/Music'), path.join(process.env.HOME, 'Music'))
-  assert.equal(expandHome('/abs'), '/abs')
+  assert.equal(expandHome('~/Music'), path.join(home, 'Music'))
+  assert.equal(expandHome('/abs'), path.resolve('/abs'))
 })
