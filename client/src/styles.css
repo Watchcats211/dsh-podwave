@@ -1143,7 +1143,7 @@ select:focus-visible {
   margin: 0;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--panel);
+  background: var(--elev);
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45);
   overflow: hidden;
 }
