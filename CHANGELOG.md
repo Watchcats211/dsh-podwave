@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.8 — 2026-11-13
+
+CI 增加 Windows 冒烟用例，把「只在 Windows 会走到的路径」纳入持续验证。
+
+- `test/windows-smoke.test.mjs`：在 windows-latest 上验证平台检测（win32、venv 用 `Scripts\python.exe`）、推荐引擎（ONNX + llama.cpp）、`scan()` 组件结构、`plan()` 的预计体积与来源，并断言计划里不出现 macOS 专用路径、不推荐 1.25bit。
+- 其他平台自动跳过；同一份测试在 ubuntu / macOS 上仍跑完整套。
+- 效果：Windows 上的安装前逻辑（平台/引擎/路径/体积）不再是「只在本地 Mac 上想过」，每次 push 都由真实 Windows runner 复验。
+
 ## 0.10.7 — 2026-11-13
 
 Windows CI 修复：三个失败用例都源于测试假设了 POSIX 家目录。
