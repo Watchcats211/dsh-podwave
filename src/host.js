@@ -20,6 +20,21 @@ import {
   setSettings,
 } from './state.js'
 import {
+  loadXyz,
+  xyzStatus,
+  sendCode,
+  loginWithSms,
+  loginWithRefreshToken,
+  logout,
+  getSubscriptions,
+  getPodcastEpisodes,
+  playEpisode,
+  getXyzItems,
+  isXyzId,
+  proxyStream,
+  proxyCover,
+} from './xyz.js'
+import {
   addFolder,
   expandHome,
   forgetEpisodesUnder,
@@ -188,6 +203,7 @@ function boot() {
   if (!booted) {
     booted = (async () => {
       await initState()
+    loadXyz()
       await migrateAllTranscripts().catch((error) => console.error('[dsh-podwave] transcript migration failed:', error.message))
       if (getState().folders.length) {
         scanLibrary()
@@ -288,6 +304,11 @@ function startMediaServer() {
       }
       res.setHeader('access-control-allow-origin', '*')
       const rest = url.pathname.slice(prefix.length)
+      const xyzMatch = /^xyz\/([^/]+)\/(audio|cover)$/.exec(rest)
+      if (xyzMatch) {
+        const xyzId = 'xyz' + decodeURIComponent(xyzMatch[1])
+        return xyzMatch[2] === 'cover' ? proxyCover(xyzId, req, res) : proxyStream(xyzId, req, res)
+      }
       const match = /^episodes\/([^/]+)\/(audio|cover)$/.exec(rest)
       if (!match) {
         res.statusCode = 404
@@ -411,7 +432,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.10.13',
+      version: '0.11.0',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -454,13 +475,67 @@ async function route(ctx, req, res) {
     const favorites = new Set(state.favorites || [])
     const hidden = new Set(state.hidden || [])
     return json(res, 200, {
-      items: getEpisodes()
-        .filter((episode) => !hidden.has(episode.id))
-        .map((episode) => ({ ...episode, hasTranscript: withTranscript.has(episode.id), favorite: favorites.has(episode.id) })),
+      items: [
+        ...getEpisodes()
+          .filter((episode) => !hidden.has(episode.id))
+          .map((episode) => ({ ...episode, hasTranscript: withTranscript.has(episode.id), favorite: favorites.has(episode.id) })),
+        ...getXyzItems()
+          .filter((item) => !hidden.has(item.id))
+          .map((item) => ({ ...item, hasTranscript: withTranscript.has(item.id), favorite: favorites.has(item.id) })),
+      ].sort((a, b) => (b.mtime || 0) - (a.mtime || 0)),
       folders: state.folders,
       progress: state.progress,
       scan: getScanState(),
     })
+  }
+  if (method === 'GET' && routePath === 'api/xyz/status') {
+    return json(res, 200, xyzStatus())
+  }
+  if (method === 'POST' && routePath === 'api/xyz/open-web') {
+    const url = 'https://www.xiaoyuzhoufm.com'
+    const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open'
+    const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url]
+    try {
+      const { spawn } = await import('node:child_process')
+      spawn(command, args, { detached: true, stdio: 'ignore' }).unref()
+    } catch {
+      return json(res, 500, { error: '无法打开浏览器' })
+    }
+    return json(res, 200, { ok: true })
+  }
+  if (method === 'POST' && routePath === 'api/xyz/auth/send-code') {
+    const body = await readJson(req)
+    if (!body?.phone) return json(res, 400, { error: '缺少手机号' })
+    return json(res, 200, await sendCode(String(body.phone).trim(), body.areaCode || '+86'))
+  }
+  if (method === 'POST' && routePath === 'api/xyz/auth/login') {
+    const body = await readJson(req)
+    if (!body?.phone || !body?.code) return json(res, 400, { error: '缺少手机号或验证码' })
+    return json(res, 200, await loginWithSms(String(body.phone).trim(), String(body.code).trim(), body.areaCode || '+86'))
+  }
+  if (method === 'POST' && routePath === 'api/xyz/auth/token') {
+    const body = await readJson(req)
+    if (!body?.refreshToken) return json(res, 400, { error: '缺少 refresh token' })
+    return json(res, 200, await loginWithRefreshToken(body.refreshToken, body.deviceId || ''))
+  }
+  if (method === 'POST' && routePath === 'api/xyz/auth/logout') {
+    return json(res, 200, logout())
+  }
+  if (method === 'GET' && routePath === 'api/xyz/subscriptions') {
+    return json(res, 200, { items: await getSubscriptions() })
+  }
+  const xyzEpisodesMatch = /^api\/xyz\/podcast\/([^/]+)\/episodes$/.exec(routePath)
+  if (xyzEpisodesMatch && method === 'GET') {
+    const url = new URL(req.url || '/', 'http://127.0.0.1')
+    const limit = Number(url.searchParams.get('limit') || 30)
+    const loadMoreKeyRaw = url.searchParams.get('loadMoreKey')
+    let loadMoreKey = null
+    if (loadMoreKeyRaw) { try { loadMoreKey = JSON.parse(loadMoreKeyRaw) } catch { loadMoreKey = null } }
+    return json(res, 200, await getPodcastEpisodes(decodeURIComponent(xyzEpisodesMatch[1]), { limit, loadMoreKey }))
+  }
+  const xyzPlayMatch = /^api\/xyz\/episodes\/([^/]+)\/play$/.exec(routePath)
+  if (xyzPlayMatch && method === 'POST') {
+    return json(res, 200, { item: await playEpisode(decodeURIComponent(xyzPlayMatch[1])) })
   }
   if (method === 'POST' && routePath === 'api/scan') {
     scanLibrary().catch((error) => console.error('[dsh-podwave] scan failed:', error.message))
@@ -654,7 +729,9 @@ async function route(ctx, req, res) {
 
   const coverMatch = /^api\/episodes\/([^/]+)\/cover$/.exec(routePath)
   if (coverMatch && (method === 'GET' || method === 'HEAD')) {
-    const episode = getEpisode(decodeURIComponent(coverMatch[1]))
+    const coverId = decodeURIComponent(coverMatch[1])
+    if (isXyzId(coverId)) return proxyCover(coverId, req, res)
+    const episode = getEpisode(coverId)
     const cover = episode ? getCoverPath(episode.id) : null
     if (!cover) return json(res, 404, { error: '没有封面' })
     res.setHeader('cache-control', 'public, max-age=86400')
@@ -663,7 +740,9 @@ async function route(ctx, req, res) {
 
   const audioMatch = /^api\/episodes\/([^/]+)\/audio$/.exec(routePath)
   if (audioMatch && (method === 'GET' || method === 'HEAD')) {
-    const episode = getEpisode(decodeURIComponent(audioMatch[1]))
+    const audioId = decodeURIComponent(audioMatch[1])
+    if (isXyzId(audioId)) return proxyStream(audioId, req, res)
+    const episode = getEpisode(audioId)
     if (!episode) return json(res, 404, { error: '单集不存在' })
     try {
       await stat(episode.file)
