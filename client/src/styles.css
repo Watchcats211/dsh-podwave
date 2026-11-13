@@ -1250,3 +1250,34 @@ select:focus-visible {
 .setup-plan ul { list-style: none; margin: 8px 0 0; padding: 0; }
 .setup-plan li { display: flex; justify-content: space-between; gap: 16px; padding: 4px 0; border-bottom: 1px solid color-mix(in srgb, var(--line) 55%, transparent); }
 .setup-plan li:last-child { border-bottom: 0; }
+
+.rate-wrap { position: relative; display: inline-flex; }
+.rate-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 72px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #17171c;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45);
+}
+.rate-menu button {
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.rate-menu button:hover { background: #22222a; color: var(--text); }
+.rate-menu button.is-on { color: var(--accent); }
