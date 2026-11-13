@@ -1,3 +1,9 @@
+## 0.11.9 — 2026-11-13
+
+- 单集详情新增「单集介绍」（shownotes）：公开播客与登录单集都会带出节目简介/时间轴，默认收起、可展开；长文本自动截断渐隐。
+- 修复公开单集 `shownotes` 字段可能是对象导致内容为空的问题（现在优先取字符串，否则回退 description）。
+- 测试 37 个、34 通过、3 个 Windows 专用跳过；新增 docs/screenshot-notes.png。
+
 ## 0.11.8 — 2026-11-13
 
 - token 输入归一化：支持直接粘贴 `x-jike-refresh-token: …` 请求头、JSON（单层或 headers 嵌套）、`Bearer xxx`、纯 token；自动去引号与空白。粘贴整段请求头即可登录。

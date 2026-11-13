@@ -18,7 +18,7 @@ const podcast = {
   image: { picUrl: 'https://img.example/x.jpg' },
   episodeCount: 2,
   episodes: [
-    { eid: 'ep1', title: '第一集', duration: 222, image: { picUrl: 'https://img.example/e1.jpg' }, enclosure: { url: 'https://media.xyzcdn.net/a.m4a' }, payType: 'FREE' },
+    { eid: 'ep1', title: '第一集', duration: 222, shownotes: '第一集的单集介绍', image: { picUrl: 'https://img.example/e1.jpg' }, enclosure: { url: 'https://media.xyzcdn.net/a.m4a' }, payType: 'FREE' },
     { eid: 'ep2', title: '付费集', duration: 300, isPrivateMedia: true, payType: 'PAY_EPISODE' },
   ],
 }
@@ -84,6 +84,7 @@ test('host: xyz public routes serve podcast, play and status', async () => {
     })).json()
     assert.equal(played.item.id, 'xyzep1')
     assert.equal(played.item.source, 'xyz')
+    assert.equal(played.item.shownotes, '第一集的单集介绍')
 
     const episodes = await (await fetch(`${base}/podwave/api/episodes`)).json()
     const remote = episodes.items.find((item) => item.id === 'xyzep1')
