@@ -16,6 +16,7 @@ const BROWSER_UA =
 let config = { accessToken: '', refreshToken: '', deviceId: '', profile: null }
 let items = new Map()
 let refreshing = null
+let lastRefreshAuthFailed = false
 
 export function loadXyz() {
   try { config = { ...config, ...JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) } } catch { /* 未登录 */ }
@@ -74,9 +75,26 @@ async function rawRequest(pathname, { method = 'POST', body, headers = {}, auth 
 
 async function request(pathname, { method = 'POST', body, auth = true } = {}) {
   let res = await rawRequest(pathname, { method, body, auth })
-  if (res.status === 401 && auth && config.refreshToken) {
-    const ok = await refreshToken()
-    if (ok) res = await rawRequest(pathname, { method, body, auth })
+  if (res.status === 401 && auth) {
+    let ok = false
+    if (config.refreshToken) {
+      lastRefreshAuthFailed = false
+      ok = await refreshToken()
+      if (ok) res = await rawRequest(pathname, { method, body, auth })
+    }
+    if (!ok && res.status === 401) {
+      const definitive = lastRefreshAuthFailed || !config.refreshToken
+      if (definitive) {
+        config.accessToken = ''
+        if (lastRefreshAuthFailed) config.refreshToken = ''
+        config.profile = null
+        saveConfig()
+        const expired = new Error('登录已失效，请重新粘贴 token')
+        expired.status = 401
+        expired.code = 'AUTH_EXPIRED'
+        throw expired
+      }
+    }
   }
   const text = await res.text()
   let data = null
@@ -108,6 +126,7 @@ export async function refreshToken() {
         saveConfig()
         return true
       }
+      if (res.status === 401 || res.status === 403) lastRefreshAuthFailed = true
       return false
     } catch {
       return false

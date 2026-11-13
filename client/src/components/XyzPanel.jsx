@@ -61,11 +61,25 @@ export default function XyzPanel({ onPlay, currentId }) {
       const data = await getJSON(`${API}/xyz/subscriptions`)
       setSubs(data.items || [])
     } catch (err) {
-      setError(friendly(err.message))
+      fail(err)
     } finally {
       setSubsLoading(false)
     }
   }, [])
+
+  function fail(err) {
+    const message = String(err?.message || '')
+    if (message.includes('登录已失效')) {
+      setStatus((prev) => ({ ...(prev || {}), loggedIn: false }))
+      setSubs([])
+      setPodcast(null)
+      setEpisodes([])
+      setToken('')
+      setError('登录已失效，请重新粘贴 refresh token 或 access token。')
+      return
+    }
+    setError(friendly(message))
+  }
 
   function friendly(message) {
     if (!message) return '登录失败'
@@ -77,7 +91,7 @@ export default function XyzPanel({ onPlay, currentId }) {
     try {
       await postJSON(`${API}/xyz/open-web`, {})
     } catch (err) {
-      setError(friendly(err.message))
+      fail(err)
     }
   }
 
@@ -87,7 +101,7 @@ export default function XyzPanel({ onPlay, currentId }) {
         setStatus(data)
         if (data.loggedIn) loadSubs()
       })
-      .catch((err) => setError(friendly(err.message)))
+      .catch((err) => fail(err))
   }, [loadSubs])
 
   useEffect(() => {
@@ -108,7 +122,7 @@ export default function XyzPanel({ onPlay, currentId }) {
       setCooldown(60)
       if (data.devCode) setError(`开发模式验证码：${data.devCode}`)
     } catch (err) {
-      setError(friendly(err.message))
+      fail(err)
     } finally {
       setBusy('')
     }
@@ -127,7 +141,7 @@ export default function XyzPanel({ onPlay, currentId }) {
       setStatus(data)
       await loadSubs()
     } catch (err) {
-      setError(friendly(err.message))
+      fail(err)
     } finally {
       setBusy('')
     }
@@ -147,7 +161,7 @@ export default function XyzPanel({ onPlay, currentId }) {
       setToken('')
       await loadSubs()
     } catch (err) {
-      setError(friendly(err.message))
+      fail(err)
     } finally {
       setBusy('')
     }
@@ -162,7 +176,7 @@ export default function XyzPanel({ onPlay, currentId }) {
       setPodcast(null)
       setEpisodes([])
     } catch (err) {
-      setError(friendly(err.message))
+      fail(err)
     } finally {
       setBusy('')
     }
@@ -179,7 +193,7 @@ export default function XyzPanel({ onPlay, currentId }) {
       setEpisodes(data.items || [])
       setMoreKey(data.loadMoreKey || null)
     } catch (err) {
-      setError(friendly(err.message))
+      fail(err)
     } finally {
       setEpsLoading(false)
     }
@@ -194,7 +208,7 @@ export default function XyzPanel({ onPlay, currentId }) {
       setEpisodes((prev) => [...prev, ...(data.items || [])])
       setMoreKey(data.loadMoreKey || null)
     } catch (err) {
-      setError(friendly(err.message))
+      fail(err)
     } finally {
       setEpsLoading(false)
     }
@@ -206,7 +220,7 @@ export default function XyzPanel({ onPlay, currentId }) {
     try {
       await onPlay(episode)
     } catch (err) {
-      setError(friendly(err.message))
+      fail(err)
     } finally {
       setBusy('')
     }
@@ -223,7 +237,7 @@ export default function XyzPanel({ onPlay, currentId }) {
       const data = await getJSON(`${API}/xyz/public/podcast?url=${encodeURIComponent(publicUrl.trim())}`)
       setPublicData(data.podcast)
     } catch (err) {
-      setError(friendly(err.message))
+      fail(err)
     } finally {
       setPublicLoading(false)
     }
@@ -235,7 +249,7 @@ export default function XyzPanel({ onPlay, currentId }) {
     try {
       await onPlay({ ...episode, public: true })
     } catch (err) {
-      setError(friendly(err.message))
+      fail(err)
     } finally {
       setBusy('')
     }

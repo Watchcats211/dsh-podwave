@@ -114,3 +114,15 @@ test('login falls back to access token when refresh fails', async () => {
   assert.equal(saved.refreshToken, '')
   assert.equal(saved.deviceId, 'device-2')
 })
+
+test('expired tokens are cleared and report AUTH_EXPIRED', async () => {
+  mode = 'refresh'
+  await xyz.loginWithRefreshToken('refresh-1', 'device-1')
+  assert.equal(xyz.xyzStatus().loggedIn, true)
+  globalThis.fetch = async (url) => new Response('{}', { status: 401 })
+  await assert.rejects(() => xyz.getSubscriptions(), (err) => err.code === 'AUTH_EXPIRED')
+  assert.equal(xyz.xyzStatus().loggedIn, false)
+  const saved = JSON.parse(fs.readFileSync(path.join(dataDir, 'xyz.json'), 'utf8'))
+  assert.equal(saved.accessToken || '', '')
+  assert.equal(saved.refreshToken || '', '')
+})
