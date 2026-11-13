@@ -30,6 +30,7 @@ import {
   getPodcastEpisodes,
   playEpisode,
   getPublicPodcast,
+  getPublicEpisode,
   playPublicEpisode,
   getXyzItems,
   isXyzId,
@@ -454,7 +455,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.12',
+      version: '0.11.13',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -582,6 +583,11 @@ async function route(ctx, req, res) {
     const url = new URL(req.url || '/', 'http://127.0.0.1')
     const data = await getPublicPodcast(url.searchParams.get('url') || url.searchParams.get('pid') || '')
     return json(res, 200, { podcast: data })
+  }
+  if (method === 'GET' && routePath === 'api/xyz/public/episode') {
+    const url = new URL(req.url || '/', 'http://127.0.0.1')
+    const data = await getPublicEpisode(url.searchParams.get('url') || '')
+    return json(res, 200, data)
   }
   if (method === 'POST' && routePath === 'api/xyz/public/play') {
     const body = await readJson(req)
