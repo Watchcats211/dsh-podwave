@@ -9,7 +9,7 @@ test('windows: platform detection and engine recommendation', { skip: !onWindows
   const { detectPlatform, recommendEngine, venvPython } = await import('../src/platform.js')
   const platform = detectPlatform()
   assert.equal(platform.os, 'win32')
-  assert.ok(String(platform.key).startsWith('win32-'))
+  assert.equal(platform.isWindows, true)
   const engine = recommendEngine(platform)
   assert.equal(engine.id, 'onnx-llama')
   assert.equal(engine.asr, 'sensevoice-int8')
@@ -24,7 +24,7 @@ test('windows: scan and plan never suggest 1.25bit and stay portable', { skip: !
   assert.ok(Array.isArray(scanned.components) && scanned.components.length > 0)
   for (const component of scanned.components) {
     assert.ok(component.id, '组件必须有 id')
-    assert.equal(typeof component.ok, 'boolean', `${component.id} 的 ok 必须是布尔`)
+    assert.equal(typeof component.ready, 'boolean', `${component.id} 的 ready 必须是布尔`)
   }
 
   const planned = plan({ source: 'auto' })

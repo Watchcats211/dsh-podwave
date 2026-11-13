@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.9 — 2026-11-13
+
+Windows 冒烟用例自身修正（首版跑出来的问题都出在测试假设上）。
+
+- `platform.key` 不存在 → 改用 `platform.isWindows`；`scan()` 组件字段是 `ready` 而不是 `ok`。
+- 这两处正好证明冒烟用例有效：它在真实 Windows runner 上跑出了只在 Windows 才会暴露的断言错误。
+- 本地 22 个用例：20 通过、2 个 Windows 用例跳过；Windows CI 上应为 22 全过。
+
 ## 0.10.8 — 2026-11-13
 
 CI 增加 Windows 冒烟用例，把「只在 Windows 会走到的路径」纳入持续验证。

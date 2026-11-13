@@ -283,9 +283,9 @@ export function plan({ source = 'auto', platform = detectPlatform() } = {}) {
       id: 'runtime',
       label: 'Python 运行时 + 依赖（uv / PyPI）',
       kind: 'runtime',
-      bytes: 0,
+      bytes: 80_000_000,
       sources: ['PyPI 官方', '清华镜像'],
-      note: 'pip 依赖按实际下载计，通常 60–100 MB',
+      note: '按 60–100 MB 估算，实际以 pip 下载为准',
     })
   }
   if (engine.id !== 'mlx' && !llamaBinary(platform)) {
