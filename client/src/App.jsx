@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Icon from './components/Icon.jsx'
 import Cover from './components/Cover.jsx'
 import TranscriptPanel from './components/TranscriptPanel.jsx'
+import XyzPanel from './components/XyzPanel.jsx'
 import { fmtTime, fmtDuration, fmtDate, initialOf, shortPath } from './lib/format.js'
 import { jobLabel } from './lib/jobLabel.js'
 
@@ -322,6 +323,10 @@ export default function App() {
     setTxError('')
     setTxElapsed(0)
     if (!current?.id) {
+      setTxStatus('none')
+      return () => { cancelled = true }
+    }
+    if (String(current.id).startsWith('xyz')) {
       setTxStatus('none')
       return () => { cancelled = true }
     }
@@ -648,7 +653,7 @@ export default function App() {
   const totalSeconds = useMemo(() => items.reduce((sum, item) => sum + (item.duration || 0), 0), [items])
   const totalHours = Math.round((totalSeconds / 3600) * 10) / 10
 
-  const viewTitle = view === 'inprogress' ? '继续收听' : view === 'finished' ? '已播完' : '全部单集'
+  const viewTitle = view === 'inprogress' ? '继续收听' : view === 'finished' ? '已播完' : view === 'xyz' ? '小宇宙' : '全部单集'
   const detailItem = detailId ? (items.find((item) => item.id === detailId) || (current?.id === detailId ? current : null)) : null
   const subline = loading
     ? '正在读取媒体库…'
@@ -694,15 +699,33 @@ export default function App() {
     const resume = saved > 5 && (!item.duration || saved < item.duration - 10) ? saved : 0
     pendingSeekRef.current = resume
     setPosition(resume)
-    audio.src = mediaBaseRef.current
-      ? `${mediaBaseRef.current}/episodes/${item.id}/audio`
-      : `${API}/episodes/${item.id}/audio`
+    if (item.source === 'xyz') {
+      audio.src = mediaBaseRef.current
+        ? `${mediaBaseRef.current}/xyz/${item.id.slice(3)}/audio`
+        : `${API}/episodes/${item.id}/audio`
+    } else {
+      audio.src = mediaBaseRef.current
+        ? `${mediaBaseRef.current}/episodes/${item.id}/audio`
+        : `${API}/episodes/${item.id}/audio`
+    }
     audio.load()
     audio.playbackRate = settingsRef.current.rate || 1
     audio.volume = settingsRef.current.volume ?? 0.9
     if (autoplay) audio.play().catch(() => {})
     patchSettings({ lastEpisodeId: item.id })
   }, [progress, saveProgress, patchSettings, togglePlay])
+
+  const playXyz = useCallback(async (episode) => {
+    const res = await fetch(`${API}/xyz/episodes/${encodeURIComponent(episode.eid)}/play`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || '打开单集失败')
+    await loadLibrary()
+    selectEpisode(data.item, true)
+  }, [loadLibrary, selectEpisode])
 
   useEffect(() => {
     const text = query.trim()
@@ -1022,7 +1045,7 @@ export default function App() {
         <div className="brand">
           <span className="brand-mark"><Icon name="wave" size={20} /></span>
           <span className="brand-name">Podwave</span>
-          <span className="brand-version">0.10.21</span>
+          <span className="brand-version">0.11</span>
           <button className="icon-btn brand-collapse" title="收起侧边栏" onClick={toggleNav}>
             <Icon name="chevron-left" size={16} />
           </button>
@@ -1033,6 +1056,7 @@ export default function App() {
             ['all', '全部单集', items.length],
             ['inprogress', '继续收听', continueList.length],
             ['finished', '已播完', items.filter(isFinished).length],
+            ['xyz', '小宇宙', ''],
           ].map(([key, label, count]) => (
             <button key={key} className={`nav-item ${view === key ? 'active' : ''}`} onClick={() => setView(key)}>
               <span>{label}</span>
@@ -1115,7 +1139,9 @@ export default function App() {
           </div>
         ) : null}
 
-        {detailItem ? (
+        {view === 'xyz' ? (
+          <XyzPanel onPlay={playXyz} currentId={current?.id} />
+        ) : detailItem ? (
           <>
             <div className="detail-top">
               <button className="back-link" onClick={() => setDetailId(null)}>← 全部单集</button>
@@ -1130,7 +1156,9 @@ export default function App() {
                 <p className="episode-stats">{fmtDuration(detailItem.duration)} · {fmtDate(detailItem.mtime)} · 已听 {Math.round(progressPct(detailItem))}%</p>
                 <div className="episode-actions">
                   <button className="btn primary" onClick={togglePlay}>{playing && current?.id === detailItem.id ? '暂停' : '播放'}</button>
-                  {txStatus === 'queued' || txStatus === 'running' ? (
+                  {detailItem.source === 'xyz' ? (
+                    <span className="hint-text">小宇宙在线单集：先播放；需要转写请用「选择文件夹」导入本地文件。</span>
+                  ) : txStatus === 'queued' || txStatus === 'running' ? (
                     <button className="btn ghost" onClick={cancelTranscript}>取消转写</button>
                   ) : (
                     <button className="btn ghost" onClick={startTranscript}>

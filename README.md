@@ -182,3 +182,18 @@ CI（GitHub Actions）在每次 push / PR 跑 `npm test` 与 `npm run build`。
 - Windows 10 及以上自带 `tar` 与 `powershell`，解压和文件夹选择器无需额外安装。
 - 安装时会校验下载文件的 sha256（GitHub Release 官方 digest / Hugging Face LFS），并拒绝含 `..` 或绝对路径的压缩包；macOS 没有 ffmpeg 时会尝试通过 Homebrew 安装。
 - 首次安装完成后，设置页会列出每项下载内容与体积；模型在 `~/.podwave/models`，运行时在 `~/.podwave/runtime`。
+
+## 小宇宙
+
+侧栏「小宇宙」可以连接小宇宙账号，浏览订阅并在线播放。
+
+小宇宙没有开放 API，插件使用账号的 refresh token 读取数据，token 只保存在本机（`~/.podwave/xyz.json`，权限 600）。
+
+### 获取 refresh token
+
+1. 点插件里的「打开小宇宙网页」，用手机 App 扫码登录 https://www.xiaoyuzhoufm.com 。
+2. 按 F12 打开开发者工具 → Network，刷新页面。
+3. 点任意一个 `web-api.xiaoyuzhoufm.com` 的请求，在 Request Headers 里复制 `x-jike-refresh-token`。
+4. 粘贴到插件里点「连接」。
+
+> 注意：这是第三方逆向接口，有极小概率触发账号风控；音频与逐字稿版权归原平台与创作者所有，仅建议个人收听使用。短信验证码登录已被平台限制，界面作为降级选项保留。
