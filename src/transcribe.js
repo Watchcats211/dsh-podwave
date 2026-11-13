@@ -370,10 +370,12 @@ function wordsOf(raw) {
 
 function buildBatchArgs(files, outDir) {
   const model = currentAsrModel()
-  if (model.engine === 'sherpa') {
-    return [SHERPA_SCRIPT, ...files, '--model-dir', model.dir, '--out-dir', outDir, '--threads', '4']
-  }
   const { hotwords } = transcribeConfig()
+  if (model.engine === 'sherpa') {
+    const args = [SHERPA_SCRIPT, ...files, '--model-dir', model.dir, '--out-dir', outDir, '--threads', '4']
+    if (hotwords.length) args.push('--hotwords', hotwords.join(' '))
+    return args
+  }
   const args = [
     ...files,
     '--model', currentAsrModel().dir,

@@ -180,4 +180,5 @@ CI（GitHub Actions）在每次 push / PR 跑 `npm test` 与 `npm run build`。
 
 - 安装中心会自动下载 ffmpeg（约 202 MB）、llama.cpp（约 25 MB）、SenseVoice（约 239 MB）与 Hy-MT2-Q4_K_M（约 1.1 GB），合计约 1.6 GB，建议预留 3 GB 磁盘。
 - Windows 10 及以上自带 `tar` 与 `powershell`，解压和文件夹选择器无需额外安装。
+- 安装时会校验下载文件的 sha256（GitHub Release 官方 digest / Hugging Face LFS），并拒绝含 `..` 或绝对路径的压缩包；macOS 没有 ffmpeg 时会尝试通过 Homebrew 安装。
 - 首次安装完成后，设置页会列出每项下载内容与体积；模型在 `~/.podwave/models`，运行时在 `~/.podwave/runtime`。

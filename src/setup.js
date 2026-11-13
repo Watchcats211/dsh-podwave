@@ -9,7 +9,7 @@ import { getSection, updateSection } from './config.js'
 import { getJob, upsertJob } from './jobs.js'
 import { CATALOG, FFMPEG_BINARY, LLAMA_BINARY, SOURCE_LABELS, artifactFor, ffmpegAsset, llamaAsset, sourcesFor } from './catalog.js'
 import { downloadArtifact, extractArchive } from './downloader.js'
-import { detectPlatform, findExecutable, ffmpegPath, ffprobePath, recommendEngine, venvDir, venvPython, isWindows } from './platform.js'
+import { detectPlatform, findExecutable, ffmpegPath, ffprobePath, recommendEngine, venvDir, venvPython, isWindows, isMac } from './platform.js'
 
 const RUNTIME_DIR = path.join(DATA_DIR, 'runtime')
 const SETUP_PATH = path.join(DATA_DIR, 'setup.json')
@@ -338,7 +338,7 @@ export function scan() {
     label: 'ffmpeg / ffprobe',
     required: true,
     ready: Boolean(ffmpegPath() && ffprobePath()),
-    detail: ffmpegPath() || (ffAsset ? '未找到，将下载静态构建' : '未找到；macOS 请先 brew install ffmpeg'),
+    detail: ffmpegPath() || (ffAsset ? '未找到，将下载静态构建' : isMac && findExecutable('brew') ? '未找到，一键安装将通过 Homebrew 安装' : '未找到；macOS 请先 brew install ffmpeg'),
     bytes: ffAsset?.bytes || 0,
   })
   push({
@@ -427,9 +427,18 @@ export async function install({ source = 'auto' } = {}) {
     // 0. ffmpeg（Windows / Linux 直接下载静态构建；macOS 优先用系统/Homebrew）
     if (!ffmpegPath()) {
       const ffAsset = ffmpegAsset(platform)
-      if (!ffAsset) {
-        throw new Error('没有找到 ffmpeg：macOS 请先运行 brew install ffmpeg，或把 ffmpeg/ffprobe 放进 PATH')
-      }
+      if (isMac) {
+        const brew = findExecutable('brew')
+        if (!brew) throw new Error('没有找到 ffmpeg，也没有 Homebrew；请安装 Homebrew 或把 ffmpeg/ffprobe 放进 PATH')
+        report({ stage: '通过 Homebrew 安装 ffmpeg' })
+        await run(brew, ['install', 'ffmpeg'])
+        if (!ffmpegPath()) throw new Error('Homebrew 安装后仍未找到 ffmpeg，请检查 brew 输出')
+        summary.push({ id: 'ffmpeg', label: 'ffmpeg / ffprobe（Homebrew）', bytes: 0 })
+        doneBytes += 0
+        report({ stage: '检查环境' })
+      } else if (!ffAsset) {
+        throw new Error('没有找到 ffmpeg：请安装 ffmpeg 或把它放进 PATH')
+      } else {
       report({ stage: '下载 ffmpeg' })
       await downloadArtifact(
         {
@@ -446,6 +455,7 @@ export async function install({ source = 'auto' } = {}) {
       if (fs.existsSync(archive)) await extractArchive(archive, target)
       doneBytes += ffAsset.bytes
       summary.push({ id: 'ffmpeg', label: 'ffmpeg / ffprobe', bytes: ffAsset.bytes })
+      }
     }
 
     // 1. Python 运行时

@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
+import crypto from 'node:crypto'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
@@ -38,7 +39,7 @@ export async function listHfRepo(repo, base, { include, skip } = {}) {
     .filter((entry) => entry.type === 'file')
     .filter((entry) => (include ? include.includes(entry.path) : true))
     .filter((entry) => (skip ? !skip.some((re) => re.test(entry.path)) : true))
-    .map((entry) => ({ path: entry.path, size: entry.size || 0 }))
+    .map((entry) => ({ path: entry.path, size: entry.size || 0, sha256: entry.lfs?.oid || '' }))
 }
 
 export async function directHfFiles(repo, base, { include, files, skip } = {}) {
@@ -74,11 +75,93 @@ export async function listMsRepo(repo) {
     .map((file) => ({ path: file.Path, size: file.Size || 0 }))
 }
 
-async function downloadOne(url, dest, { expected = 0, onProgress, signal } = {}) {
+export function isSafeArchivePath(name) {
+  const value = String(name || '').replace(/\\/g, '/')
+  if (!value || value.startsWith('/')) return false
+  if (/^[a-zA-Z]:/.test(value)) return false
+  return !value.split('/').some((part) => part === '..')
+}
+
+function runCapture(cmd, args) {
+  return new Promise((resolve) => {
+    let output = ''
+    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'ignore'] })
+    child.stdout.on('data', (chunk) => {
+      output += chunk.toString('utf8')
+    })
+    child.on('error', () => resolve(null))
+    child.on('exit', (code) => resolve(code === 0 ? output : null))
+  })
+}
+
+async function listArchiveEntries(file) {
+  const lower = file.toLowerCase()
+  if (lower.endsWith('.zip')) {
+    const candidates = [
+      ['unzip', ['-Z1', file]],
+      ['tar', ['-tf', file]],
+      ['python3', ['-c', 'import zipfile,sys;print("\n".join(zipfile.ZipFile(sys.argv[1]).namelist()))', file]],
+    ]
+    for (const [cmd, args] of candidates) {
+      const output = await runCapture(cmd, args)
+      if (output) return output.split(/\r?\n/).filter(Boolean)
+    }
+    return null
+  }
+  const output = await runCapture('tar', ['-tf', file])
+  return output ? output.split(/\r?\n/).filter(Boolean) : null
+}
+
+async function sha256File(file) {
+  const hash = crypto.createHash('sha256')
+  await pipeline(fs.createReadStream(file), hash)
+  return hash.digest('hex')
+}
+
+const digestCache = new Map()
+
+async function githubDigest(url) {
+  try {
+    const match = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/releases\/download\/([^/]+)\/(.+)$/.exec(url)
+    if (!match) return ''
+    const [, owner, repo, tag, assetName] = match
+    const key = `${owner}/${repo}@${tag}#${assetName}`
+    if (digestCache.has(key)) return digestCache.get(key)
+    const api =
+      tag === 'latest'
+        ? `https://api.github.com/repos/${owner}/${repo}/releases/latest`
+        : `https://api.github.com/repos/${owner}/${repo}/releases/tags/${tag}`
+    const res = await fetch(api, {
+      headers: { 'user-agent': UA, accept: 'application/vnd.github+json' },
+      signal: timeout(15000),
+    })
+    if (!res.ok) {
+      digestCache.set(key, '')
+      return ''
+    }
+    const data = await res.json()
+    const asset = (data.assets || []).find((item) => item.name === decodeURIComponent(assetName))
+    const digest = asset?.digest ? String(asset.digest).replace(/^sha256:/, '') : ''
+    digestCache.set(key, digest)
+    return digest
+  } catch {
+    return ''
+  }
+}
+
+async function downloadOne(url, dest, { expected = 0, sha256 = '', onProgress, signal } = {}) {
   await fsp.mkdir(path.dirname(dest), { recursive: true })
   try {
     const stat = await fsp.stat(dest)
-    if (expected && stat.size === expected) return { bytes: stat.size, skipped: true }
+    if (expected && stat.size === expected) {
+      if (sha256) {
+        const actual = await sha256File(dest)
+        if (actual.toLowerCase() === String(sha256).toLowerCase()) return { bytes: stat.size, skipped: true }
+        await fsp.rm(dest, { force: true })
+      } else {
+        return { bytes: stat.size, skipped: true }
+      }
+    }
     if (expected && stat.size > expected) await fsp.rm(dest, { force: true })
   } catch {
     // 文件不存在
@@ -108,6 +191,13 @@ async function downloadOne(url, dest, { expected = 0, onProgress, signal } = {})
   await pipeline(source, write)
   const stat = await fsp.stat(part)
   if (expected && stat.size !== expected) throw new Error(`文件大小不符（期望 ${expected}，实际 ${stat.size}）`)
+  if (sha256) {
+    const actual = await sha256File(part)
+    if (actual.toLowerCase() !== String(sha256).toLowerCase()) {
+      await fsp.rm(part, { force: true })
+      throw new Error('文件校验失败（sha256 不匹配），已丢弃下载内容')
+    }
+  }
   await fsp.rename(part, dest)
   return { bytes: stat.size, skipped: false }
 }
@@ -161,7 +251,8 @@ export async function downloadArtifact(artifact, { sourceId = 'auto', onProgress
       const url = source.id === 'cn' ? `https://gh-proxy.com/${asset.url}` : asset.url
       const dest = path.join(destDir, asset.file)
       const before = result.bytes
-      const { bytes } = await downloadOne(url, dest, { onProgress, signal })
+      const sha256 = await githubDigest(asset.url)
+      const { bytes } = await downloadOne(url, dest, { sha256, onProgress, signal })
       result.bytes += bytes
       result.files.push({ path: asset.file, bytes })
       if (asset.extract) await extractArchive(dest, destDir)
@@ -214,6 +305,7 @@ export async function downloadArtifact(artifact, { sourceId = 'auto', onProgress
     const dest = path.join(destDir, file.path)
     const { bytes } = await downloadOne(url, dest, {
       expected: file.size,
+      sha256: file.sha256 || '',
       signal,
       onProgress: (event) => {
         done += event.delta
@@ -239,6 +331,11 @@ function runExtract(cmd, args) {
 }
 
 export async function extractArchive(file, destDir) {
+  const entries = await listArchiveEntries(file)
+  if (entries && entries.length) {
+    const unsafe = entries.find((entry) => !isSafeArchivePath(entry))
+    if (unsafe) throw new Error(`压缩包包含不安全路径：${unsafe}`)
+  }
   const lower = file.toLowerCase()
   const attempts = []
   if (lower.endsWith('.zip')) {
