@@ -50,6 +50,8 @@ jobs:
         run: python scripts/asr_sherpa_batch.py test-speech.wav --model-dir "$env:USERPROFILE\.podwave\models\sensevoice-small-int8" --out-dir out
       - name: 校验转写结果
         run: node test/ci/assert-transcript.mjs
+      - name: 下载 llama.cpp 并校验可执行
+        run: node test/ci/llama-check.mjs
 
   build:
     runs-on: ubuntu-latest
