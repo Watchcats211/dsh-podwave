@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.12 — 2026-11-13
+
+Windows 运行时冒烟再补一环：llama.cpp 的下载、解压与可执行性。
+
+- 新增 `test/ci/llama-check.mjs`：按平台资产从 gh-proxy 下载 llama.cpp 包，走插件自己的 extractArchive 解压，递归找到 `llama-server.exe`，执行 `--version` 并断言退出码为 0。
+- 覆盖 Windows 上最容易坏的两件事：zip 解压回退链、二进制依赖是否齐全。
+- 说明：GGUF 推理本身仍在 macOS 上验证；Windows 侧验证到「可启动」这一层。
+
 ## 0.10.11 — 2026-11-13
 
 Windows 运行时 CI 立刻抓到一个真实安装 bug：`sherpa-onnx` 在 Windows 上不会自动带 `numpy`，首次安装后转写会 `ModuleNotFoundError: numpy`。
