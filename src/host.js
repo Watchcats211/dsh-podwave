@@ -50,7 +50,7 @@ import {
 } from './transcribe.js'
 import { isLinux, isMac, isWindows } from './platform.js'
 import { listJobs, removeJob } from './jobs.js'
-import { scan as scanSetup, install as installSetup, cancelSetup, setupJob, llamaBinary } from './setup.js'
+import { scan as scanSetup, plan as planSetup, install as installSetup, cancelSetup, setupJob, llamaBinary } from './setup.js'
 import { getSection, updateSection } from './config.js'
 import { diarizeInfo } from './diarize.js'
 import { getTranslationState, publicConfig, saveConfig, startTranslation } from './translate.js'
@@ -278,6 +278,11 @@ async function route(ctx, req, res) {
   if (routePath === 'api/setup') {
     return json(res, 200, { ...scanSetup(), job: setupJob() })
   }
+  if (routePath === 'api/setup/plan' && method === 'GET') {
+    const source = url.searchParams.get('source') || 'auto'
+    return json(res, 200, planSetup({ source }))
+  }
+
   if (routePath === 'api/setup/diagnose' && method === 'GET') {
     const { detectPlatform, recommendEngine, ffmpegPath, venvPython } = await import('./platform.js')
     const platform = detectPlatform()
@@ -290,7 +295,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.10.3',
+      version: '0.10.4',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -314,7 +319,7 @@ async function route(ctx, req, res) {
     return json(res, 200, { cancelled: cancelSetup() })
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.10.3', transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.10.4', transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()

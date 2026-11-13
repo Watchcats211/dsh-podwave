@@ -150,7 +150,9 @@ export async function downloadArtifact(artifact, { sourceId = 'auto', onProgress
   }
 
   let files
-  if (source.id === 'ms') {
+  if (source.id === 'ms' && artifact.source.type === 'hf-file') {
+    files = [{ path: artifact.source.file, size: artifact.approxBytes || 0 }]
+  } else if (source.id === 'ms') {
     const all = await listMsRepo(source.ms)
     const wanted = artifact.source.include
     files = wanted ? all.filter((file) => wanted.includes(file.path)) : all.filter((file) => !isJunk(file.path))
@@ -162,6 +164,7 @@ export async function downloadArtifact(artifact, { sourceId = 'auto', onProgress
   } else {
     files = [{ path: artifact.source.file, size: artifact.approxBytes || 0 }]
   }
+  if (!files.length) throw new Error('这个下载源没有找到所需的文件，请换一条线路')
   const total = files.reduce((sum, file) => sum + file.size, 0)
   let done = 0
   for (const file of files) {

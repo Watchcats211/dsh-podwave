@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { ffmpegAsset, llamaAsset, platformKey } from '../src/catalog.js'
-import { uvAssetName } from '../src/setup.js'
+import { plan, uvAssetName } from '../src/setup.js'
 import { ffmpegPath, recommendEngine, venvBin, venvPython } from '../src/platform.js'
 
 test('platformKey 覆盖三大平台', () => {
@@ -41,6 +41,26 @@ test('低内存 Windows 也不会推荐无法加载的 1.25bit', () => {
 test('ffmpeg 能被探测到或明确为空', () => {
   const found = ffmpegPath()
   assert.ok(found === null || typeof found === 'string')
+})
+
+test('Windows 安装计划推荐 ONNX + GGUF', () => {
+  const planData = plan({
+    platform: {
+      os: 'win32',
+      arch: 'x64',
+      osLabel: 'Windows',
+      isMac: false,
+      isWindows: true,
+      isLinux: false,
+      appleSilicon: false,
+      mlxCapable: false,
+      memoryGB: 16,
+      freeDiskGB: 100,
+    },
+  })
+  assert.equal(planData.engine.asr, 'sensevoice-int8')
+  assert.match(planData.engine.translate, /2bit|q4km/)
+  assert.ok(Array.isArray(planData.items))
 })
 
 test('uv 安装包在 Windows 使用 zip', () => {

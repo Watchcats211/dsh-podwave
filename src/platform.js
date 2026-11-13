@@ -155,7 +155,7 @@ export function recommendEngine(platform) {
   const translate = mem >= 24 ? 'hy-mt2-1.8b-q4km' : 'hy-mt2-1.8b-2bit'
   return {
     id: 'onnx-llama',
-    label: `${platform.osLabel} · ONNX + llama.cpp`,
+    label: `${platform.osLabel || platform.os || '此平台'} · ONNX + llama.cpp`,
     asr: 'sensevoice-int8',
     translate,
     note: `本机是 ${platform.osLabel}（${platform.arch}）：转写用 SenseVoice Small（int8），翻译用 Hy-MT2-1.8B GGUF；按 ${mem} GB 内存推荐 ${translate}。`,

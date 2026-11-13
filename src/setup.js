@@ -183,6 +183,63 @@ export function modelState(artifact) {
   return { ready: fs.existsSync(safetensors) || fs.existsSync(onnx), dir }
 }
 
+export function plan({ source = 'auto', platform = detectPlatform() } = {}) {
+  const engine = recommendEngine(platform)
+  const artifacts = artifactFor(platform, engine)
+  const items = []
+  const ffAsset = !ffmpegPath() ? ffmpegAsset(platform) : null
+  if (ffAsset) {
+    items.push({
+      id: 'ffmpeg',
+      label: 'ffmpeg / ffprobe',
+      kind: 'tool',
+      bytes: ffAsset.bytes,
+      sources: ['GitHub', 'gh-proxy.com'],
+    })
+  }
+  if (!runtimeReady(platform)) {
+    items.push({
+      id: 'runtime',
+      label: 'Python 运行时 + 依赖（uv / PyPI）',
+      kind: 'runtime',
+      bytes: 0,
+      sources: ['PyPI 官方', '清华镜像'],
+      note: 'pip 依赖按实际下载计，通常 60–100 MB',
+    })
+  }
+  if (engine.id !== 'mlx' && !llamaBinary(platform)) {
+    const asset = llamaAsset(platform)
+    items.push({
+      id: 'llama',
+      label: 'llama.cpp 运行时',
+      kind: 'engine',
+      bytes: 25_000_000,
+      sources: ['GitHub', 'gh-proxy.com'],
+    })
+    void asset
+  }
+  for (const artifact of [artifacts.asr, artifacts.translate, artifacts.diarization]) {
+    if (modelState(artifact).ready) continue
+    items.push({
+      id: artifact.id,
+      label: artifact.label,
+      kind: 'model',
+      bytes: artifact.approxBytes || 0,
+      sources: sourcesFor(artifact.source).map((item) => item.label),
+      note: artifact.note,
+    })
+  }
+  const totalBytes = items.reduce((sum, item) => sum + (item.bytes || 0), 0)
+  return {
+    platform,
+    engine,
+    source,
+    items,
+    totalBytes,
+    note: engine.id === 'mlx' ? 'Apple Silicon 使用 MLX 模型；Windows / Linux 使用 ONNX + GGUF。' : 'Windows / Linux 使用 ONNX ASR + llama.cpp GGUF。',
+  }
+}
+
 export function scan() {
   const platform = detectPlatform()
   const engine = recommendEngine(platform)

@@ -29,7 +29,6 @@ export const CATALOG = {
       type: 'hf-repo',
       repo: 'csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17',
       include: ['model.int8.onnx', 'tokens.txt'],
-      ms: 'iic/SenseVoiceSmall',
     },
   },
   'hy-mt2-1.8b-4bit-mlx': {
@@ -68,7 +67,7 @@ export const CATALOG = {
     platforms: ['*'],
     dir: 'hy-mt2-1.8b-2bit',
     file: 'Hy-MT2-1.8B-2Bit.gguf',
-    approxBytes: 572_700_000,
+    approxBytes: 600_534_880,
     note: '平衡档：比 1.25-bit 稳，约 570 MB。',
     source: {
       type: 'hf-file',
@@ -85,7 +84,7 @@ export const CATALOG = {
     platforms: ['*'],
     dir: 'hy-mt2-1.8b-q4km',
     file: 'Hy-MT2-1.8B-Q4_K_M.gguf',
-    approxBytes: 1_080_600_000,
+    approxBytes: 1_133_080_448,
     note: '质量最好，约 1.1 GB；适合 24 GB 以上内存。',
     source: {
       type: 'hf-file',
