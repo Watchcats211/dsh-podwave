@@ -457,7 +457,7 @@ export async function install({ source = 'auto' } = {}) {
         await run(uv, ['venv', '--python', '3.12', venv])
       }
       const index = source === 'cn' ? 'https://pypi.tuna.tsinghua.edu.cn/simple' : undefined
-      const args = ['pip', 'install', '--python', venvPython(), 'sherpa-onnx']
+      const args = ['pip', 'install', '--python', venvPython(), 'sherpa-onnx', 'numpy']
       if (engine.id === 'mlx') args.push('mlx-qwen3-asr', 'mlx-lm')
       if (index) args.push('--index-url', index)
       report({ stage: '安装 Python 依赖（sherpa-onnx' + (engine.id === 'mlx' ? '、mlx' : '') + '）' })

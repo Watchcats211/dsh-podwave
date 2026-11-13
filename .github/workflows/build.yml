@@ -33,7 +33,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: npm ci
-      - run: pip install sherpa-onnx
+      - run: pip install sherpa-onnx numpy
       - name: 用插件下载器拉取 SenseVoice（国内线路）
         run: node test/ci/download-sensevoice.mjs
       - name: 生成测试语音（Windows SAPI，16k 单声道）
