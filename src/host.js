@@ -454,7 +454,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.5',
+      version: '0.11.6',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -544,7 +544,9 @@ async function route(ctx, req, res) {
     return json(res, 200, logout())
   }
   if (method === 'GET' && routePath === 'api/xyz/subscriptions') {
-    return json(res, 200, { items: await getSubscriptions() })
+    const url = new URL(req.url || '/', 'http://127.0.0.1')
+    const refresh = url.searchParams.get('refresh') === '1'
+    return json(res, 200, { items: await getSubscriptions({ refresh }) })
   }
   const xyzEpisodesMatch = /^api\/xyz\/podcast\/([^/]+)\/episodes$/.exec(routePath)
   if (xyzEpisodesMatch && method === 'GET') {

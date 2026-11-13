@@ -17,6 +17,9 @@ let config = { accessToken: '', refreshToken: '', deviceId: '', profile: null }
 let items = new Map()
 let refreshing = null
 let lastRefreshAuthFailed = false
+const SUBS_CACHE_TTL = 10 * 60 * 1000
+let subsCache = null
+let subsCachedAt = 0
 
 export function loadXyz() {
   try { config = { ...config, ...JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) } } catch { /* 未登录 */ }
@@ -143,6 +146,7 @@ export function xyzStatus() {
     loggedIn: Boolean(config.refreshToken || config.accessToken),
     profile: config.profile,
     deviceId: config.deviceId || '',
+    subscriptionsUpdatedAt: subsCachedAt ? new Date(subsCachedAt).toISOString() : null,
   }
 }
 
@@ -213,10 +217,11 @@ export function logout() {
   return xyzStatus()
 }
 
-export async function getSubscriptions() {
+export async function getSubscriptions({ refresh = false } = {}) {
+  if (!refresh && subsCache && Date.now() - subsCachedAt < SUBS_CACHE_TTL) return subsCache
   const data = await request('/v1/subscription', { body: { limit: 200 } })
   const rows = data?.data || []
-  return rows
+  const items = rows
     .map((row) => row.podcast || row)
     .filter((pod) => pod && pod.pid)
     .map((pod) => ({
@@ -228,6 +233,13 @@ export async function getSubscriptions() {
       subscribers: pod.subscribersCount || 0,
       updatedAt: pod.latestEpisodePubDate || pod.updatedAt || '',
     }))
+  subsCache = items
+  subsCachedAt = Date.now()
+  return items
+}
+
+export function subscriptionsCachedAt() {
+  return subsCachedAt
 }
 
 export async function getPodcastEpisodes(pid, { limit = 30, loadMoreKey = null } = {}) {

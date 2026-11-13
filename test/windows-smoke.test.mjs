@@ -37,3 +37,11 @@ test('windows: scan and plan never suggest 1.25bit and stay portable', { skip: !
   assert.ok(!planned.items.some((item) => item.id === 'hy-mt2-1.8b-1.25bit'))
   assert.ok(!JSON.stringify(planned).includes('/opt/homebrew'), '计划里不应出现 macOS 专用路径')
 })
+
+test('windows: xiaoyuzhou helpers stay portable', { skip: !onWindows }, async () => {
+  const xyz = await import('../src/xyz.js')
+  assert.equal(xyz.extractPid('https://www.xiaoyuzhoufm.com/podcast/6013f9f58e2f7ee375cf4216'), '6013f9f58e2f7ee375cf4216')
+  assert.equal(xyz.isXyzId('xyzabc123'), true)
+  assert.equal(xyz.eidFromId('xyzabc123'), 'abc123')
+  assert.equal(typeof xyz.xyzStatus().loggedIn, 'boolean')
+})
