@@ -121,7 +121,7 @@ export async function refreshToken() {
 export function xyzStatus() {
   loadXyz()
   return {
-    loggedIn: Boolean(config.refreshToken),
+    loggedIn: Boolean(config.refreshToken || config.accessToken),
     profile: config.profile,
     deviceId: config.deviceId || '',
   }
@@ -157,14 +157,24 @@ export async function loginWithSms(phone, code, areaCode = '+86') {
 }
 
 export async function loginWithRefreshToken(refreshTokenValue, deviceId = '') {
-  config.refreshToken = String(refreshTokenValue || '').trim()
+  const value = String(refreshTokenValue || '').trim()
+  config.refreshToken = value
   config.deviceId = String(deviceId || '').trim()
   config.accessToken = ''
   const ok = await refreshToken()
   if (!ok) {
+    // 有些用户只能拿到 access token；拿它直接试一次 profile，成功也能临时使用。
     config.refreshToken = ''
-    saveConfig()
-    throw new Error('refresh token 无效或已过期，请重新获取')
+    config.accessToken = value
+    try {
+      await ensureProfile()
+      saveConfig()
+      return xyzStatus()
+    } catch {
+      config.accessToken = ''
+      saveConfig()
+      throw new Error('token 无效或已过期，请重新获取（refresh token 或 access token 都可以）')
+    }
   }
   saveConfig()
   await ensureProfile()
