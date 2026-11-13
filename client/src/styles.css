@@ -22,7 +22,7 @@
   container-type: inline-size;
   height: 100%;
   overflow: hidden;
-  background: #0c0c0f;
+  background: var(--bg);
   color: var(--text);
   font-size: 14px;
   line-height: 1.45;
@@ -862,7 +862,7 @@ select:focus-visible {
   border-radius: 8px;
   border: 1px solid var(--line-strong);
   background: var(--hover);
-  color: #d8d8de;
+  color: var(--text);
   font-size: 12px;
   cursor: pointer;
 }
@@ -879,7 +879,7 @@ select:focus-visible {
   display: flex;
   flex-direction: column;
   background: var(--elev);
-  border: 1px solid #2a2a32;
+  border: 1px solid var(--line);
   border-radius: 12px;
   box-shadow: 0 18px 44px rgba(0, 0, 0, .5);
   z-index: 30;
@@ -920,12 +920,12 @@ select:focus-visible {
   cursor: pointer;
   font: inherit;
 }
-.seg-row:hover { background: #191920; }
-.seg-row.active { background: #201c14; }
+.seg-row:hover { background: var(--hover); }
+.seg-row.active { background: var(--accent-soft); }
 .seg-time { flex: none; width: 56px; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; padding-top: 2px; }
-.seg-text { font-size: 13px; line-height: 1.55; color: #dcdce3; }
-.seg-row.active .seg-text { color: #f2e7d2; }
-.transcript-status { padding: 16px; font-size: 13px; color: #9a9aa5; line-height: 1.6; }
+.seg-text { font-size: 13px; line-height: 1.55; color: var(--text); }
+.seg-row.active .seg-text { color: var(--text); }
+.transcript-status { padding: 16px; font-size: 13px; color: var(--muted); line-height: 1.6; }
 .transcript-status .err { color: var(--danger); white-space: pre-wrap; }
 
 
@@ -939,16 +939,16 @@ select:focus-visible {
   font-size: 12px;
   padding: 0 4px;
 }
-.seg-trans { display: block; margin-top: 2px; color: #8f9aa6; font-size: 12px; line-height: 1.5; }
+.seg-trans { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .tr-running { padding: 8px 12px; color: var(--accent); font-size: 12px; }
 .tr-running.err { color: var(--danger); white-space: pre-wrap; }
-.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font-size: 12px; color: #a8a8b2; }
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font-size: 12px; color: var(--muted); }
 .field select, .field input {
   height: 34px;
   border-radius: 8px;
   border: 1px solid var(--line-strong);
   background: var(--hover);
-  color: #e6e6ec;
+  color: var(--text);
   padding: 0 10px;
   font-size: 13px;
 }
