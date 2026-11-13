@@ -301,6 +301,7 @@ export function playPublicEpisode(pid, eid) {
   const cached = PUBLIC_CACHE.get(String(pid))
   const episode = cached?.data?.episodes?.find((item) => item.eid === eid)
   if (!episode) throw new Error('请先加载播客单集')
+  if (episode.isPrivate) throw new Error('付费单集暂不支持在线播放')
   if (!episode.audioUrl) throw new Error('该单集没有公开音频（可能是付费内容）')
   const id = xyzId(eid)
   const item = {

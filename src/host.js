@@ -454,7 +454,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.2',
+      version: '0.11.3',
       platform,
       engine: recommendEngine(platform),
       paths: {
