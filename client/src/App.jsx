@@ -179,6 +179,10 @@ export default function App() {
   const [settings, setSettings] = useState({ rate: 1, volume: 0.9, lastEpisodeId: null })
   const [rateOpen, setRateOpen] = useState(false)
   const [notesOpen, setNotesOpen] = useState(false)
+  const [sleepMinutes, setSleepMinutes] = useState(0)
+  const [sleepAt, setSleepAt] = useState(0)
+  const [sleepRemaining, setSleepRemaining] = useState(0)
+  const [sleepOpen, setSleepOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [hits, setHits] = useState([])
   const [sort, setSort] = useState('recent')
@@ -872,6 +876,59 @@ export default function App() {
     }
   }, [rateOpen])
 
+  useEffect(() => {
+    if (!sleepAt) return undefined
+    const tick = () => {
+      const remain = Math.max(0, Math.round((sleepAt - Date.now()) / 1000))
+      setSleepRemaining(remain)
+      if (remain <= 0) {
+        const audio = audioRef.current
+        if (audio && !audio.paused) audio.pause()
+        setSleepAt(0)
+        setSleepMinutes(0)
+        flash('睡眠定时结束，已暂停')
+      }
+    }
+    tick()
+    const timer = window.setInterval(tick, 1000)
+    return () => window.clearInterval(timer)
+  }, [sleepAt, flash])
+
+  useEffect(() => {
+    if (!sleepOpen) return undefined
+    const close = (event) => {
+      if (event.type === 'keydown' && event.key !== 'Escape') return
+      if (event.type === 'pointerdown' && event.target.closest?.('.sleep-wrap')) return
+      setSleepOpen(false)
+    }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', close)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', close)
+    }
+  }, [sleepOpen])
+
+  const pickSleep = useCallback((value) => {
+    setSleepOpen(false)
+    if (value === 'off') {
+      setSleepAt(0)
+      setSleepMinutes(0)
+      setSleepRemaining(0)
+      return
+    }
+    if (value === 'end') {
+      setSleepAt(0)
+      setSleepMinutes(-1)
+      setSleepRemaining(0)
+      flash('本集播完自动暂停')
+      return
+    }
+    setSleepMinutes(value)
+    setSleepAt(Date.now() + value * 60000)
+    flash(`将在 ${value} 分钟后暂停`)
+  }, [flash])
+
   const changeVolume = useCallback((value) => {
     const volume = Math.max(0, Math.min(1, value))
     const audio = audioRef.current
@@ -914,6 +971,13 @@ export default function App() {
     const audio = audioRef.current
     if (currentRef.current) {
       saveProgress(currentRef.current.id, audio?.duration || durationRef.current || 0, audio?.duration || durationRef.current || 0, true)
+    }
+    if (sleepMinutes === -1) {
+      setSleepMinutes(0)
+      setSleepAt(0)
+      setSleepRemaining(0)
+      flash('本集结束，已暂停')
+      return
     }
     stepEpisode(1)
   }
@@ -1495,6 +1559,27 @@ export default function App() {
                       {rate}×
                     </button>
                   ))}
+                </span>
+              ) : null}
+            </span>
+            <span className="sleep-wrap">
+              <button
+                className={`rate-btn sleep-btn ${sleepAt ? 'active' : ''}`}
+                onClick={() => setSleepOpen((value) => !value)}
+                title="睡眠定时"
+                aria-haspopup="menu"
+                aria-expanded={sleepOpen}
+              >
+                <Icon name="moon" size={14} />
+                {sleepAt ? <span className="sleep-left">{fmtTime(sleepRemaining)}</span> : null}
+              </button>
+              {sleepOpen ? (
+                <span className="sleep-menu" role="menu">
+                  <button type="button" role="menuitemradio" aria-checked={!sleepAt && sleepMinutes !== -1} className={!sleepAt && sleepMinutes !== -1 ? 'is-on' : ''} onClick={() => pickSleep('off')}>关闭</button>
+                  {[15, 30, 45, 60].map((minutes) => (
+                    <button key={minutes} type="button" role="menuitemradio" aria-checked={sleepMinutes === minutes} className={sleepMinutes === minutes ? 'is-on' : ''} onClick={() => pickSleep(minutes)}>{minutes} 分钟</button>
+                  ))}
+                  <button type="button" role="menuitemradio" aria-checked={sleepMinutes === -1} className={sleepMinutes === -1 ? 'is-on' : ''} onClick={() => pickSleep('end')}>本集结束</button>
                 </span>
               ) : null}
             </span>
