@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.10 — 2026-11-13
+
+Windows 运行时冒烟：CI 在 windows-latest 上真正跑一次转写。
+
+- 新增 `windows-runtime` 任务：用插件自己的下载器（cn 线路 / hf-mirror）拉 SenseVoice int8；用 Windows SAPI 生成一段 16k 单声道英文语音；调用 `scripts/asr_sherpa_batch.py` 真实推理；校验 JSON 里的文本与 token 时间戳。
+- 覆盖的不只是「逻辑能跑」，而是 Windows + Python + sherpa-onnx + 镜像下载 + 音频解码 + 推理的整条链路。
+- 若镜像不可达或识别结果为空，CI 会失败，不再依赖人工在 Windows 上试。
+
 ## 0.10.9 — 2026-11-13
 
 Windows 冒烟用例自身修正（首版跑出来的问题都出在测试假设上）。

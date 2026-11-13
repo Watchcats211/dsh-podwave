@@ -21,6 +21,36 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  windows-runtime:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - run: pip install sherpa-onnx
+      - name: 用插件下载器拉取 SenseVoice（国内线路）
+        run: node test/ci/download-sensevoice.mjs
+      - name: 生成测试语音（Windows SAPI，16k 单声道）
+        shell: powershell
+        run: |
+          Add-Type -AssemblyName System.Speech
+          $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
+          $format = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono)
+          $synth.SetOutputToWaveFile("$PWD\test-speech.wav", $format)
+          $synth.Speak("Hello, this is a test of the podcast transcription pipeline.")
+          $synth.Dispose()
+      - name: 运行 sherpa-onnx 转写
+        shell: pwsh
+        run: python scripts/asr_sherpa_batch.py test-speech.wav --model-dir "$env:USERPROFILE\.podwave\models\sensevoice-small-int8" --out-dir out
+      - name: 校验转写结果
+        run: node test/ci/assert-transcript.mjs
+
   build:
     runs-on: ubuntu-latest
     steps:
