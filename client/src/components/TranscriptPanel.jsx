@@ -70,7 +70,16 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
               key={line.id}
               data-seg={index}
               className={`seg-row ${index === activeIndex ? 'active' : ''} ${editingId === line.id ? 'is-editing' : ''}`}
+              role="button"
+              tabIndex={0}
+              title={`跳转到 ${fmtTime(line.start)}`}
               onClick={() => onSeek(line.start)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  onSeek(line.start)
+                }
+              }}
             >
               <span className="seg-time">{fmtTime(line.start)}</span>
               {editingId === line.id ? (
