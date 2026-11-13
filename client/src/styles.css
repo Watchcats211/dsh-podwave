@@ -672,6 +672,8 @@ select:focus-visible {
 
 .icon-btn:hover { background: var(--hover); color: var(--text); }
 
+.side-head .icon-btn { color: var(--text); }
+
 .skip-btn {
   height: 30px;
   min-width: 40px;
@@ -1113,7 +1115,7 @@ select:focus-visible {
 }
 
 /* ---- P1：任务面板 / 批量选择 / 进度 ---- */
-.topbar .tool-btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--elev); color: var(--muted); font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+.topbar .tool-btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--elev); color: var(--text); font-size: 12.5px; cursor: pointer; white-space: nowrap; }
 .topbar .tool-btn:hover { color: var(--text); background: var(--hover); }
 .topbar .tool-btn.is-on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: color-mix(in srgb, var(--accent) 12%, var(--elev)); }
 .batch-bar { display: flex; align-items: center; gap: 10px; margin: 0 0 14px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--accent) 8%, var(--elev)); font-size: 12.5px; color: var(--muted); }
