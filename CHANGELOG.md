@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.5 — 2026-11-13
+
+国内线路修正：hf-mirror 的 API 实际会 302 到 huggingface.co，国内直连取不到文件列表。
+
+- **cn 线路不再依赖 HF API**：为 Qwen3-ASR 与 Hy-MT2-4bit 增加固定文件清单，国内下载直接用 `hf-mirror.com` 的 `resolve` 地址逐个文件 HEAD + 下载；国际线路仍走 API，失败时同样回退到固定清单。
+- **空清单报错**：没有配置固定清单、API 又不可用时，明确报错而不是静默失败。
+- 实测：经 hf-mirror 下载 SenseVoice 的 `tokens.txt` 成功（315,894 字节），确认 cn 链路可用。
+- 说明：HEAD 在镜像上可能拿不到 content-length，进度总量仍以安装计划的估算值为准。
+
 ## 0.10.4 — 2026-11-13
 
 安装计划预览与国内镜像修正。

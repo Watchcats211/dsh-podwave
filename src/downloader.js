@@ -41,6 +41,28 @@ export async function listHfRepo(repo, base, { include, skip } = {}) {
     .map((entry) => ({ path: entry.path, size: entry.size || 0 }))
 }
 
+export async function directHfFiles(repo, base, { include, files, skip } = {}) {
+  const wanted = include || files
+  if (!wanted || !wanted.length) throw new Error('该资源没有配置固定文件清单，无法在镜像上直接下载')
+  const result = []
+  for (const file of wanted) {
+    if (skip && skip.some((re) => re.test(file))) continue
+    const encoded = file.split('/').map(encodeURIComponent).join('/')
+    const url = `${base}/${repo}/resolve/main/${encoded}`
+    let size = 0
+    try {
+      const res = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: timeout(20000) })
+      size = Number(res.headers.get('content-length') || 0)
+      if (!res.ok) continue
+    } catch {
+      // 允许大小未知，下载时再统计
+    }
+    result.push({ path: file, size })
+  }
+  if (!result.length) throw new Error('镜像上没有找到清单里的文件')
+  return result
+}
+
 export async function listMsRepo(repo) {
   const url = `https://modelscope.cn/api/v1/models/${repo}/repo/files?Revision=master&Recursive=true`
   const res = await fetch(url, { headers: { 'user-agent': UA }, redirect: 'follow', signal: timeout(20000) })
@@ -157,10 +179,26 @@ export async function downloadArtifact(artifact, { sourceId = 'auto', onProgress
     const wanted = artifact.source.include
     files = wanted ? all.filter((file) => wanted.includes(file.path)) : all.filter((file) => !isJunk(file.path))
   } else if (artifact.source.type === 'hf-repo') {
-    files = await listHfRepo(artifact.source.repo, source.base, {
-      include: artifact.source.include,
-      skip: artifact.source.skip,
-    })
+    const known = artifact.source.include || artifact.source.files
+    if (source.id === 'cn' && known) {
+      files = await directHfFiles(artifact.source.repo, source.base, {
+        include: artifact.source.include,
+        files: artifact.source.files,
+        skip: artifact.source.skip,
+      })
+    } else {
+      files = await listHfRepo(artifact.source.repo, source.base, {
+        include: artifact.source.include,
+        skip: artifact.source.skip,
+      }).catch(async (error) => {
+        if (!known) throw error
+        return directHfFiles(artifact.source.repo, source.base, {
+          include: artifact.source.include,
+          files: artifact.source.files,
+          skip: artifact.source.skip,
+        })
+      })
+    }
   } else {
     files = [{ path: artifact.source.file, size: artifact.approxBytes || 0 }]
   }
