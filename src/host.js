@@ -136,6 +136,54 @@ const MIME = {
 
 let booted = null
 
+// ── 文件夹监听：fs.watch 优先，2 秒防抖；不可用时退回 60 秒轮询 ──
+const watchers = new Map()
+let rescanTimer = null
+let watchPollTimer = null
+
+function scheduleRescan() {
+  if (rescanTimer) clearTimeout(rescanTimer)
+  rescanTimer = setTimeout(() => {
+    rescanTimer = null
+    scanLibrary().catch((error) => console.error('[dsh-podwave] watch scan failed:', error.message))
+  }, 2000)
+  if (rescanTimer.unref) rescanTimer.unref()
+}
+
+export function refreshWatchers() {
+  for (const watcher of watchers.values()) {
+    try { watcher.close() } catch { /* ignore */ }
+  }
+  watchers.clear()
+  for (const folder of getState().folders) {
+    try {
+      const watcher = fs.watch(folder, { recursive: true }, () => scheduleRescan())
+      watcher.on('error', () => {})
+      watchers.set(folder, watcher)
+    } catch { /* fs.watch 在部分平台或网络盘不可用 */ }
+  }
+  if (watchers.size === 0 && !watchPollTimer) {
+    watchPollTimer = setInterval(() => { scanLibrary().catch(() => {}) }, 60000)
+    if (watchPollTimer.unref) watchPollTimer.unref()
+  } else if (watchers.size > 0 && watchPollTimer) {
+    clearInterval(watchPollTimer)
+    watchPollTimer = null
+  }
+}
+
+export function watcherStatus() {
+  return { watchers: watchers.size, polling: Boolean(watchPollTimer), rescanPending: Boolean(rescanTimer) }
+}
+
+export function closeWatchers() {
+  for (const watcher of watchers.values()) {
+    try { watcher.close() } catch { /* ignore */ }
+  }
+  watchers.clear()
+  if (watchPollTimer) { clearInterval(watchPollTimer); watchPollTimer = null }
+  if (rescanTimer) { clearTimeout(rescanTimer); rescanTimer = null }
+}
+
 function boot() {
   if (!booted) {
     booted = (async () => {
@@ -388,7 +436,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.10.20', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.10.21', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -901,6 +949,7 @@ export default {
     const ready = boot()
     startMediaServer()
     ctx.effect(() => () => {
+      closeWatchers()
       try {
         mediaServer?.close()
       } catch {
