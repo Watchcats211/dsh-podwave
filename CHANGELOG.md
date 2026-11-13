@@ -1,3 +1,19 @@
+## 0.11.21 — 2026-11-13
+
+Windows 兼容性修复（对应 Issue #1 的 8 条）。之前插件在 Windows 上能跑通大部分功能，但「检测环境」会给错结论，安装最后一步可能整次失败。
+
+- 修复首启把 Mac 专用 MLX 模型写进配置：默认模型现在按平台计算（Apple Silicon → MLX；Windows/Linux → SenseVoice + GGUF），不再写死 `qwen3-asr-1.7b-8bit` 那套只有 Apple Silicon 装得了的模型。
+- 修复配置缓存覆写安装结果：宿主进程常驻，而「一键安装」是另一个进程写盘；原来保存任何无关设置都会把内存里的旧快照整份写回，把刚装好的模型名吞掉。现在每次保存前比对磁盘指纹，外部改动会先被读进来再合并。
+- 修复「安装检查」形同虚设：之前只判断模型名非空，Mac 专用名、甚至瞎编的名字都会亮绿，用户看到「全部通过」却在转写时报「运行环境未安装」。现在比对当前平台真正应有的模型，不一致时明确写出「转写模型应为 X，当前 Y」。
+- 修复引擎判定靠正则猜：改成查 catalog 元数据（`artifactByDir`），换模型名不会再掉进 MLX 分支。
+- 修复 Windows 上「运行环境未安装」误报：虚拟环境路径统一走 `venvBin()` / `venvPython()`，Windows 正确拼 `Scripts\`，不再是 macOS 的 `bin/`。
+- 修复 Git-Bash / MSYS / Cygwin 环境下 tar 解压失败：GNU tar 会把 `C:/...` 当成远程主机（`Cannot connect to C: resolve failed`，exit 128）。现在 .tar.bz2 / .tar.gz 有四个候选（裸 tar → `--force-local` → System32 自带 bsdtar → python tarfile），列目录也走同样的兜底，安全路径检查不再被静默跳过。
+- 修复可选组件拖垮整次安装：说话人分离模型（可选）解压失败时不再让「已下载 1.6 GB」被判定成安装失败，而是跳过并给出「可选组件失败，核心功能已就绪」的提示。
+- 修复 `scripts/diarize.py` 硬编码 `/opt/homebrew/bin/ffmpeg`（Windows 报 `[WinError 2]`）：默认改为走 PATH。
+- 修复 Windows 上结束子进程等于硬杀：统一走 `killTree()`，Windows 用 `taskkill /T` 连子孙进程一起收，其它平台仍是优雅 SIGTERM，避免 ffmpeg/llama-server 残留。
+- 文件夹路径支持 Windows 环境变量：`%USERPROFILE%\Music` 这类路径现在能正确展开，`~\Music` 也可以。
+- 新增 10 个 Windows 兼容回归测试（本次共 84 个），以及两个只在 CI 的 `windows-latest` 真机上跑的校验脚本（真实平台默认模型 / 真实 tar.bz2 解压）。
+
 ## 0.11.20 — 2026-11-13
 
 - 修复「取消转写」点了没反应：转写任务原本只认内存里的进程句柄，一旦宿主重载过插件（或换过一次模块实例），新实例手里没有任何句柄，点取消只会在内存里空找一圈然后静静返回。现在把子进程 pid 写进持久任务，取消时先按内存找、找不到就按 pid 杀，实在没有进程可杀也把任务收尾成「已取消」，不会一直转圈。

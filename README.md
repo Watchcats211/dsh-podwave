@@ -53,9 +53,13 @@ dsh plugin --profile desktop add file:/path/to/dsh-podwave
 
 装完刷新 DSH，侧栏出现「播客」。
 
+> 国内网络如果拉不到最新版本，是因为镜像站同步有延迟（npm 官方源发布后通常几分钟内可见，npmmirror 可能要几小时）。可以把 npm registry 指回官方源再装：`npm config set registry https://registry.npmjs.org/`。
+
 ## 转写与翻译（可选）
 
-播放器本身不需要额外依赖。要用转写 / 翻译，需要在本机准备 MLX 运行时：
+播放器本身不需要额外依赖。要用转写 / 翻译，需要在本机准备运行时——**大多数用户不用手动做，直接在 DSH 设置 →「播客」→「一键安装」即可**，它会按平台自动选模型（Apple Silicon 用 MLX，Windows / Linux / Intel Mac 用 ONNX + llama.cpp）。
+
+下面是手动安装（以 Apple Silicon 为例）：
 
 ```bash
 uv venv ~/.podwave/runtime/.venv --python 3.12
@@ -72,6 +76,7 @@ curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongi
 ```
 
 - 转写模型约 2.3 GB，翻译模型约 1 GB（Hy-MT2-1.8B，974 MB），说话人模型约 34 MB；只做播放可以都不装。
+- **平台差异**：Apple Silicon 用 MLX（上面的命令）；Windows / Linux / Intel Mac 用 SenseVoice Small（约 240 MB）+ Hy-MT2 GGUF，虚拟环境是 `.venv\Scripts\` 而不是 `bin/`，建议直接用「一键安装」。
 - 翻译可以不用本地模型：字幕面板 →「设置」→ 选 DeepSeek API，填 API key（默认 `api.deepseek.com` / `deepseek-chat`）。
 - 字幕面板 →「设置」里切换引擎；目标语言在字幕面板的「对照」下拉里选。
 

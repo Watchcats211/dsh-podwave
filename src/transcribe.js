@@ -9,15 +9,17 @@ import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:
 import { fileURLToPath } from 'node:url'
 import { DATA_DIR } from './state.js'
 import { loadModelConfig, modelDir } from './models.js'
-import { ffmpegPath, ffprobePath, venvPython } from './platform.js'
+import { ffmpegPath, ffprobePath, killTree, venvBin, venvPython } from './platform.js'
 import { getSection } from './config.js'
+import { artifactByDir } from './catalog.js'
 import { assignSpeakers, diarizeInfo, runDiarization } from './diarize.js'
 import { flushJobs, getJob, getJobFresh, jobKey, removeJob, upsertJob } from './jobs.js'
 
 export const TRANSCRIPTS_DIR = path.join(DATA_DIR, 'transcripts')
 const WORK_DIR = path.join(TRANSCRIPTS_DIR, '.work')
-const RUNTIME_DIR = path.join(DATA_DIR, 'runtime')
-const CLI = path.join(RUNTIME_DIR, '.venv', 'bin', 'mlx-qwen3-asr')
+// Windows 的虚拟环境是 .venv\Scripts\mlx-qwen3-asr.exe，不是 .venv/bin/。
+// 用 venvBin() 拼平台路径，否则 Windows 上永远判定「运行环境未安装」。
+const CLI = venvBin('mlx-qwen3-asr')
 const SHERPA_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'asr_sherpa_batch.py')
 const FFMPEG = process.env.PODWAVE_FFMPEG || ffmpegPath() || 'ffmpeg'
 const FFPROBE = process.env.PODWAVE_FFPROBE || ffprobePath() || 'ffprobe'
@@ -32,27 +34,9 @@ const cancelRequested = new Set()
 
 // 宿主热重载后，新模块实例拿不到旧实例的 activeChild，取消就杀不掉那个进程。
 // 所以把当前工作进程的 pid 也写进 job，取消时先按内存找，找不到再按 pid 兜底。
+// Windows 上 SIGTERM 等于硬杀，交给 killTree 用 taskkill /T 连子孙一起收。
 function stopChildByPid(pid) {
-  const target = Number(pid)
-  if (!Number.isInteger(target) || target <= 1) return false
-  try {
-    process.kill(target, 0)
-  } catch {
-    return false
-  }
-  try {
-    process.kill(target, 'SIGTERM')
-  } catch {
-    return false
-  }
-  setTimeout(() => {
-    try {
-      process.kill(target, 'SIGKILL')
-    } catch {
-      /* ignore */
-    }
-  }, 5000)
-  return true
+  return killTree(pid)
 }
 
 function transcriptPath(id) {
@@ -66,7 +50,11 @@ function round2(value) {
 export function currentAsrModel() {
   const name = loadModelConfig().asrModel
   const dir = modelDir(name)
-  const engine = /sensevoice|sherpa/i.test(name) ? 'sherpa' : 'mlx'
+  // 不能靠模型名正则猜引擎：换个名字（比如 Windows 的 sensevoice-small-int8 之外的写法）
+  // 就会掉进 MLX 分支，然后去查只有 macOS 才有的 CLI，永远 installed:false。
+  // 以 catalog 元数据为准，查不到时再退回正则兜底。
+  const artifact = artifactByDir(name, 'asr')
+  const engine = artifact ? (artifact.engine === 'onnx' ? 'sherpa' : 'mlx') : /sensevoice|sherpa/i.test(name) ? 'sherpa' : 'mlx'
   const ready =
     engine === 'sherpa'
       ? fs.existsSync(path.join(dir, 'model.int8.onnx'))
@@ -86,13 +74,17 @@ export function runtimeInfo() {
   const model = currentAsrModel()
   const config = transcribeConfig()
   const sherpa = model.engine === 'sherpa'
+  // sherpa 走 venv 里的 python 跑脚本；MLX 走 venv 里的命令行工具。
+  // 两者都必须在 Windows 的 Scripts\ 下找，否则 installed 永远 false。
+  const cliPath = sherpa ? venvPython() : CLI
+  const installed = sherpa ? fs.existsSync(SHERPA_SCRIPT) && fs.existsSync(cliPath) : fs.existsSync(cliPath)
   return {
     engine: model.engine,
-    installed: sherpa ? fs.existsSync(SHERPA_SCRIPT) && fs.existsSync(venvPython()) : fs.existsSync(CLI),
+    installed,
     modelReady: model.ready,
     model: model.dir,
     modelName: model.name,
-    cli: sherpa ? venvPython() : CLI,
+    cli: cliPath,
     hotwords: config.hotwords,
     chunkMinutes: config.chunkMinutes,
     diarize: config.diarize,
@@ -749,13 +741,7 @@ async function runJob(item) {
       const cancelled = cancelRequested.has(key)
       if (cancelled) {
         // 已取消就别再写 progress 把磁盘上的 cancelling 覆盖回转写中。
-        if (child) {
-          try {
-            child.kill('SIGTERM')
-          } catch {
-            /* ignore */
-          }
-        }
+        if (child) killTree(child.pid)
         return
       }
       const current = plan.parts.find((part) => !hasResult(resultsDir, part.index)) || null
@@ -1336,13 +1322,7 @@ export async function diarizeTranscript(episode) {
 }
 
 export function stopAll() {
-  if (activeChild) {
-    try {
-      activeChild.kill('SIGTERM')
-    } catch {
-      /* ignore */
-    }
-  }
+  if (activeChild) killTree(activeChild.pid)
   // 插件被禁用或热重载时走到这里：把正在跑的任务在磁盘上收尾成「已停止」，
   // 不然新实例读到的是一条永远 running 的僵尸任务，界面上点取消也没有对象。
   if (active?.key && active?.episodeId) {

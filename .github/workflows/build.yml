@@ -20,6 +20,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      # Issue #1：默认模型必须按真实平台算、verify() 必须比对真实模型而不是只判非空。
+      # 单元测试用的是伪造的 platform 对象，这一步跑的是 detectPlatform() 的真实结果。
+      - name: 校验 Windows 平台默认模型与安装检查
+        if: matrix.os == 'windows-latest'
+        run: node test/ci/windows-platform-check.mjs
 
   windows-runtime:
     runs-on: windows-latest
@@ -52,6 +57,9 @@ jobs:
         run: node test/ci/assert-transcript.mjs
       - name: 下载 llama.cpp 并校验可执行
         run: node test/ci/llama-check.mjs
+      # Issue #1 的 #5：非 zip 压缩包解压（GNU tar 绝对路径陷阱）在真 Windows 上必须可用。
+      - name: 校验压缩包解压与路径安全检查
+        run: node test/ci/windows-archive-check.mjs
 
   build:
     runs-on: ubuntu-latest

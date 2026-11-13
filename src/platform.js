@@ -3,7 +3,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 
 export const isWindows = process.platform === 'win32'
 export const isMac = process.platform === 'darwin'
@@ -107,6 +107,41 @@ export function venvPython(dir = venvDir()) {
 export function venvBin(name, dir = venvDir()) {
   const ext = isWindows ? '.exe' : ''
   return isWindows ? path.join(dir, 'Scripts', name + ext) : path.join(dir, 'bin', name + ext)
+}
+
+// Windows 上 SIGTERM 实际上是 TerminateProcess（硬杀），子进程（ffmpeg 之类）会变成孤儿。
+// 统一走这里：Windows 用 taskkill /T 连子孙一起收，其它平台照常 SIGTERM，超时再 SIGKILL。
+export function killTree(pid, { signal = 'SIGTERM', timeoutMs = 5000, onForce } = {}) {
+  const target = Number(pid)
+  if (!Number.isInteger(target) || target <= 1) return false
+  try {
+    process.kill(target, 0)
+  } catch {
+    return false
+  }
+  if (isWindows) {
+    try {
+      spawn('taskkill', ['/PID', String(target), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
+    } catch {
+      /* ignore */
+    }
+    return true
+  }
+  try {
+    process.kill(target, signal)
+  } catch {
+    return false
+  }
+  const timer = setTimeout(() => {
+    try {
+      process.kill(target, 'SIGKILL')
+    } catch {
+      /* 已经退出 */
+    }
+    onForce?.()
+  }, timeoutMs)
+  timer.unref?.()
+  return true
 }
 
 export function detectGpu() {

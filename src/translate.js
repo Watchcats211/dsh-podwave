@@ -11,8 +11,11 @@ import { loadModelConfig, modelDir } from './models.js'
 import { translateWithLlama } from './llama.js'
 import { getSection, updateSection } from './config.js'
 import { getJob, jobKey, upsertJob } from './jobs.js'
+import { venvPython } from './platform.js'
+import { artifactByDir } from './catalog.js'
 
-const PYTHON = path.join(DATA_DIR, 'runtime', '.venv', 'bin', 'python')
+// Windows 的虚拟环境是 .venv\Scripts\python.exe，不是 .venv/bin/python。
+const PYTHON = venvPython()
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'translate_local.py')
 
 export function loadConfig() {
@@ -28,7 +31,10 @@ export function currentLocalModel() {
   const dir = modelDir(name)
   const gguf = fs.existsSync(dir) ? fs.readdirSync(dir).find((file) => file.endsWith('.gguf')) : null
   const mlx = fs.existsSync(path.join(dir, 'model.safetensors'))
-  return { name, dir, ready: Boolean(mlx || gguf), engine: mlx ? 'mlx' : gguf ? 'llama' : 'none' }
+  // 同样以 catalog 元数据为准，别靠文件存在与否猜引擎（MLX 与 llama 目录都可能有两种文件）。
+  const artifact = artifactByDir(name, 'translate')
+  const engine = artifact ? (artifact.engine === 'mlx' ? 'mlx' : 'llama') : mlx ? 'mlx' : gguf ? 'llama' : 'none'
+  return { name, dir, ready: Boolean(mlx || gguf), engine }
 }
 
 export function publicConfig() {

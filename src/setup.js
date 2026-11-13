@@ -7,9 +7,9 @@ import { execFile, spawn } from 'node:child_process'
 import { DATA_DIR } from './state.js'
 import { getSection, updateSection } from './config.js'
 import { getJob, upsertJob } from './jobs.js'
-import { CATALOG, FFMPEG_BINARY, LLAMA_BINARY, SOURCE_LABELS, artifactFor, ffmpegAsset, llamaAsset, sourcesFor } from './catalog.js'
+import { CATALOG, FFMPEG_BINARY, LLAMA_BINARY, SOURCE_LABELS, artifactFor, expectedModels, ffmpegAsset, llamaAsset, sourcesFor } from './catalog.js'
 import { downloadArtifact, extractArchive } from './downloader.js'
-import { detectPlatform, findExecutable, ffmpegPath, ffprobePath, recommendEngine, venvDir, venvPython, isWindows, isMac } from './platform.js'
+import { detectPlatform, findExecutable, ffmpegPath, ffprobePath, killTree, recommendEngine, venvDir, venvPython, isWindows, isMac } from './platform.js'
 
 const RUNTIME_DIR = path.join(DATA_DIR, 'runtime')
 const SETUP_PATH = path.join(DATA_DIR, 'setup.json')
@@ -27,7 +27,8 @@ export function setupJob() {
 export function cancelSetup() {
   if (!current) return false
   current.cancelled = true
-  current.child?.kill('SIGTERM')
+  // Windows 上 SIGTERM 等于硬杀，uv/Python 拉起的子进程会变孤儿；killTree 处理平台差异。
+  killTree(current.child?.pid)
   return true
 }
 
@@ -247,12 +248,22 @@ export async function verify() {
     })
   }
 
+  // 只判「非空」等于没判：Mac 专用模型名、甚至是瞎编的名字都会亮绿，
+  // 用户看到「检查通过」却在转写时报「运行环境未安装」。这里比对本平台应有的模型。
   const config = getSection('models')
+  const expected = expectedModels(platform, engine)
+  const problems = []
+  if (config.asrModel !== expected.asrModel) {
+    problems.push(`转写模型应为 ${expected.asrModel}，当前 ${config.asrModel || '未设置'}`)
+  }
+  if (config.translateModel !== expected.translateModel) {
+    problems.push(`翻译模型应为 ${expected.translateModel}，当前 ${config.translateModel || '未设置'}`)
+  }
   checks.push({
     id: 'config',
-    label: '模型配置已写入',
-    ok: Boolean(config.asrModel && config.translateModel),
-    detail: `${config.asrModel || '未设置'} / ${config.translateModel || '未设置'}`,
+    label: '模型配置与当前平台匹配',
+    ok: problems.length === 0,
+    detail: problems.length ? problems.join('；') : `${config.asrModel} / ${config.translateModel}`,
   })
 
   return {
@@ -503,25 +514,51 @@ export async function install({ source = 'auto' } = {}) {
     }
 
     // 3. 模型
+    // 说话人分离是可选组件：它失败不该把已经下完的 1.6 GB 判定成整次安装失败。
+    // 之前任何一个 tar 解压失败都会让整个 install 走到 catch，用户看到「安装失败」。
+    const optionalFailures = []
     for (const artifact of targets) {
       if (current.cancelled) throw new Error('用户取消了安装')
+      const optional = artifact.kind === 'diarization'
       report({ stage: `下载 ${artifact.label}` })
-      const result = await downloadArtifact(artifact, {
-        sourceId: source,
-        signal: current.signal,
-        onProgress: (event) => {
-          doneBytes += event.delta || 0
-          report({ stage: `下载 ${artifact.label}` })
-        },
-      })
-      doneBytes = Math.max(doneBytes, summary.reduce((sum, item) => sum + item.bytes, 0) + result.bytes)
-      summary.push({ id: artifact.id, label: artifact.label, bytes: result.bytes, source: result.sourceLabel })
+      try {
+        const result = await downloadArtifact(artifact, {
+          sourceId: source,
+          signal: current.signal,
+          onProgress: (event) => {
+            doneBytes += event.delta || 0
+            report({ stage: `下载 ${artifact.label}` })
+          },
+        })
+        doneBytes = Math.max(doneBytes, summary.reduce((sum, item) => sum + item.bytes, 0) + result.bytes)
+        summary.push({ id: artifact.id, label: artifact.label, bytes: result.bytes, source: result.sourceLabel })
+      } catch (error) {
+        if (current.cancelled) throw new Error('用户取消了安装')
+        if (!optional) throw error
+        const message = String(error?.message || error)
+        optionalFailures.push({ id: artifact.id, label: artifact.label, error: message })
+        summary.push({ id: artifact.id, label: artifact.label, bytes: 0, optional: true, skipped: true, error: message })
+        report({ stage: `跳过可选组件：${artifact.label}（${message}）` })
+      }
     }
 
     // 4. 写配置
     updateSection('models', { asrModel: artifacts.asr.dir, translateModel: artifacts.translate.dir })
     writeSetup({ engine: engine.id, source, installedAt: Date.now(), lastSummary: summary })
-    const job = updateJob({ status: 'done', stage: '完成', progress: 100, bytes: doneBytes, expected: totalBytes || doneBytes, summary })
+    const warning = optionalFailures.length
+      ? `可选组件失败，已跳过：${optionalFailures.map((item) => `${item.label}（${item.error}）`).join('；')}。核心转写与翻译已就绪，可以正常使用。`
+      : null
+    const job = updateJob({
+      status: 'done',
+      stage: warning ? '完成（部分可选组件已跳过）' : '完成',
+      progress: 100,
+      bytes: doneBytes,
+      expected: totalBytes || doneBytes,
+      summary,
+      error: null,
+      warning,
+      optionalFailures,
+    })
     current.running = false
     return job
   } catch (error) {

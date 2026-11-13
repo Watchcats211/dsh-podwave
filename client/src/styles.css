@@ -995,6 +995,8 @@ select:focus-visible {
 .podwave-settings .settings-card:first-of-type { margin-top: 16px; }
 .podwave-settings .settings-card h2 { margin: 0 0 4px; font-size: 14px; font-weight: 600; color: inherit; }
 .podwave-settings .settings-hint { margin: 0 0 12px; font-size: 13px; color: color-mix(in srgb, currentColor 55%, transparent); }
+/* 可选组件被跳过这类「装好了但有缺口」的提示，用警告色，不能和普通说明混在一起 */
+.podwave-settings .setup-warning { color: var(--accent); font-size: 13px; }
 .podwave-settings .settings-empty { margin: 4px 0 0; font-size: 13px; color: color-mix(in srgb, currentColor 55%, transparent); }
 .podwave-settings .history-list { list-style: none; margin: 2px 0 0; padding: 0; }
 .podwave-settings .history-row { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 9px 0; border-top: 1px solid color-mix(in srgb, currentColor 8%, transparent); }
