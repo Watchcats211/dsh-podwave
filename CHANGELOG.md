@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.4 — 2026-11-13
+
+安装计划预览与国内镜像修正。
+
+- **先看后装**：设置页新增「将下载」清单，列出每个组件的体积与可用线路，总计一目了然；接口 `GET /api/setup/plan?source=auto|intl|cn`。
+- **ModelScope 修正**：Hy-MT2 的魔搭仓库改为 `Tencent-Hunyuan/...`（Q4 实测 1.13GB 可访问）；SenseVoice 的 `iic/SenseVoiceSmall` 不含 sherpa-onnx 文件，已移除该无效镜像，国内统一走 hf-mirror。
+- **单文件模型修复**：hf-file 类型走 ModelScope 时之前会把整个仓库都拉下来，现在只下载目标 `.gguf`。
+- **下载防护**：镜像返回空文件列表时报错并提示换线路，不再静默成功。
+- **体积校准**：Hy-MT2 2bit 601MB、Q4_K_M 1.13GB，计划与扫描的数字与真实文件一致。
+- 引擎标签在缺少 osLabel 时增加回退，避免设置页出现「推荐：undefined」。
+
 ## 0.10.3 — 2026-11-13
 
 Windows 安装链路继续补齐，并增加可复制的诊断信息。

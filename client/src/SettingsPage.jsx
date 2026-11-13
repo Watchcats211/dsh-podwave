@@ -53,6 +53,7 @@ export default function SettingsPage() {
   const [uiSettings, setUiSettings] = useState({ showSidebarPanel: true })
   const [importConfig, setImportConfig] = useState({ mode: 'copy', orphans: 0, orphanBytes: 0 })
   const [setup, setSetup] = useState(null)
+  const [setupPlan, setSetupPlan] = useState(null)
   const [setupSource, setSetupSource] = useState('auto')
   const [setupBusy, setSetupBusy] = useState(false)
   const [hotwords, setHotwords] = useState('')
@@ -109,6 +110,18 @@ export default function SettingsPage() {
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    let cancelled = false
+    getJSON(`${API}/setup/plan?source=${setupSource}`)
+      .then((data) => {
+        if (!cancelled) setSetupPlan(data)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [setupSource, setup?.job?.status])
 
   useEffect(() => {
     if (!setupBusy && setup?.job?.status !== 'running') return
@@ -331,7 +344,21 @@ export default function SettingsPage() {
                 </select>
               </label>
             </div>
-            <p className="settings-hint">预计下载 {fmtBytes(setup.downloadBytes)}，安装到 ~/.podwave/models。</p>
+            {setupPlan?.items?.length ? (
+              <details className="setup-plan" open>
+                <summary>将下载 {fmtBytes(setupPlan.totalBytes)} · {setupPlan.items.length} 项</summary>
+                <ul>
+                  {setupPlan.items.map((item) => (
+                    <li key={item.id}>
+                      <span>{item.label}</span>
+                      <span>{item.bytes ? fmtBytes(item.bytes) : item.note || '按实际下载'}</span>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : (
+              <p className="settings-hint">所有组件已就绪，无需下载。</p>
+            )}
             <div className="settings-actions">
               <button className="settings-btn" disabled={setupBusy || setup.job?.status === 'running'} onClick={startSetup}>
                 {setupBusy || setup.job?.status === 'running' ? '安装中…' : '一键安装'}
