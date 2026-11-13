@@ -3,7 +3,7 @@
 import fs from 'node:fs'
 import http from 'node:http'
 import crypto from 'node:crypto'
-import { copyFile, mkdir, realpath, rm, stat } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, realpath, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { execFile } from 'node:child_process'
@@ -77,6 +77,7 @@ import { getSection, updateSection } from './config.js'
 import { diarizeInfo } from './diarize.js'
 import { getTranslationState, publicConfig, saveConfig, startTranslation } from './translate.js'
 import { listModels, loadModelConfig, saveModelConfig } from './models.js'
+import { findEpisode, getProviderById, listAllEpisodes } from './providers.js'
 
 export const name = 'dsh-podwave'
 
@@ -319,7 +320,14 @@ function startMediaServer() {
         res.statusCode = 404
         return res.end()
       }
-      const episode = getEpisode(decodeURIComponent(match[1]))
+      const targetId = decodeURIComponent(match[1])
+      const provider = getProviderById(targetId)
+      if (provider.id === 'xyz') {
+        return match[2] === 'cover'
+          ? provider.streamCover(targetId, req, res)
+          : provider.streamAudio(targetId, req, res)
+      }
+      const episode = findEpisode(targetId)
       if (!episode) {
         res.statusCode = 404
         return res.end()
@@ -455,7 +463,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.13',
+      version: '0.11.14',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -484,7 +492,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.10.21', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.14', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -502,14 +510,14 @@ async function route(ctx, req, res) {
     const favorites = new Set(state.favorites || [])
     const hidden = new Set(state.hidden || [])
     return json(res, 200, {
-      items: [
-        ...getEpisodes()
-          .filter((episode) => !hidden.has(episode.id))
-          .map((episode) => ({ ...episode, hasTranscript: withTranscript.has(episode.id), favorite: favorites.has(episode.id) })),
-        ...getXyzItems()
-          .filter((item) => !hidden.has(item.id))
-          .map((item) => ({ ...item, hasTranscript: withTranscript.has(item.id), favorite: favorites.has(item.id) })),
-      ].sort((a, b) => (b.mtime || 0) - (a.mtime || 0)),
+      items: listAllEpisodes()
+        .filter((episode) => !hidden.has(episode.id))
+        .map((episode) => ({
+          ...episode,
+          hasTranscript: withTranscript.has(episode.id),
+          favorite: favorites.has(episode.id),
+        }))
+        .sort((a, b) => (b.mtime || 0) - (a.mtime || 0)),
       folders: state.folders,
       progress: state.progress,
       scan: getScanState(),
@@ -703,7 +711,7 @@ async function route(ctx, req, res) {
     const query = String(new URL(req.url, 'http://127.0.0.1').searchParams.get('q') || '').trim()
     if (query.length < 2) return json(res, 200, { items: [], total: 0 })
     const needle = query.toLowerCase()
-    const titles = new Map(getEpisodes().map((episode) => [episode.id, episode]))
+    const titles = new Map(listAllEpisodes().map((episode) => [episode.id, episode]))
     const items = []
     const names = await readdir(TRANSCRIPTS_DIR).catch(() => [])
     for (const name of names) {
@@ -786,9 +794,10 @@ async function route(ctx, req, res) {
   const coverMatch = /^api\/episodes\/([^/]+)\/cover$/.exec(routePath)
   if (coverMatch && (method === 'GET' || method === 'HEAD')) {
     const coverId = decodeURIComponent(coverMatch[1])
-    if (isXyzId(coverId)) return proxyCover(coverId, req, res)
-    const episode = getEpisode(coverId)
-    const cover = episode ? getCoverPath(episode.id) : null
+    const provider = getProviderById(coverId)
+    if (provider.id === 'xyz') return provider.streamCover(coverId, req, res)
+    const episode = findEpisode(coverId)
+    const cover = episode ? provider.getCoverPath(episode.id) : null
     if (!cover) return json(res, 404, { error: '没有封面' })
     res.setHeader('cache-control', 'public, max-age=86400')
     return sendFile(req, res, cover, 'public, max-age=86400')
@@ -797,8 +806,9 @@ async function route(ctx, req, res) {
   const audioMatch = /^api\/episodes\/([^/]+)\/audio$/.exec(routePath)
   if (audioMatch && (method === 'GET' || method === 'HEAD')) {
     const audioId = decodeURIComponent(audioMatch[1])
-    if (isXyzId(audioId)) return proxyStream(audioId, req, res)
-    const episode = getEpisode(audioId)
+    const provider = getProviderById(audioId)
+    if (provider.id === 'xyz') return provider.streamAudio(audioId, req, res)
+    const episode = findEpisode(audioId)
     if (!episode) return json(res, 404, { error: '单集不存在' })
     try {
       await stat(episode.file)
@@ -811,7 +821,7 @@ async function route(ctx, req, res) {
   const transcriptMatch = /^api\/episodes\/([^/]+)\/transcript$/.exec(routePath)
   if (transcriptMatch) {
     const id = decodeURIComponent(transcriptMatch[1])
-    if (!getEpisode(id) && !isXyzId(id)) return json(res, 404, { error: '单集不存在' })
+    if (!findEpisode(id) && !isXyzId(id)) return json(res, 404, { error: '单集不存在' })
     if (method === 'GET') {
       const state = await getTranscriptionState(id)
       if (isXyzId(id) && (state.status === 'none' || state.status === 'error')) {
@@ -849,8 +859,8 @@ async function route(ctx, req, res) {
 
   const diarizeMatch = /^api\/episodes\/([^/]+)\/diarize$/.exec(routePath)
   if (diarizeMatch && method === 'POST') {
-    const episode = getEpisode(decodeURIComponent(diarizeMatch[1]))
-    if (!episode) return json(res, 404, { error: '单集不存在' })
+    const episode = findEpisode(decodeURIComponent(diarizeMatch[1]))
+    if (!episode || !episode.file) return json(res, 404, { error: '单集不存在或音频尚未下载到本地' })
     try {
       const transcript = await diarizeTranscript(episode)
       return json(res, 200, { transcript })
@@ -862,7 +872,7 @@ async function route(ctx, req, res) {
   const transcribeCancelMatch = /^api\/episodes\/([^/]+)\/transcribe\/cancel$/.exec(routePath)
   if (transcribeCancelMatch && method === 'POST') {
     const id = decodeURIComponent(transcribeCancelMatch[1])
-    if (!getEpisode(id) && !isXyzId(id)) return json(res, 404, { error: '单集不存在' })
+    if (!findEpisode(id) && !isXyzId(id)) return json(res, 404, { error: '单集不存在' })
     const downloadKey = `download:${id}`
     const downloadJob = getJob(downloadKey)
     if (downloadJob && (downloadJob.status === 'queued' || downloadJob.status === 'running')) {
@@ -896,7 +906,7 @@ async function route(ctx, req, res) {
   const lineMatch = /^api\/episodes\/([^/]+)\/transcript\/lines\/([^/]+)$/.exec(routePath)
   if (lineMatch && method === 'PUT') {
     const id = decodeURIComponent(lineMatch[1])
-    if (!getEpisode(id)) return json(res, 404, { error: '单集不存在' })
+    if (!findEpisode(id) && !isXyzId(id)) return json(res, 404, { error: '单集不存在' })
     const before = await readTranscript(id)
     if (!before) return json(res, 404, { error: '还没有转写' })
     const body = await readJson(req)
@@ -912,7 +922,7 @@ async function route(ctx, req, res) {
   const splitMatch = /^api\/episodes\/([^/]+)\/transcript\/lines\/([^/]+)\/split$/.exec(routePath)
   if (splitMatch && method === 'POST') {
     const id = decodeURIComponent(splitMatch[1])
-    if (!getEpisode(id)) return json(res, 404, { error: '单集不存在' })
+    if (!findEpisode(id) && !isXyzId(id)) return json(res, 404, { error: '单集不存在' })
     const before = await readTranscript(id)
     if (!before) return json(res, 404, { error: '还没有转写' })
     const body = await readJson(req)
@@ -928,7 +938,7 @@ async function route(ctx, req, res) {
   const mergeMatch = /^api\/episodes\/([^/]+)\/transcript\/lines\/([^/]+)\/merge$/.exec(routePath)
   if (mergeMatch && method === 'POST') {
     const id = decodeURIComponent(mergeMatch[1])
-    if (!getEpisode(id)) return json(res, 404, { error: '单集不存在' })
+    if (!findEpisode(id) && !isXyzId(id)) return json(res, 404, { error: '单集不存在' })
     const before = await readTranscript(id)
     if (!before) return json(res, 404, { error: '还没有转写' })
     try {
@@ -943,7 +953,7 @@ async function route(ctx, req, res) {
   const undoMatch = /^api\/episodes\/([^/]+)\/transcript\/undo$/.exec(routePath)
   if (undoMatch && method === 'POST') {
     const id = decodeURIComponent(undoMatch[1])
-    if (!getEpisode(id)) return json(res, 404, { error: '单集不存在' })
+    if (!findEpisode(id) && !isXyzId(id)) return json(res, 404, { error: '单集不存在' })
     const transcript = await readTranscript(id)
     if (!transcript) return json(res, 404, { error: '还没有转写' })
     const stack = undoStacks.get(id) || []
@@ -1008,7 +1018,7 @@ async function route(ctx, req, res) {
       const id = file.replace(/\.json$/, '')
       const transcript = await readTranscript(id)
       if (!transcript) continue
-      const episode = getEpisode(id)
+      const episode = findEpisode(id)
       let completedAt = null
       try {
         completedAt = (await stat(path.join(TRANSCRIPTS_DIR, file))).mtimeMs
@@ -1064,7 +1074,7 @@ async function route(ctx, req, res) {
   const translateMatch = /^api\/episodes\/([^/]+)\/translate$/.exec(routePath)
   if (translateMatch) {
     const id = decodeURIComponent(translateMatch[1])
-    if (!getEpisode(id)) return json(res, 404, { error: '单集不存在' })
+    if (!findEpisode(id) && !isXyzId(id)) return json(res, 404, { error: '单集不存在' })
     if (method === 'GET') {
       const target = url.searchParams.get('target') === 'en' ? 'en' : 'zh'
       return json(res, 200, await getTranslationState(id, target))
@@ -1079,7 +1089,7 @@ async function route(ctx, req, res) {
 
   const progressMatch = /^api\/progress\/([^/]+)$/.exec(routePath)
   if (progressMatch && method === 'PUT') {
-    const episode = getEpisode(decodeURIComponent(progressMatch[1]))
+    const episode = findEpisode(decodeURIComponent(progressMatch[1]))
     if (!episode) return json(res, 404, { error: '单集不存在' })
     const body = await readJson(req)
     const position = Number(body?.position)

@@ -111,6 +111,16 @@ test('host: xyz public routes serve podcast, play and status', async () => {
     const remote = episodes.items.find((item) => item.id === 'xyzep1')
     assert.ok(remote, '播放过的公开单集应出现在媒体列表')
 
+    const progRes = await fetch(`${base}/podwave/api/progress/xyzep1`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' },
+      body: JSON.stringify({ position: 42.5, duration: 222 }),
+    })
+    assert.equal(progRes.status, 200, '小宇宙单集应支持保存播放进度')
+
+    const searchRes = await (await fetch(`${base}/podwave/api/search?q=test`)).json()
+    assert.ok(Array.isArray(searchRes.items), '字幕搜索接口应正常返回数组')
+
     const badUrl = await fetch(`${base}/podwave/api/xyz/open-web`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'sec-fetch-site': 'same-origin' },
@@ -127,6 +137,8 @@ test('host: xyz public routes serve podcast, play and status', async () => {
   } finally {
     globalThis.fetch = originalFetch
     await new Promise((resolve) => server.close(resolve))
+    const { closeState } = await import('../src/state.js')
+    await closeState().catch(() => {})
     for (const dispose of effects.reverse()) {
       try { dispose() } catch { /* ignore */ }
     }

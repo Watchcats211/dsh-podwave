@@ -255,8 +255,8 @@ export default function SettingsPage() {
     }
   }
 
-  const asrOptions = allModels.filter((model) => /asr/i.test(model.name) && model.ready !== false)
-  const translateOptions = allModels.filter((model) => !/asr|diarization/i.test(model.name) && model.ready !== false)
+  const asrOptions = allModels.filter((model) => /asr|sensevoice|sherpa/i.test(model.name) && model.ready !== false)
+  const translateOptions = allModels.filter((model) => !/asr|sensevoice|sherpa|diarization/i.test(model.name) && model.ready !== false)
   const saveUi = async () => {
     setSaving('ui')
     setError('')
