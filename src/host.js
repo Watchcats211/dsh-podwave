@@ -454,7 +454,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.9',
+      version: '0.11.10',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -476,6 +476,10 @@ async function route(ctx, req, res) {
   }
   if (routePath === 'api/setup/cancel' && method === 'POST') {
     return json(res, 200, { cancelled: cancelSetup() })
+  }
+  if (method === 'GET' && routePath === 'api/update') {
+    const url = new URL(req.url || '/', 'http://127.0.0.1')
+    return json(res, 200, await checkUpdate({ force: url.searchParams.get('force') === '1' }))
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady

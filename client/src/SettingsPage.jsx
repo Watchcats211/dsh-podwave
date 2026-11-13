@@ -60,6 +60,8 @@ export default function SettingsPage() {
   const [verifyBusy, setVerifyBusy] = useState(false)
   const [setupSource, setSetupSource] = useState('auto')
   const [setupBusy, setSetupBusy] = useState(false)
+  const [updateInfo, setUpdateInfo] = useState(null)
+  const [updateBusy, setUpdateBusy] = useState(false)
   const [hotwords, setHotwords] = useState('')
   const [chunkMinutes, setChunkMinutes] = useState(15)
   const [diarize, setDiarize] = useState(true)
@@ -78,7 +80,7 @@ export default function SettingsPage() {
 
   const load = useCallback(async () => {
     try {
-      const [historyData, modelsData, trData, uiData, txData, importData, setupData] = await Promise.all([
+      const [historyData, modelsData, trData, uiData, txData, importData, setupData, updateData] = await Promise.all([
         getJSON(`${API}/history`),
         getJSON(`${API}/models`),
         getJSON(`${API}/translate/settings`),
@@ -86,8 +88,10 @@ export default function SettingsPage() {
         getJSON(`${API}/transcribe/settings`),
         getJSON(`${API}/import/settings`),
         getJSON(`${API}/setup`),
+        getJSON(`${API}/update`),
       ])
       setSetup(setupData)
+      setUpdateInfo(updateData)
       if (setupData?.job?.status === 'running') setSetupBusy(true)
       setImportConfig({ mode: importData.mode || 'copy', orphans: importData.orphans || 0, orphanBytes: importData.orphanBytes || 0 })
       setUiSettings({ showSidebarPanel: uiData?.showSidebarPanel !== false })
@@ -240,6 +244,17 @@ export default function SettingsPage() {
     { name: modelConfig.asrModel || 'qwen3-asr-1.7b-8bit', ready: transcribeInfo?.modelReady },
     { name: modelConfig.translateModel || 'hy-mt2-1.8b-4bit', ready: trConfig?.localReady },
   ]
+  const checkUpdates = async () => {
+    setUpdateBusy(true)
+    try {
+      setUpdateInfo(await getJSON(`${API}/update?force=1`))
+    } catch {
+      flash('检查更新失败，请稍后再试')
+    } finally {
+      setUpdateBusy(false)
+    }
+  }
+
   const asrOptions = allModels.filter((model) => /asr/i.test(model.name) && model.ready !== false)
   const translateOptions = allModels.filter((model) => !/asr|diarization/i.test(model.name) && model.ready !== false)
   const saveUi = async () => {
@@ -591,6 +606,38 @@ export default function SettingsPage() {
           <button className="settings-btn" onClick={saveModels} disabled={saving === 'models'}>
             {saving === 'models' ? '保存中…' : '保存模型选择'}
           </button>
+        </div>
+      </section>
+
+      <section className="settings-card">
+        <h2>版本与更新</h2>
+        <p className="settings-hint">插件从 npm 检查新版本；更新方式：DSH → 插件市场更新，或重新安装插件包。</p>
+        <div className="settings-fields">
+          <div className="field-row">
+            <span>当前版本</span>
+            <span className="settings-status">{updateInfo?.current ? `v${updateInfo.current}` : '—'}</span>
+          </div>
+          <div className="field-row">
+            <span>最新版本</span>
+            <span className="settings-status">{updateInfo?.latest ? `v${updateInfo.latest}` : updateInfo?.error ? '暂时无法检查' : '—'}</span>
+          </div>
+        </div>
+        <p className="settings-hint">
+          {updateInfo?.updateAvailable
+            ? '有新版本可用：在 DSH 插件市场更新，或让助手重新安装插件包。'
+            : updateInfo?.error
+              ? `离线或网络受限时不影响使用（${updateInfo.error}）。`
+              : updateInfo?.latest
+                ? '已是最新版本。'
+                : ''}
+        </p>
+        <div className="settings-actions">
+          <button className="settings-btn" onClick={checkUpdates} disabled={updateBusy}>
+            {updateBusy ? '检查中…' : '检查更新'}
+          </button>
+          {updateInfo?.checkedAt ? (
+            <span className="settings-status">上次检查：{new Date(updateInfo.checkedAt).toLocaleString()}</span>
+          ) : null}
         </div>
       </section>
       </div>
