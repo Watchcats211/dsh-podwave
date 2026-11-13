@@ -210,6 +210,7 @@ export default function App() {
   const [txIssues, setTxIssues] = useState([])
 
   const audioRef = useRef(null)
+  const seekRef = useRef(null)
   const currentRef = useRef(null)
   const durationRef = useRef(0)
   const settingsRef = useRef(settings)
@@ -217,6 +218,7 @@ export default function App() {
   const lastSaveRef = useRef(0)
   const toastedRef = useRef(0)
   const restoredRef = useRef(false)
+  const seekDraggingRef = useRef(false)
 
   useEffect(() => { settingsRef.current = settings }, [settings])
   useEffect(() => { currentRef.current = current }, [current])
@@ -701,11 +703,65 @@ export default function App() {
   const seekTo = useCallback((value) => {
     const audio = audioRef.current
     if (!audio || !currentRef.current) return
-    const target = Math.max(0, Math.min(value, audio.duration || value))
-    audio.currentTime = target
+    const raw = Number(value)
+    if (!Number.isFinite(raw)) return
+    const fallback = Number(durationRef.current) || 0
+    const total = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : fallback
+    const target = Math.max(0, total > 0 ? Math.min(raw, total) : raw)
+    try {
+      audio.currentTime = target
+    } catch {
+      // 元数据还没就绪时赋值可能抛错，等 loadedmetadata 后再恢复
+      pendingSeekRef.current = target
+      return
+    }
     setPosition(target)
-    saveProgress(currentRef.current.id, target, audio.duration || durationRef.current, true)
+    saveProgress(currentRef.current.id, target, total || fallback, true)
   }, [saveProgress])
+
+  const seekRatio = useCallback((event) => {
+    const el = seekRef.current
+    if (!el) return null
+    const rect = el.getBoundingClientRect()
+    if (!rect.width) return null
+    return Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width))
+  }, [])
+
+  const seekAtEvent = useCallback((event) => {
+    const ratio = seekRatio(event)
+    const total = Number.isFinite(durationRef.current) && durationRef.current > 0
+      ? durationRef.current
+      : (Number.isFinite(audioRef.current?.duration) ? audioRef.current.duration : 0)
+    if (ratio == null || !total) return
+    seekTo(ratio * total)
+  }, [seekRatio, seekTo])
+
+  const onSeekPointerDown = useCallback((event) => {
+    event.preventDefault()
+    seekDraggingRef.current = true
+    try { event.currentTarget.setPointerCapture(event.pointerId) } catch {}
+    seekAtEvent(event)
+  }, [seekAtEvent])
+
+  const onSeekPointerMove = useCallback((event) => {
+    if (!seekDraggingRef.current) return
+    seekAtEvent(event)
+  }, [seekAtEvent])
+
+  const onSeekPointerUp = useCallback((event) => {
+    seekDraggingRef.current = false
+    try { event.currentTarget.releasePointerCapture(event.pointerId) } catch {}
+  }, [])
+
+  const onSeekKeyDown = useCallback((event) => {
+    const audio = audioRef.current
+    if (!audio) return
+    const step = event.shiftKey ? 30 : 5
+    if (event.key === 'ArrowLeft') { event.preventDefault(); seekTo((audio.currentTime || 0) - step) }
+    if (event.key === 'ArrowRight') { event.preventDefault(); seekTo((audio.currentTime || 0) + step) }
+    if (event.key === 'Home') { event.preventDefault(); seekTo(0) }
+    if (event.key === 'End') { event.preventDefault(); seekTo(Number.isFinite(audio.duration) ? audio.duration : 0) }
+  }, [seekTo])
 
   const skip = useCallback((delta) => {
     const audio = audioRef.current
@@ -911,7 +967,7 @@ export default function App() {
         <div className="brand">
           <span className="brand-mark"><Icon name="wave" size={20} /></span>
           <span className="brand-name">Podwave</span>
-          <span className="brand-version">0.10.12</span>
+          <span className="brand-version">0.10</span>
           <button className="icon-btn brand-collapse" title="收起侧边栏" onClick={toggleNav}>
             <Icon name="chevron-left" size={16} />
           </button>
@@ -1237,20 +1293,26 @@ export default function App() {
       ) : null}
 
       <footer className="player">
-        <div className="seek-wrap">
+        <div
+          className="seek-wrap"
+          ref={seekRef}
+          role="slider"
+          tabIndex={0}
+          aria-label="播放进度"
+          aria-valuemin={0}
+          aria-valuemax={Math.round(duration || 0)}
+          aria-valuenow={Math.round(position || 0)}
+          aria-valuetext={`${fmtTime(position)} / ${fmtTime(duration)}`}
+          onPointerDown={onSeekPointerDown}
+          onPointerMove={onSeekPointerMove}
+          onPointerUp={onSeekPointerUp}
+          onPointerCancel={onSeekPointerUp}
+          onKeyDown={onSeekKeyDown}
+        >
           <div className="seek-track">
             <div className="seek-fill" style={{ width: `${duration ? Math.min(100, Math.max(0, (position / duration) * 100)) : 0}%` }} />
           </div>
-          <input
-            className="seek"
-            type="range"
-            min={0}
-            max={duration || 0}
-            step={0.05}
-            value={Math.min(position, duration || 0)}
-            onChange={(event) => seekTo(Number(event.target.value))}
-            aria-label="播放进度"
-          />
+          <div className="seek-thumb" style={{ left: `${duration ? Math.min(100, Math.max(0, (position / duration) * 100)) : 0}%` }} />
         </div>
         <div className="player-body">
           <div className="now">
