@@ -451,7 +451,7 @@ export default function SettingsPage() {
 
       <section className="settings-card">
         <h2>转写</h2>
-        <p className="settings-hint">热词用空格或逗号分隔，会作为 --context 传给模型，专有名词更准。长播客按分钟切块，失败只重跑那一块。</p>
+        <p className="settings-hint">热词用空格或逗号分隔，会作为 --context 传给 MLX 引擎，专有名词更准；Windows / Linux 的 SenseVoice 引擎暂不支持热词。长播客按分钟切块，失败只重跑那一块。</p>
         <div className="settings-fields">
           <label className="field-row">
             <span>热词</span>

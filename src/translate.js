@@ -70,6 +70,34 @@ function parseNumbered(text, count) {
   return result
 }
 
+async function fetchWithRetry(url, init, { attempts = 3, timeoutMs = 120000 } = {}) {
+  let lastError = null
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+      if (response.status === 429 || response.status >= 500) {
+        lastError = new Error(`翻译 API ${response.status}`)
+        if (attempt < attempts) {
+          await new Promise((resolve) => setTimeout(resolve, attempt * 1500))
+          continue
+        }
+        const detail = await response.text().catch(() => '')
+        throw new Error(`翻译 API ${response.status}：${detail.slice(0, 200)}`)
+      }
+      return response
+    } catch (error) {
+      lastError = error
+      const retryable = error?.name === 'TimeoutError' || /fetch failed|network|ECONN|ETIMEDOUT/i.test(String(error?.message || error))
+      if (retryable && attempt < attempts) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 1500))
+        continue
+      }
+      throw error
+    }
+  }
+  throw lastError
+}
+
 async function translateWithApi(items, target, config) {
   const language = target === 'zh' ? 'Simplified Chinese' : 'English'
   const system = `You are a professional subtitle translator. Translate each numbered line into ${language}. Preserve proper names, numbers and terminology. Output only numbered lines in the format "1. translation".`
@@ -78,7 +106,7 @@ async function translateWithApi(items, target, config) {
   for (let start = 0; start < items.length; start += batchSize) {
     const batch = items.slice(start, start + batchSize)
     const content = batch.map((line, index) => `${index + 1}. ${line.text}`).join('\n')
-    const response = await fetch(`${config.apiBase.replace(/\/+$/, '')}/chat/completions`, {
+    const response = await fetchWithRetry(`${config.apiBase.replace(/\/+$/, '')}/chat/completions`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

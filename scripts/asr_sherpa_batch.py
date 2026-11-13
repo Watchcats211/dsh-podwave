@@ -16,7 +16,10 @@ def main():
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--hotwords", default="")
     args = parser.parse_args()
+    if args.hotwords.strip():
+        print("note: SenseVoice 模型不支持热词，已忽略 --hotwords", file=sys.stderr)
     os.makedirs(args.out_dir, exist_ok=True)
     for wav in args.files:
         base = os.path.splitext(os.path.basename(wav))[0]

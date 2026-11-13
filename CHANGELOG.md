@@ -25,6 +25,15 @@
 
 # Changelog
 
+## v0.10.19
+- 安全：下载后校验哈希（GitHub Release 用官方 digest，HF 模型用 LFS sha256），校验失败直接丢弃。
+- 安全：解压前检查压缩包条目，拒绝 `..` 与绝对路径，防止 zip-slip。
+- 安装：macOS 一键安装可通过 Homebrew 自动装 ffmpeg；没有 Homebrew 时给出明确提示。
+- 稳定：翻译 API 增加 120 秒超时与 3 次重试（429 / 5xx / 网络错误）。
+- 兼容：engines.dsh 覆盖 0.2.2–0.2.4 的 rc 版本。
+- 说明：Windows / Linux 的 SenseVoice 引擎不支持热词，设置页已注明。
+- 发版恢复 npm 同步。
+
 ## 0.10.13
 
 - 播放进度条改成自绘的指针控件：22px 命中区、滑块常显，拖动/点击都按指针位置计算，不再依赖原生 range 的浏览器行为。
