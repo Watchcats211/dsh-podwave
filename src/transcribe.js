@@ -317,11 +317,12 @@ function planCuts(duration, chunkSeconds, silences) {
   return cuts.filter((value, index, list) => index === 0 || value > list[index - 1] + 5)
 }
 
-async function splitAudioAt(file, dir, cuts) {
+async function splitAudioAt(file, dir, cuts, shouldCancel) {
   await mkdir(dir, { recursive: true })
   const sherpa = currentAsrModel().engine === 'sherpa'
   const parts = []
   for (let index = 0; index < cuts.length - 1; index += 1) {
+    if (shouldCancel && shouldCancel()) throw new Error('用户取消了转写')
     const start = cuts[index]
     const end = cuts[index + 1]
     const ext = sherpa ? 'wav' : 'm4a'
@@ -364,7 +365,7 @@ async function splitAudio(file, dir, chunkSeconds) {
 }
 
 // 生成或复用切块计划；计划存 .work/<id>/meta.json，块结果在 .work/<id>/results/<index>.json。
-async function ensurePlan(episode, workDir) {
+async function ensurePlan(episode, workDir, shouldCancel) {
   const { chunkMinutes } = transcribeConfig()
   const chunkSeconds = Math.round(chunkMinutes * 60)
   const duration = Number(episode.duration) || (await probeDuration(episode.file)) || 0
@@ -384,6 +385,7 @@ async function ensurePlan(episode, workDir) {
     meta.parts.length > 0 &&
     meta.parts.every((part) => fs.existsSync(part.file))
   if (canReuse) return meta
+  if (shouldCancel && shouldCancel()) throw new Error('用户取消了转写')
 
   await rm(path.join(workDir, 'parts'), { recursive: true, force: true })
   await rm(path.join(workDir, 'results'), { recursive: true, force: true })
@@ -393,9 +395,10 @@ async function ensurePlan(episode, workDir) {
     parts = [{ index: 0, start: 0, end: round2(duration), file: episode.file, duration: round2(duration) }]
   } else {
     const silences = await detectSilenceMidpoints(episode.file).catch(() => [])
+    if (shouldCancel && shouldCancel()) throw new Error('用户取消了转写')
     const cuts = planCuts(duration, chunkSeconds, silences)
     parts = cuts.length > 2
-      ? await splitAudioAt(episode.file, path.join(workDir, 'parts'), cuts)
+      ? await splitAudioAt(episode.file, path.join(workDir, 'parts'), cuts, shouldCancel)
       : await splitAudio(episode.file, path.join(workDir, 'parts'), chunkSeconds)
   }
   const plan = { duration: round2(duration), chunkSeconds, chunked: !single, parts }
@@ -561,7 +564,7 @@ async function runJob(item) {
     })
     if (force) await rm(work, { recursive: true, force: true })
     await mkdir(work, { recursive: true })
-    plan = await ensurePlan(episode, work)
+    plan = await ensurePlan(episode, work, () => cancelRequested.has(key))
     const resultsDir = path.join(work, 'results')
     const cliDir = path.join(work, 'cli')
     await mkdir(resultsDir, { recursive: true })

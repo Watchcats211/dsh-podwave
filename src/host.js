@@ -29,6 +29,8 @@ import {
   getSubscriptions,
   getPodcastEpisodes,
   playEpisode,
+  getPublicPodcast,
+  playPublicEpisode,
   getXyzItems,
   isXyzId,
   proxyStream,
@@ -414,6 +416,7 @@ async function startXyzDownloadAndTranscribe(id) {
     const file = await ensureEpisodeAudio(item.eid, {
       onProgress: (progress) => upsertJob({ key, progress: progress ?? 0 }),
     })
+    if (getJob(key)?.status === 'cancelled') return
     upsertJob({ key, stage: 'transcribing', progress: 99 })
     await startTranscription({ id, file, title: item.title, duration: item.duration }, { force: true })
     upsertJob({ key, status: 'done', stage: 'done', progress: 100 })
@@ -451,7 +454,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.1',
+      version: '0.11.2',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -555,6 +558,15 @@ async function route(ctx, req, res) {
   const xyzPlayMatch = /^api\/xyz\/episodes\/([^/]+)\/play$/.exec(routePath)
   if (xyzPlayMatch && method === 'POST') {
     return json(res, 200, { item: await playEpisode(decodeURIComponent(xyzPlayMatch[1])) })
+  }
+  if (method === 'GET' && routePath === 'api/xyz/public/podcast') {
+    const url = new URL(req.url || '/', 'http://127.0.0.1')
+    const data = await getPublicPodcast(url.searchParams.get('url') || url.searchParams.get('pid') || '')
+    return json(res, 200, { podcast: data })
+  }
+  if (method === 'POST' && routePath === 'api/xyz/public/play') {
+    const body = await readJson(req)
+    return json(res, 200, { item: playPublicEpisode(body?.pid, body?.eid) })
   }
   if (method === 'POST' && routePath === 'api/scan') {
     scanLibrary().catch((error) => console.error('[dsh-podwave] scan failed:', error.message))
@@ -825,7 +837,12 @@ async function route(ctx, req, res) {
   const transcribeCancelMatch = /^api\/episodes\/([^/]+)\/transcribe\/cancel$/.exec(routePath)
   if (transcribeCancelMatch && method === 'POST') {
     const id = decodeURIComponent(transcribeCancelMatch[1])
-    if (!getEpisode(id)) return json(res, 404, { error: '单集不存在' })
+    if (!getEpisode(id) && !isXyzId(id)) return json(res, 404, { error: '单集不存在' })
+    const downloadKey = `download:${id}`
+    const downloadJob = getJob(downloadKey)
+    if (downloadJob && (downloadJob.status === 'queued' || downloadJob.status === 'running')) {
+      upsertJob({ key: downloadKey, status: 'cancelled', stage: 'cancelled', error: '用户取消了下载', finishedAt: Date.now() })
+    }
     return json(res, 200, cancelTranscription(id))
   }
 

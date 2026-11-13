@@ -235,6 +235,97 @@ function mapEpisode(ep) {
   }
 }
 
+const PUBLIC_CACHE = new Map() // pid -> { fetchedAt, data }
+const PUBLIC_TTL = 10 * 60 * 1000
+
+export function extractPid(input) {
+  const value = String(input || '').trim()
+  if (/^[0-9a-f]{24}$/i.test(value)) return value
+  const match = value.match(/xiaoyuzhoufm\.com\/podcast\/([0-9a-f]{24})/i)
+  return match ? match[1] : ''
+}
+
+function parseNextData(html) {
+  const match = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/)
+  if (!match) return null
+  try {
+    return JSON.parse(match[1])
+  } catch {
+    return null
+  }
+}
+
+function mapPublicEpisode(ep, pid, podcastTitle) {
+  return {
+    eid: ep.eid,
+    pid,
+    title: ep.title || '未命名单集',
+    duration: ep.duration || 0,
+    pubDate: ep.pubDate || '',
+    cover: ep.image?.picUrl || '',
+    podcastTitle,
+    audioUrl: ep.enclosure?.url || ep.media?.source?.url || '',
+    isPrivate: Boolean(ep.isPrivateMedia) || (ep.payType && ep.payType !== 'FREE'),
+    payType: ep.payType || '',
+    shownotes: ep.shownotes || '',
+  }
+}
+
+export async function getPublicPodcast(input) {
+  const pid = extractPid(input)
+  if (!pid) throw new Error('请输入播客链接（xiaoyuzhoufm.com/podcast/…）或 24 位 pid')
+  const cached = PUBLIC_CACHE.get(pid)
+  if (cached && Date.now() - cached.fetchedAt < PUBLIC_TTL) return cached.data
+  const res = await fetch(`https://www.xiaoyuzhoufm.com/podcast/${pid}`, {
+    headers: { 'user-agent': BROWSER_UA, 'accept-language': 'zh-CN,zh;q=0.9' },
+    signal: AbortSignal.timeout(20000),
+  })
+  if (!res.ok) throw new Error(`获取播客页面失败（${res.status}）`)
+  const nextData = parseNextData(await res.text())
+  const podcast = nextData?.props?.pageProps?.podcast
+  if (!podcast) throw new Error('页面里没有找到播客数据，可能链接不对')
+  const data = {
+    pid: podcast.pid,
+    title: podcast.title || '未命名播客',
+    author: podcast.author || '',
+    brief: podcast.brief || '',
+    cover: podcast.image?.picUrl || '',
+    episodeCount: podcast.episodeCount || 0,
+    episodes: (podcast.episodes || []).map((ep) => mapPublicEpisode(ep, podcast.pid, podcast.title)),
+  }
+  PUBLIC_CACHE.set(pid, { fetchedAt: Date.now(), data })
+  return data
+}
+
+export function playPublicEpisode(pid, eid) {
+  const cached = PUBLIC_CACHE.get(String(pid))
+  const episode = cached?.data?.episodes?.find((item) => item.eid === eid)
+  if (!episode) throw new Error('请先加载播客单集')
+  if (!episode.audioUrl) throw new Error('该单集没有公开音频（可能是付费内容）')
+  const id = xyzId(eid)
+  const item = {
+    id,
+    eid,
+    pid: String(pid),
+    source: 'xyz',
+    title: episode.title,
+    artist: cached.data.title,
+    album: cached.data.title,
+    duration: episode.duration,
+    mtime: episode.pubDate ? Date.parse(episode.pubDate) : Date.now(),
+    addedAt: Date.now(),
+    hasCover: Boolean(episode.cover),
+    location: '小宇宙',
+    remote: true,
+    public: true,
+    audioUrl: episode.audioUrl,
+    cover: episode.cover,
+  }
+  items.set(id, item)
+  saveItems()
+  return item
+}
+
 function xyzId(eid) {
   return `xyz${eid}`
 }
@@ -248,6 +339,8 @@ export function eidFromId(id) {
 }
 
 export async function resolveAudioUrl(eid) {
+  const item = items.get(xyzId(eid))
+  if (item?.audioUrl) return item.audioUrl
   const ep = await getEpisode(eid)
   if (!ep) throw new Error('单集不存在')
   if (ep.audioUrl) return ep.audioUrl
@@ -325,8 +418,11 @@ export async function proxyStream(id, req, res) {
 export async function proxyCover(id, req, res) {
   const item = items.get(id)
   if (!item) { res.writeHead(404); res.end(); return }
-  const ep = await getEpisode(item.eid)
-  const cover = ep?.cover
+  let cover = item.cover || ''
+  if (!cover) {
+    const ep = await getEpisode(item.eid)
+    cover = ep?.cover
+  }
   if (!cover) { res.writeHead(404); res.end(); return }
   const upstream = await fetch(cover, { signal: AbortSignal.timeout(30000) })
   if (!upstream.ok) { res.writeHead(upstream.status); res.end(); return }

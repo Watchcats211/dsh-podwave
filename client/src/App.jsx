@@ -712,10 +712,12 @@ export default function App() {
   }, [progress, saveProgress, patchSettings, togglePlay])
 
   const playXyz = useCallback(async (episode) => {
-    const res = await fetch(`${API}/xyz/episodes/${encodeURIComponent(episode.eid)}/play`, {
+    const endpoint = episode.public ? `${API}/xyz/public/play` : `${API}/xyz/episodes/${encodeURIComponent(episode.eid)}/play`
+    const payload = episode.public ? { pid: episode.pid, eid: episode.eid } : {}
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: '{}',
+      body: JSON.stringify(payload),
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.error || '打开单集失败')
@@ -1135,9 +1137,7 @@ export default function App() {
           </div>
         ) : null}
 
-        {view === 'xyz' ? (
-          <XyzPanel onPlay={playXyz} currentId={current?.id} />
-        ) : detailItem ? (
+        {detailItem ? (
           <>
             <div className="detail-top">
               <button className="back-link" onClick={() => setDetailId(null)}>← 全部单集</button>
@@ -1197,6 +1197,8 @@ export default function App() {
               </div>
             </div>
           </>
+        ) : view === 'xyz' ? (
+          <XyzPanel onPlay={playXyz} currentId={current?.id} />
         ) : (
           <>
         <div className="filter-chips">
