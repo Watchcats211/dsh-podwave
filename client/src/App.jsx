@@ -494,15 +494,18 @@ export default function App() {
 
   const jobAction = useCallback(async (job, action) => {
     try {
-      if (action === 'cancel') await sendJSON(`${API}/episodes/${job.episodeId}/transcribe/cancel`, 'POST', {})
-      else if (action === 'retry') await sendJSON(`${API}/episodes/${job.episodeId}/transcribe`, 'POST', { resume: true })
+      if (action === 'cancel') {
+        const res = await sendJSON(`${API}/episodes/${job.episodeId}/transcribe/cancel`, 'POST', {})
+        if (res?.status === 'none') flash('这个任务已经不在队列里了')
+        else flash(res?.status === 'cancelling' ? '正在取消转写…' : '已取消转写')
+      } else if (action === 'retry') await sendJSON(`${API}/episodes/${job.episodeId}/transcribe`, 'POST', { resume: true })
       else if (action === 'clear') await sendJSON(`${API}/jobs`, 'DELETE', { key: job.key })
-    } catch {
-      /* 刷新列表即可看到最新状态 */
+    } catch (err) {
+      flash(`操作失败：${err.message}`)
     }
     const data = await getJSON(`${API}/jobs`).catch(() => ({ items: [] }))
     setJobs(data.items || [])
-  }, [])
+  }, [flash])
 
   const submitBatch = useCallback(async (ids) => {
     const unique = [...new Set(ids)]
@@ -1149,7 +1152,7 @@ export default function App() {
         <div className="brand">
           <span className="brand-mark"><Icon name="wave" size={20} /></span>
           <span className="brand-name">Podwave</span>
-          <span className="brand-version">0.11.19</span>
+          <span className="brand-version">0.11.20</span>
           <button className="icon-btn brand-collapse" title="收起侧边栏" onClick={toggleNav}>
             <Icon name="chevron-left" size={16} />
           </button>
@@ -1530,7 +1533,7 @@ export default function App() {
                     ) : null}
                   </div>
                   <div className="job-actions">
-                    {job.status === 'queued' || job.status === 'running' ? <button className="mini-link" onClick={() => jobAction(job, 'cancel')}>取消</button> : null}
+                    {['queued', 'running', 'interrupted'].includes(job.status) ? <button className="mini-link" onClick={() => jobAction(job, 'cancel')}>取消</button> : null}
                     {job.status === 'error' || job.status === 'interrupted' || job.status === 'cancelled' ? <button className="mini-link" onClick={() => jobAction(job, 'retry')}>重试</button> : null}
                     {['done', 'error', 'cancelled', 'interrupted'].includes(job.status) ? <button className="mini-link" onClick={() => jobAction(job, 'clear')}>清除</button> : null}
                   </div>

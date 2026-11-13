@@ -12,7 +12,7 @@ import { loadModelConfig, modelDir } from './models.js'
 import { ffmpegPath, ffprobePath, venvPython } from './platform.js'
 import { getSection } from './config.js'
 import { assignSpeakers, diarizeInfo, runDiarization } from './diarize.js'
-import { flushJobs, getJob, jobKey, removeJob, upsertJob } from './jobs.js'
+import { flushJobs, getJob, getJobFresh, jobKey, removeJob, upsertJob } from './jobs.js'
 
 export const TRANSCRIPTS_DIR = path.join(DATA_DIR, 'transcripts')
 const WORK_DIR = path.join(TRANSCRIPTS_DIR, '.work')
@@ -29,6 +29,31 @@ const queue = [] // { episode, force, resume }
 let active = null // { key, episodeId }
 let activeChild = null
 const cancelRequested = new Set()
+
+// 宿主热重载后，新模块实例拿不到旧实例的 activeChild，取消就杀不掉那个进程。
+// 所以把当前工作进程的 pid 也写进 job，取消时先按内存找，找不到再按 pid 兜底。
+function stopChildByPid(pid) {
+  const target = Number(pid)
+  if (!Number.isInteger(target) || target <= 1) return false
+  try {
+    process.kill(target, 0)
+  } catch {
+    return false
+  }
+  try {
+    process.kill(target, 'SIGTERM')
+  } catch {
+    return false
+  }
+  setTimeout(() => {
+    try {
+      process.kill(target, 'SIGKILL')
+    } catch {
+      /* ignore */
+    }
+  }, 5000)
+  return true
+}
 
 function transcriptPath(id) {
   return path.join(TRANSCRIPTS_DIR, `${id}.json`)
@@ -696,6 +721,7 @@ async function runJob(item) {
         stdio: ['ignore', 'ignore', 'pipe'],
       })
       activeChild = child
+      upsertJob({ key, pid: child.pid || null })
       child.stderr.on('data', (chunk) => {
         stderrTail = (stderrTail + chunk.toString()).slice(-4000)
       })
@@ -714,6 +740,24 @@ async function runJob(item) {
         }
         lastIngestAt = Date.now()
       }
+      // 取消可能来自另一个模块实例（宿主热重载后旧实例还在跑这个任务），
+      // 它只能写磁盘；这里每轮读一次磁盘，看到取消意图就转成内存里的取消请求。
+      if (!cancelRequested.has(key)) {
+        const disk = getJobFresh(key)
+        if (disk && (disk.status === 'cancelled' || disk.stage === 'cancelling')) cancelRequested.add(key)
+      }
+      const cancelled = cancelRequested.has(key)
+      if (cancelled) {
+        // 已取消就别再写 progress 把磁盘上的 cancelling 覆盖回转写中。
+        if (child) {
+          try {
+            child.kill('SIGTERM')
+          } catch {
+            /* ignore */
+          }
+        }
+        return
+      }
       const current = plan.parts.find((part) => !hasResult(resultsDir, part.index)) || null
       const eta = current ? Math.min(current.duration * 0.96, Math.max(0, (Date.now() - lastIngestAt) / 1000) * SPEED) : 0
       upsertJob({
@@ -723,13 +767,6 @@ async function runJob(item) {
         progress: progressOf(plan, counts.seconds, eta),
         lineCount: lastLineCount,
       })
-      if (cancelRequested.has(key) && child) {
-        try {
-          child.kill('SIGTERM')
-        } catch {
-          /* ignore */
-        }
-      }
     }
 
     const ticker = setInterval(() => {
@@ -742,15 +779,30 @@ async function runJob(item) {
     await ingest()
     const counts = countResults(resultsDir, plan)
 
+    // 子进程刚退出时，ticker 可能还来不及把磁盘上的取消意图转成内存标记，
+    // 所以这里再读一次磁盘，避免「已经取消了」被当成进程异常退出。
+    if (!cancelRequested.has(key)) {
+      const disk = getJobFresh(key)
+      if (disk && (disk.status === 'cancelled' || disk.stage === 'cancelling')) cancelRequested.add(key)
+    }
     if (cancelRequested.has(key)) {
       cancelRequested.delete(key)
       if (backedUp) await copyFile(backup, target).catch(() => {})
       else if (partialWritten) await rm(target, { force: true }).catch(() => {})
-      upsertJob({ key, status: 'cancelled', stage: 'cancelled', finishedAt: Date.now(), error: '用户取消了转写' })
+      upsertJob({ key, status: 'cancelled', stage: 'cancelled', finishedAt: Date.now(), error: '用户取消了转写', pid: null })
       return
     }
     if (code !== 0) {
-      const detail = stderrTail.trim().split('\n').slice(-6).join('\n')
+      if (code === null) {
+        // 进程被信号杀掉（宿主重启、插件重载、手动 kill）。分块结果都留着，可以续跑。
+        throw new Error('转写进程被中断，已完成的分块保留，可以点重试继续')
+      }
+      const detail = stderrTail
+        .trim()
+        .split('\n')
+        .filter((line) => line && !/MallocStackLogging|malloc stack logging/.test(line))
+        .slice(-6)
+        .join('\n')
       throw new Error(`转写进程退出码 ${code}${detail ? `\n${detail}` : ''}`)
     }
     if (counts.count < plan.parts.length) throw new Error('部分音频块没有转写结果')
@@ -810,9 +862,13 @@ async function runJob(item) {
   } catch (error) {
     if (backedUp) await copyFile(backup, target).catch(() => {})
     else if (partialWritten) await rm(target, { force: true }).catch(() => {})
-    if (cancelRequested.has(key)) {
+    // 宿主热重载后，取消可能由新模块实例写进磁盘；本实例内存里的 cancelRequested 是空的。
+    // 所以收尾必须以磁盘上的真实状态为准，否则「已取消」会被覆写成「进程退出码 -15」。
+    const disk = getJobFresh(key)
+    const cancelledOnDisk = disk?.status === 'cancelled' || disk?.stage === 'cancelling'
+    if (cancelRequested.has(key) || cancelledOnDisk) {
       cancelRequested.delete(key)
-      upsertJob({ key, status: 'cancelled', stage: 'cancelled', finishedAt: Date.now(), error: '用户取消了转写' })
+      upsertJob({ key, status: 'cancelled', stage: 'cancelled', finishedAt: Date.now(), error: '用户取消了转写', pid: null })
     } else {
       upsertJob({
         key,
@@ -826,6 +882,7 @@ async function runJob(item) {
     cancelRequested.delete(key)
     active = null
     activeChild = null
+    upsertJob({ key, pid: null, orphan: false })
     flushJobs()
     pump()
   }
@@ -1053,7 +1110,7 @@ export function cancelTranscription(id) {
   const key = jobId(id)
   const job = getJob(key)
   if (!job) return { status: 'none' }
-  if (job.status === 'done' || job.status === 'error' || job.status === 'cancelled' || job.status === 'interrupted') {
+  if (job.status === 'done' || job.status === 'error' || job.status === 'cancelled') {
     return { status: job.status }
   }
   const index = queue.findIndex((item) => item.episode.id === id)
@@ -1065,24 +1122,20 @@ export function cancelTranscription(id) {
     return { status: 'cancelled' }
   }
   cancelRequested.add(key)
-  if (active && active.key === key && activeChild) {
-    const child = activeChild
-    try {
-      child.kill('SIGTERM')
-    } catch {
-      /* ignore */
-    }
-    setTimeout(() => {
-      try {
-        child.kill('SIGKILL')
-      } catch {
-        /* ignore */
-      }
-    }, 5000)
+  const inMemory = active && active.key === key && activeChild
+  const pid = inMemory ? activeChild.pid : job.pid
+  if (stopChildByPid(pid)) {
+    // 保留 cancelRequested：runJob 的 catch 看到它才会把任务标成「已取消」，
+    // 否则进程被信号杀掉会被当成普通失败写成 error。
     upsertJob({ key, stage: 'cancelling' })
     return { status: 'cancelling' }
   }
-  return { status: job.status }
+  // 进程已经不在了（宿主重启过、或者进程自己退了），任务状态同样要收尾，
+  // 不能把 running/interrupted 留在磁盘上让界面一直转。
+  cancelRequested.delete(key)
+  upsertJob({ key, status: 'cancelled', stage: 'cancelled', finishedAt: Date.now(), error: '用户取消了转写', pid: null })
+  flushJobs()
+  return { status: 'cancelled' }
 }
 
 export async function getTranscriptionState(id) {
@@ -1288,6 +1341,22 @@ export function stopAll() {
       activeChild.kill('SIGTERM')
     } catch {
       /* ignore */
+    }
+  }
+  // 插件被禁用或热重载时走到这里：把正在跑的任务在磁盘上收尾成「已停止」，
+  // 不然新实例读到的是一条永远 running 的僵尸任务，界面上点取消也没有对象。
+  if (active?.key && active?.episodeId) {
+    const disk = getJobFresh(active.key)
+    if (disk && (disk.status === 'queued' || disk.status === 'running')) {
+      upsertJob({
+        key: active.key,
+        status: 'cancelled',
+        stage: 'cancelled',
+        finishedAt: Date.now(),
+        error: '转写已停止（插件重新加载），已完成的分块保留，可以重试续跑',
+        pid: null,
+        orphan: false,
+      })
     }
   }
   cancelRequested.clear()
