@@ -8,7 +8,7 @@ import path from 'node:path'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { pipeline } from 'node:stream/promises'
-import { DATA_DIR } from './state.js'
+import { DATA_DIR, COVERS_DIR } from './state.js'
 import {
   addFolderState,
   getState,
@@ -142,7 +142,9 @@ function boot() {
       await initState()
       await migrateAllTranscripts().catch((error) => console.error('[dsh-podwave] transcript migration failed:', error.message))
       if (getState().folders.length) {
-        scanLibrary().catch((error) => console.error('[dsh-podwave] initial scan failed:', error.message))
+        scanLibrary()
+          .then(() => refreshWatchers())
+          .catch((error) => console.error('[dsh-podwave] initial scan failed:', error.message))
       }
     })().catch((error) => {
       booted = null
@@ -386,7 +388,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.10.19', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.10.20', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -508,8 +510,44 @@ async function route(ctx, req, res) {
     const id = decodeURIComponent(hideMatch[1])
     const hidden = new Set(getState().hidden || [])
     hidden.add(id)
-    updateState({ hidden: [...hidden] })
-    return json(res, 200, { id, hidden: true })
+    await deleteTranscript(id).catch(() => {})
+    for (const ext of ['jpg', 'png']) await rm(path.join(COVERS_DIR, `${id}.${ext}`), { force: true }).catch(() => {})
+    const favorites = new Set(getState().favorites || [])
+    favorites.delete(id)
+    const progress = { ...(getState().progress || {}) }
+    delete progress[id]
+    updateState({ hidden: [...hidden], favorites: [...favorites], progress })
+    return json(res, 200, { id, hidden: true, purged: true })
+  }
+
+  if (routePath === 'api/search' && method === 'GET') {
+    const query = String(new URL(req.url, 'http://127.0.0.1').searchParams.get('q') || '').trim()
+    if (query.length < 2) return json(res, 200, { items: [], total: 0 })
+    const needle = query.toLowerCase()
+    const titles = new Map(getEpisodes().map((episode) => [episode.id, episode]))
+    const items = []
+    const names = await readdir(TRANSCRIPTS_DIR).catch(() => [])
+    for (const name of names) {
+      if (!name.endsWith('.json') || items.length >= 80) continue
+      const id = name.slice(0, -5)
+      const transcript = await readTranscript(id).catch(() => null)
+      if (!transcript) continue
+      for (const line of transcript.lines || []) {
+        if (items.length >= 80) break
+        if (!String(line.text || '').toLowerCase().includes(needle)) continue
+        const episode = titles.get(id)
+        items.push({
+          episodeId: id,
+          lineId: line.id,
+          start: line.start,
+          end: line.end,
+          text: line.text,
+          title: episode?.title || transcript.title || '',
+          episodeTitle: episode?.title || transcript.title || '',
+        })
+      }
+    }
+    return json(res, 200, { items, total: items.length })
   }
 
   if (routePath === 'api/import/settings') {
@@ -542,7 +580,9 @@ async function route(ctx, req, res) {
       const body = await readJson(req)
       const folder = await addFolder(body?.path)
       addFolderState(folder)
-      scanLibrary().catch((error) => console.error('[dsh-podwave] scan failed:', error.message))
+      scanLibrary()
+        .then(() => refreshWatchers())
+        .catch((error) => console.error('[dsh-podwave] scan failed:', error.message))
       return json(res, 200, { folder, folders: getState().folders })
     }
     if (method === 'DELETE') {
@@ -556,7 +596,9 @@ async function route(ctx, req, res) {
       const removed = forgetEpisodesUnder(target)
       removeProgressFor((id) => removed.has(id))
       removeFolderState(target)
-      scanLibrary().catch((error) => console.error('[dsh-podwave] scan failed:', error.message))
+      scanLibrary()
+        .then(() => refreshWatchers())
+        .catch((error) => console.error('[dsh-podwave] scan failed:', error.message))
       return json(res, 200, { folders: next })
     }
     return json(res, 405, { error: '不支持的方法' })
