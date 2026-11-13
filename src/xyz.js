@@ -179,8 +179,32 @@ export async function loginWithSms(phone, code, areaCode = '+86') {
   return xyzStatus()
 }
 
+export function normalizeTokenInput(raw) {
+  const text = String(raw || '').trim()
+  if (!text) return ''
+  if (text.startsWith('{') || text.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(text)
+      const keys = ['x-jike-refresh-token', 'refreshToken', 'refresh_token', 'x-jike-access-token', 'accessToken', 'access_token', 'token']
+      for (const key of keys) {
+        const value = parsed?.[key] ?? parsed?.headers?.[key]
+        if (typeof value === 'string' && value.trim()) return value.trim()
+      }
+    } catch {
+      /* not JSON, fall through */
+    }
+  }
+  const headerMatch = /x-jike-(?:refresh|access)-token\s*[:=]\s*["']?([^\s,;"'}]+)/i.exec(text)
+  if (headerMatch) return headerMatch[1]
+  let value = text.replace(/^bearer\s+/i, '')
+  const lines = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  if (lines.length) value = lines[lines.length - 1]
+  return value.replace(/^["']|["']$/g, '').replace(/[;,]+$/, '')
+}
+
 export async function loginWithRefreshToken(refreshTokenValue, deviceId = '') {
-  const value = String(refreshTokenValue || '').trim()
+  const value = normalizeTokenInput(refreshTokenValue)
+  if (!value) throw new Error('请粘贴 refresh token 或 access token')
   config.refreshToken = value
   config.deviceId = String(deviceId || '').trim()
   config.accessToken = ''

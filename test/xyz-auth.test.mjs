@@ -115,6 +115,16 @@ test('login falls back to access token when refresh fails', async () => {
   assert.equal(saved.deviceId, 'device-2')
 })
 
+test('normalizeTokenInput accepts raw tokens, header lines, JSON and bearer prefixes', () => {
+  assert.equal(xyz.normalizeTokenInput('  abc123  '), 'abc123')
+  assert.equal(xyz.normalizeTokenInput('x-jike-refresh-token: abc123'), 'abc123')
+  assert.equal(xyz.normalizeTokenInput('x-jike-access-token=abc123'), 'abc123')
+  assert.equal(xyz.normalizeTokenInput('Bearer abc123'), 'abc123')
+  assert.equal(xyz.normalizeTokenInput(JSON.stringify({ 'x-jike-refresh-token': 'abc123' })), 'abc123')
+  assert.equal(xyz.normalizeTokenInput('{"headers":{"x-jike-access-token":"abc123"}}'), 'abc123')
+  assert.equal(xyz.normalizeTokenInput(''), '')
+})
+
 test('getSubscriptions caches results and refresh bypasses cache', async () => {
   mode = 'refresh'
   await xyz.loginWithRefreshToken('refresh-1', 'device-1')

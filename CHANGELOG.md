@@ -1,3 +1,9 @@
+## 0.11.8 — 2026-11-13
+
+- token 输入归一化：支持直接粘贴 `x-jike-refresh-token: …` 请求头、JSON（单层或 headers 嵌套）、`Bearer xxx`、纯 token；自动去引号与空白。粘贴整段请求头即可登录。
+- 新增 `docs/TOKEN.md`：Chrome/Edge/Safari 取 token 的分步教程、支持格式与安全说明。
+- 测试 37 个、34 通过、3 个 Windows 专用跳过。
+
 ## 0.11.7 — 2026-11-13
 
 - 新增宿主路由冒烟测试：用假 ctx 拉起真实 HTTP handler，覆盖小宇宙公开播客（页面解析、播放、媒体列表、跨站写拒绝）与 health/status；CI 三平台自动执行，Windows/macOS 路由层也有持续验证。
