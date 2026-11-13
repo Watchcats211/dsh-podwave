@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { ffmpegAsset, llamaAsset, platformKey } from '../src/catalog.js'
+import { uvAssetName } from '../src/setup.js'
 import { ffmpegPath, recommendEngine, venvBin, venvPython } from '../src/platform.js'
 
 test('platformKey 覆盖三大平台', () => {
@@ -40,4 +41,10 @@ test('低内存 Windows 也不会推荐无法加载的 1.25bit', () => {
 test('ffmpeg 能被探测到或明确为空', () => {
   const found = ffmpegPath()
   assert.ok(found === null || typeof found === 'string')
+})
+
+test('uv 安装包在 Windows 使用 zip', () => {
+  assert.ok(uvAssetName({ os: 'win32', arch: 'x64' }).endsWith('.zip'))
+  assert.ok(uvAssetName({ os: 'win32', arch: 'arm64' }).endsWith('.zip'))
+  assert.ok(uvAssetName({ os: 'darwin', arch: 'arm64' }).endsWith('.tar.gz'))
 })

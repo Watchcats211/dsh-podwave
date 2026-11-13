@@ -151,6 +151,27 @@ export default function SettingsPage() {
     setMessage(text)
     window.setTimeout(() => setMessage(''), 2400)
   }
+  const copyDiagnose = async () => {
+    try {
+      const data = await getJSON(`${API}/setup/diagnose`)
+      const text = JSON.stringify(data, null, 2)
+      try {
+        await navigator.clipboard.writeText(text)
+      } catch {
+        const area = document.createElement('textarea')
+        area.value = text
+        area.style.position = 'fixed'
+        area.style.opacity = '0'
+        document.body.appendChild(area)
+        area.select()
+        document.execCommand('copy')
+        area.remove()
+      }
+      flash('诊断信息已复制，可直接粘贴给我')
+    } catch (error) {
+      flash(error.message || '复制失败')
+    }
+  }
 
   const saveApi = async () => {
     setSaving('api')
@@ -287,6 +308,9 @@ export default function SettingsPage() {
             <p className="setup-platform">
               {setup.platform?.osLabel} · {setup.platform?.arch} · {setup.platform?.memoryGB}GB 内存 · {setup.platform?.gpu} · 推荐：{setup.engine?.label}
             </p>
+            <div className="settings-actions">
+              <button className="settings-btn ghost" onClick={copyDiagnose}>复制诊断信息</button>
+            </div>
             <ul className="setup-components">
               {(setup.components || []).map((item) => (
                 <li key={item.id} className={item.ready ? 'setup-component ready' : 'setup-component'}>

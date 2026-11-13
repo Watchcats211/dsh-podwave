@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.3 — 2026-11-13
+
+Windows 安装链路继续补齐，并增加可复制的诊断信息。
+
+- **uv 安装修复**：Windows 上 uv 发布包是 `.zip` 而不是 `.tar.gz`，之前按 tar.gz 下载会在 Windows 直接失败；现在按平台选择扩展名，并在「自动」线路下依次尝试国际与 gh-proxy 两条线。
+- **诊断接口**：新增 `GET /api/setup/diagnose`，返回平台、推荐引擎、ffmpeg/Python/llama 路径、组件扫描结果与最近一次安装摘要；设置页加「复制诊断信息」按钮，一键复制 JSON，方便远程排查 Windows 问题。
+- **Windows 验收清单**：新增 `docs/windows-test.md`，列出安装、转写、翻译、说话人、拖拽导入的逐项检查与预期结果。
+- 说明：Windows 真机仍未验证；本版修掉了会导致安装立即失败的 uv 扩展名问题。
+
 ## 0.10.2 — 2026-11-12
 
 - **修正模型推荐**：Hy-MT2 的 1.25bit 是腾讯自定义量化，主线 llama.cpp 无法加载；Windows / Linux 最低改为推荐 2bit（572 MB），24 GB 以上内存推荐 Q4_K_M（1.1 GB）。macOS 仍推荐 MLX 4bit。
