@@ -54,6 +54,8 @@ export default function SettingsPage() {
   const [importConfig, setImportConfig] = useState({ mode: 'copy', orphans: 0, orphanBytes: 0 })
   const [setup, setSetup] = useState(null)
   const [setupPlan, setSetupPlan] = useState(null)
+  const [verifyResult, setVerifyResult] = useState(null)
+  const [verifyBusy, setVerifyBusy] = useState(false)
   const [setupSource, setSetupSource] = useState('auto')
   const [setupBusy, setSetupBusy] = useState(false)
   const [hotwords, setHotwords] = useState('')
@@ -164,6 +166,19 @@ export default function SettingsPage() {
     setMessage(text)
     window.setTimeout(() => setMessage(''), 2400)
   }
+  const runVerify = async () => {
+    setVerifyBusy(true)
+    try {
+      const data = await getJSON(`${API}/setup/verify`)
+      setVerifyResult(data)
+      flash(data.ok ? '安装检查通过' : '有检查项未通过，见下方列表')
+    } catch (error) {
+      flash(error.message || '检查失败')
+    } finally {
+      setVerifyBusy(false)
+    }
+  }
+
   const copyDiagnose = async () => {
     try {
       const data = await getJSON(`${API}/setup/diagnose`)
@@ -323,7 +338,21 @@ export default function SettingsPage() {
             </p>
             <div className="settings-actions">
               <button className="settings-btn ghost" onClick={copyDiagnose}>复制诊断信息</button>
+              <button className="settings-btn ghost" disabled={verifyBusy} onClick={runVerify}>
+                {verifyBusy ? '检查中…' : '检查安装'}
+              </button>
             </div>
+            {verifyResult ? (
+              <ul className="setup-components">
+                {verifyResult.checks.map((check) => (
+                  <li key={check.id} className={check.ok ? 'setup-component ready' : 'setup-component'}>
+                    <span className="setup-dot" />
+                    <span className="setup-component-label">{check.label}</span>
+                    <span className="setup-component-detail">{check.detail}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             <ul className="setup-components">
               {(setup.components || []).map((item) => (
                 <li key={item.id} className={item.ready ? 'setup-component ready' : 'setup-component'}>

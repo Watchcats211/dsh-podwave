@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { DATA_DIR } from './state.js'
 import { getSection, updateSection } from './config.js'
 import { getJob, upsertJob } from './jobs.js'
@@ -181,6 +181,87 @@ export function modelState(artifact) {
   const safetensors = path.join(dir, 'model.safetensors')
   const onnx = path.join(dir, 'model.int8.onnx')
   return { ready: fs.existsSync(safetensors) || fs.existsSync(onnx), dir }
+}
+
+function runCapture(cmd, args, timeout = 15000) {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { timeout, windowsHide: true }, (error, stdout, stderr) => {
+      const output = String(stdout || '').trim() || String(stderr || '').trim()
+      resolve({
+        ok: !error,
+        detail: output ? output.split('\n')[0].slice(0, 180) : String(error?.message || '').slice(0, 180),
+      })
+    })
+  })
+}
+
+export async function verify() {
+  const platform = detectPlatform()
+  const engine = recommendEngine(platform)
+  const artifacts = artifactFor(platform, engine)
+  const checks = []
+
+  const ffmpeg = ffmpegPath()
+  checks.push({ id: 'ffmpeg', label: 'ffmpeg 已找到', ok: Boolean(ffmpeg), detail: ffmpeg || '未找到' })
+  if (ffmpeg) {
+    const result = await runCapture(ffmpeg, ['-version'])
+    checks.push({ id: 'ffmpeg-run', label: 'ffmpeg 可执行', ok: result.ok, detail: result.detail })
+  }
+  const ffprobe = ffprobePath()
+  checks.push({ id: 'ffprobe', label: 'ffprobe 已找到', ok: Boolean(ffprobe), detail: ffprobe || '未找到' })
+  if (ffprobe) {
+    const result = await runCapture(ffprobe, ['-version'])
+    checks.push({ id: 'ffprobe-run', label: 'ffprobe 可执行', ok: result.ok, detail: result.detail })
+  }
+
+  const python = venvPython()
+  if (fs.existsSync(python)) {
+    checks.push({ id: 'python', label: 'Python 环境存在', ok: true, detail: python })
+    const result = await runCapture(python, ['-c', 'import sherpa_onnx, numpy; print("sherpa-onnx", getattr(sherpa_onnx, "__version__", "?"))'])
+    checks.push({ id: 'python-sherpa', label: 'sherpa-onnx 可导入', ok: result.ok, detail: result.detail })
+    if (platform.mlxCapable) {
+      const mlx = await runCapture(python, ['-c', 'import mlx_qwen3_asr, mlx_lm; print("mlx ok")'])
+      checks.push({ id: 'python-mlx', label: 'MLX 组件可导入', ok: mlx.ok, detail: mlx.detail })
+    }
+  } else {
+    checks.push({ id: 'python', label: 'Python 环境存在', ok: false, detail: '虚拟环境不存在，请先安装' })
+  }
+
+  if (engine.id !== 'mlx') {
+    const cli = llamaBinary(platform)
+    const server = cli ? path.join(path.dirname(cli), isWindows ? 'llama-server.exe' : 'llama-server') : null
+    checks.push({ id: 'llama', label: 'llama.cpp 已找到', ok: Boolean(server && fs.existsSync(server)), detail: server || '未找到' })
+    if (server && fs.existsSync(server)) {
+      const result = await runCapture(server, ['--version'])
+      checks.push({ id: 'llama-run', label: 'llama-server 可执行', ok: result.ok, detail: result.detail })
+    }
+  }
+
+  for (const artifact of [artifacts.asr, artifacts.translate, artifacts.diarization]) {
+    const state = modelState(artifact)
+    checks.push({
+      id: `model-${artifact.id}`,
+      label: `模型就绪：${artifact.label}`,
+      ok: state.ready,
+      detail: state.ready ? state.dir : artifact.note || '未下载',
+    })
+  }
+
+  const config = getSection('models')
+  checks.push({
+    id: 'config',
+    label: '模型配置已写入',
+    ok: Boolean(config.asrModel && config.translateModel),
+    detail: `${config.asrModel || '未设置'} / ${config.translateModel || '未设置'}`,
+  })
+
+  return {
+    ok: checks.every((check) => check.ok),
+    checkedAt: new Date().toISOString(),
+    platform,
+    engine,
+    checks,
+  }
 }
 
 export function plan({ source = 'auto', platform = detectPlatform() } = {}) {

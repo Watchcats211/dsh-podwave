@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.6 — 2026-11-13
+
+安装后可自检，CI 覆盖三大平台。
+
+- **检查安装**：设置页新增按钮，逐项验证 ffmpeg/ffprobe 可执行、Python 与 sherpa-onnx 可导入、MLX 组件（Apple Silicon）、llama-server 可执行、三个模型目录就绪、模型配置已写入；任何一项失败会标红并给出路径或原因。
+- **接口**：`GET /api/setup/verify` 返回平台、引擎与 `checks[]`，便于 Windows 用户装完后直接确认。
+- **CI 矩阵**：测试任务在 ubuntu / windows / macos 三个 runner 上跑，Windows 路径与资产逻辑进入持续验证；构建任务仍在 ubuntu。
+- 说明：Windows 真机功能验证仍需人工按 `docs/windows-test.md` 走一遍。
+
 ## 0.10.5 — 2026-11-13
 
 国内线路修正：hf-mirror 的 API 实际会 302 到 huggingface.co，国内直连取不到文件列表。
