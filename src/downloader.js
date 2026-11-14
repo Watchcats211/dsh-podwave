@@ -282,7 +282,8 @@ export async function downloadArtifact(artifact, { sourceId = 'auto', onProgress
   } else {
     source = await pickSource(sources, (item) => sourceProbeUrl(item, artifact))
   }
-  const destDir = path.join(await dataDir(), 'models', artifact.dir)
+  const { modelsDir } = await import('./models.js')
+  const destDir = path.join(modelsDir(), artifact.dir)
   const result = { source: source.id, sourceLabel: source.label, files: [], bytes: 0 }
 
   if (artifact.source.type === 'github-assets') {

@@ -3,31 +3,40 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { DATA_DIR } from './state.js'
 import { ffmpegPath, venvPython } from './platform.js'
+import { modelsDir } from './models.js'
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'diarize.py')
 const PYTHON = venvPython()
-export const DIARIZATION_DIR = path.join(DATA_DIR, 'models', 'diarization')
-export const SEG_MODEL = path.join(DIARIZATION_DIR, 'sherpa-onnx-pyannote-segmentation-3-0', 'model.onnx')
-export const EMB_MODEL = path.join(DIARIZATION_DIR, '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx')
+
+// 模型目录可配置，所以这些路径必须每次现算，不能在模块顶层固化成常量。
+export function diarizationPaths() {
+  const dir = path.join(modelsDir(), 'diarization')
+  return {
+    dir,
+    segModel: path.join(dir, 'sherpa-onnx-pyannote-segmentation-3-0', 'model.onnx'),
+    embModel: path.join(dir, '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx'),
+  }
+}
 
 export function diarizeInfo() {
+  const { segModel, embModel } = diarizationPaths()
   return {
     installed: fs.existsSync(PYTHON) && fs.existsSync(SCRIPT),
-    modelsReady: fs.existsSync(SEG_MODEL) && fs.existsSync(EMB_MODEL),
-    segModel: SEG_MODEL,
-    embModel: EMB_MODEL,
+    modelsReady: fs.existsSync(segModel) && fs.existsSync(embModel),
+    segModel,
+    embModel,
   }
 }
 
 export function runDiarization(audioPath, { threshold = 0.6, numSpeakers = -1 } = {}) {
   return new Promise((resolve, reject) => {
+    const { segModel, embModel } = diarizationPaths()
     const args = [
       SCRIPT,
       '--audio', audioPath,
-      '--seg-model', SEG_MODEL,
-      '--emb-model', EMB_MODEL,
+      '--seg-model', segModel,
+      '--emb-model', embModel,
       '--threshold', String(threshold),
     ]
     if (Number(numSpeakers) > 0) args.push('--num-speakers', String(numSpeakers))
