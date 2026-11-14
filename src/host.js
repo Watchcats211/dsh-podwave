@@ -78,8 +78,10 @@ import { scan as scanSetup, plan as planSetup, install as installSetup, cancelSe
 import { getSection, updateSection } from './config.js'
 import { diarizeInfo } from './diarize.js'
 import { getTranslationState, publicConfig, saveConfig, startTranslation } from './translate.js'
-import { listModels, loadModelConfig, saveModelConfig } from './models.js'
+import { listModels, loadModelConfig, modelsDir, modelsMoveState, modelsSummary, removeModel, saveModelConfig, setModelsDir } from './models.js'
 import { findEpisode, getProviderById, listAllEpisodes } from './providers.js'
+// 设置页每次打开都会拉 /api/update；漏了这个 import 会让整页 500（v0.11.10 起就漏了）。
+import { checkUpdate } from './update.js'
 
 export const name = 'dsh-podwave'
 
@@ -465,7 +467,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.21',
+      version: '0.11.22',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -494,7 +496,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.21', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.22', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -1008,7 +1010,8 @@ async function route(ctx, req, res) {
   }
 
   if (routePath === 'api/models') {
-    if (method === 'GET') return json(res, 200, { config: loadModelConfig(), models: listModels(), transcribe: runtimeInfo(), translate: publicConfig() })
+    const snapshot = () => ({ config: loadModelConfig(), models: listModels(), storage: modelsSummary(), transcribe: runtimeInfo(), translate: publicConfig() })
+    if (method === 'GET') return json(res, 200, snapshot())
     if (method === 'PUT') {
       const body = await readJson(req)
       const available = new Set(listModels().filter((model) => model.ready).map((model) => model.name))
@@ -1016,9 +1019,49 @@ async function route(ctx, req, res) {
       if (typeof body?.asrModel === 'string' && available.has(body.asrModel)) patch.asrModel = body.asrModel
       if (typeof body?.translateModel === 'string' && available.has(body.translateModel)) patch.translateModel = body.translateModel
       if (!Object.keys(patch).length) return json(res, 400, { error: '没有可用的模型' })
-      const config = saveModelConfig(patch)
-      return json(res, 200, { config, models: listModels(), transcribe: runtimeInfo(), translate: publicConfig() })
+      saveModelConfig(patch)
+      return json(res, 200, snapshot())
     }
+  }
+
+  // 模型目录管理：看当前存放位置、换位置（可带迁移）、删掉不用的模型、在文件管理器里打开。
+  if (routePath === 'api/models/dir') {
+    if (method === 'GET') return json(res, 200, { storage: modelsSummary(), move: modelsMoveState() })
+    if (method === 'POST') {
+      const body = await readJson(req)
+      if (typeof body?.dir !== 'string') return json(res, 400, { error: '缺少目标目录' })
+      try {
+        const result = setModelsDir(body.dir, { move: body?.move !== false })
+        return json(res, 200, { ...result, storage: modelsSummary(), models: listModels() })
+      } catch (error) {
+        return json(res, 400, { error: String(error.message || error) })
+      }
+    }
+  }
+  if (method === 'POST' && routePath === 'api/models/remove') {
+    const body = await readJson(req)
+    try {
+      const result = removeModel(body?.name)
+      return json(res, 200, { ...result, models: listModels() })
+    } catch (error) {
+      return json(res, 400, { error: String(error.message || error) })
+    }
+  }
+  if (method === 'POST' && routePath === 'api/models/open') {
+    const dir = modelsDir()
+    try {
+      fs.mkdirSync(dir, { recursive: true })
+    } catch {
+      /* 打不开目录时下面会报错 */
+    }
+    const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open'
+    try {
+      const { spawn } = await import('node:child_process')
+      spawn(command, [dir], { detached: true, stdio: 'ignore' }).unref()
+    } catch {
+      return json(res, 500, { error: '无法打开文件管理器' })
+    }
+    return json(res, 200, { ok: true, dir })
   }
 
   if (routePath === 'api/jobs') {

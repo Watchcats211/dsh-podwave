@@ -39,8 +39,9 @@ export const CONFIG_DEFAULTS = {
     apiKey: '',
   },
   // 默认模型绝不能写死 MLX：那套模型 platform 是 darwin-arm64，Windows 装不了。
+  // dir 为空表示用默认目录（<数据目录>/models）；用户改过则存绝对路径。
   get models() {
-    return { ...cachedDefaultModels() }
+    return { dir: '', ...cachedDefaultModels() }
   },
   transcribe: { hotwords: [], chunkMinutes: 1, diarize: true },
   import: { mode: 'copy' },

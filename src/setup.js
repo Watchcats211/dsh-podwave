@@ -8,6 +8,7 @@ import { DATA_DIR } from './state.js'
 import { getSection, updateSection } from './config.js'
 import { getJob, upsertJob } from './jobs.js'
 import { CATALOG, FFMPEG_BINARY, LLAMA_BINARY, SOURCE_LABELS, artifactFor, expectedModels, ffmpegAsset, llamaAsset, sourcesFor } from './catalog.js'
+import { modelsDir } from './models.js'
 import { downloadArtifact, extractArchive } from './downloader.js'
 import { detectPlatform, findExecutable, ffmpegPath, ffprobePath, killTree, recommendEngine, venvDir, venvPython, isWindows, isMac } from './platform.js'
 
@@ -170,7 +171,7 @@ export function llamaBinary(platform) {
 }
 
 export function modelState(artifact) {
-  const dir = path.join(DATA_DIR, 'models', artifact.dir)
+  const dir = path.join(modelsDir(), artifact.dir)
   if (artifact.kind === 'diarization') {
     const seg = path.join(dir, 'sherpa-onnx-pyannote-segmentation-3-0', 'model.onnx')
     const emb = path.join(dir, '3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx')
@@ -506,7 +507,7 @@ export async function install({ source = 'auto' } = {}) {
         { sourceId: source, signal: current.signal, onProgress: () => {} },
       )
       const { extractArchive } = await import('./downloader.js')
-      const archive = path.join(DATA_DIR, 'models', '..', 'runtime', 'llama-download', asset.name)
+      const archive = path.join(RUNTIME_DIR, 'llama-download', asset.name)
       const target = path.join(RUNTIME_DIR, 'llama')
       await fsp.mkdir(target, { recursive: true })
       if (fs.existsSync(archive)) await extractArchive(archive, target)
@@ -548,6 +549,8 @@ export async function install({ source = 'auto' } = {}) {
     const warning = optionalFailures.length
       ? `可选组件失败，已跳过：${optionalFailures.map((item) => `${item.label}（${item.error}）`).join('；')}。核心转写与翻译已就绪，可以正常使用。`
       : null
+    // 把落盘位置写进任务，安装完成后用户能直接看到「装在哪」。
+    const dir = modelsDir()
     const job = updateJob({
       status: 'done',
       stage: warning ? '完成（部分可选组件已跳过）' : '完成',
@@ -555,6 +558,7 @@ export async function install({ source = 'auto' } = {}) {
       bytes: doneBytes,
       expected: totalBytes || doneBytes,
       summary,
+      modelsDir: dir,
       error: null,
       warning,
       optionalFailures,

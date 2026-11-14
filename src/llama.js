@@ -7,6 +7,7 @@ import { DATA_DIR } from './state.js'
 import { getSection } from './config.js'
 import { llamaBinary } from './setup.js'
 import { CATALOG } from './catalog.js'
+import { modelsDir } from './models.js'
 import { detectPlatform, isWindows, killTree } from './platform.js'
 
 const TARGET_NAMES = { zh: 'Simplified Chinese', en: 'English' }
@@ -26,7 +27,7 @@ export function llamaServerPath() {
 }
 
 function modelFileFor(name) {
-  const dir = path.join(DATA_DIR, 'models', name)
+  const dir = path.join(modelsDir(), name)
   if (!fs.existsSync(dir)) return null
   const file = fs.readdirSync(dir).find((entry) => entry.endsWith('.gguf'))
   return file ? path.join(dir, file) : null

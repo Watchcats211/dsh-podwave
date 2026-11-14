@@ -1005,6 +1005,17 @@ select:focus-visible {
 .podwave-settings .history-title { font-size: 13.5px; color: inherit; }
 .podwave-settings .history-meta { font-size: 12.5px; color: color-mix(in srgb, currentColor 55%, transparent); }
 .podwave-settings .history-date { font-size: 12.5px; white-space: nowrap; color: color-mix(in srgb, currentColor 45%, transparent); }
+/* 模型存放位置：路径要能整条读出来（可能很长），体积单独一列 */
+.podwave-settings .model-path { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; padding: 10px 12px; margin: 0 0 12px; border-radius: 9px; background: color-mix(in srgb, currentColor 6%, transparent); }
+.podwave-settings .model-path-text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.5; word-break: break-all; }
+.podwave-settings .model-path-size { font-size: 12.5px; white-space: nowrap; color: color-mix(in srgb, currentColor 55%, transparent); }
+.podwave-settings .model-list { list-style: none; margin: 12px 0 0; padding: 0; }
+.podwave-settings .model-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 9px 0; border-top: 1px solid color-mix(in srgb, currentColor 8%, transparent); }
+.podwave-settings .model-row:first-child { border-top: 0; }
+.podwave-settings .model-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.podwave-settings .model-name { font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.podwave-settings .model-meta { font-size: 12.5px; color: color-mix(in srgb, currentColor 55%, transparent); }
+.podwave-settings .model-remove { flex: 0 0 auto; }
 .podwave-settings .settings-fields { display: flex; flex-direction: column; gap: 10px; }
 .podwave-settings .field-row { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .podwave-settings .field-row > span:first-child { flex: 0 0 118px; font-size: 13px; color: color-mix(in srgb, currentColor 75%, transparent); }

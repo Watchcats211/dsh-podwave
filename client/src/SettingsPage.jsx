@@ -49,6 +49,9 @@ export default function SettingsPage() {
   const theme = useTheme()
   const [history, setHistory] = useState([])
   const [models, setModels] = useState([])
+  const [storage, setStorage] = useState(null)
+  const [dirDraft, setDirDraft] = useState('')
+  const [moving, setMoving] = useState(false)
   const [modelConfig, setModelConfig] = useState({ asrModel: '', translateModel: '' })
   const [transcribeInfo, setTranscribeInfo] = useState(null)
   const [trConfig, setTrConfig] = useState(null)
@@ -100,6 +103,8 @@ export default function SettingsPage() {
       setDiarize(txData.diarize !== false)
       setHistory(historyData.items || [])
       setModels(modelsData.models || [])
+      setStorage(modelsData.storage || null)
+      setDirDraft(modelsData.storage?.dir || '')
       setModelConfig(modelsData.config || { asrModel: '', translateModel: '' })
       setTranscribeInfo(modelsData.transcribe || null)
       setAsrModel(modelsData.config?.asrModel || '')
@@ -233,6 +238,52 @@ export default function SettingsPage() {
       setModels(data.models || [])
       setTranscribeInfo(data.transcribe || null)
       flash('模型选择已保存')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving('')
+    }
+  }
+
+  const openModelsDir = async () => {
+    try {
+      await sendJSON(`${API}/models/open`, 'POST', {})
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  // 换目录：同卷 rename 秒完成，跨卷会真复制，所以按钮期间显示「迁移中」。
+  const changeModelsDir = async (dir, move = true) => {
+    setMoving(true)
+    setError('')
+    try {
+      const data = await sendJSON(`${API}/models/dir`, 'POST', { dir, move })
+      setStorage(data.storage || null)
+      setModels(data.models || [])
+      setDirDraft(data.storage?.dir || '')
+      const movedCount = (data.moved || []).length
+      const skippedCount = (data.skipped || []).length
+      if (movedCount || skippedCount) {
+        flash(`已迁移 ${movedCount} 个模型${skippedCount ? `，${skippedCount} 个因目标已存在跳过` : ''}`)
+      } else {
+        flash('模型目录已更新')
+      }
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setMoving(false)
+    }
+  }
+
+  const deleteModel = async (name) => {
+    setSaving(`model:${name}`)
+    setError('')
+    try {
+      const data = await sendJSON(`${API}/models/remove`, 'POST', { name })
+      setStorage(data || null)
+      setModels(data.models || [])
+      flash(`已删除 ${name}`)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -425,6 +476,9 @@ export default function SettingsPage() {
                 {setup.job.status === 'done' && (!setup.job.summary || !setup.job.summary.length) ? (
                   <p className="settings-empty">所有组件已就绪，没有需要下载的内容。</p>
                 ) : null}
+                {setup.job.status === 'done' && setup.job.modelsDir ? (
+                  <p className="settings-hint setup-warning">模型已装在 {setup.job.modelsDir}</p>
+                ) : null}
                 {Array.isArray(setup.job.summary) && setup.job.summary.length ? (
                   <ul className="setup-summary">
                     {setup.job.summary.map((item) => (
@@ -581,7 +635,63 @@ export default function SettingsPage() {
 
       <section className="settings-card">
         <h2>模型</h2>
-        <p className="settings-hint">模型放在 ~/.podwave/models/ 下，每个目录需要有 model.safetensors。</p>
+        <p className="settings-hint">
+          模型默认放在 {storage?.defaultDir || '~/.podwave/models'}，可以改成任意目录（比如项目文件夹或外置硬盘），改完会把已有模型一起搬过去。
+        </p>
+        {storage ? (
+          <>
+            <div className="model-path">
+              <code className="model-path-text" title={storage.dir}>{storage.dir}</code>
+              <span className="model-path-size">{storage.custom ? '自定义位置' : '默认位置'} · 共 {fmtBytes(storage.totalBytes)}</span>
+            </div>
+            <div className="settings-fields">
+              <label className="field-row">
+                <span>模型存放位置</span>
+                <input
+                  value={dirDraft}
+                  onChange={(event) => setDirDraft(event.target.value)}
+                  placeholder="~/Models/podwave"
+                  spellCheck={false}
+                />
+              </label>
+            </div>
+            <div className="settings-actions">
+              <button className="settings-btn" disabled={moving || dirDraft.trim() === storage.dir} onClick={() => changeModelsDir(dirDraft, true)}>
+                {moving ? '迁移中…' : '迁移到新位置'}
+              </button>
+              <button className="settings-btn ghost" onClick={openModelsDir}>在文件管理器中打开</button>
+              {storage.custom ? (
+                <button className="settings-btn ghost" disabled={moving} onClick={() => changeModelsDir('', true)}>
+                  恢复默认位置
+                </button>
+              ) : null}
+            </div>
+            {models.length ? (
+              <ul className="model-list">
+                {models.map((model) => (
+                  <li key={model.name} className="model-row">
+                    <div className="model-main">
+                      <span className="model-name">{model.name}</span>
+                      <span className="model-meta">
+                        {model.kindLabel} · {fmtBytes(model.bytes)}
+                        {model.inUse ? ' · 使用中' : ''}
+                        {model.ready ? '' : ' · 未就绪'}
+                      </span>
+                    </div>
+                    <button
+                      className="settings-btn ghost model-remove"
+                      disabled={model.inUse || saving === `model:${model.name}`}
+                      title={model.inUse ? '正在使用的模型不能删除' : `删除 ${model.name}`}
+                      onClick={() => deleteModel(model.name)}
+                    >
+                      {saving === `model:${model.name}` ? '删除中…' : '删除'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </>
+        ) : null}
         <div className="settings-fields">
           <label className="field-row">
             <span>转写模型（ASR）</span>
@@ -632,7 +742,9 @@ export default function SettingsPage() {
             : updateInfo?.error
               ? `离线或网络受限时不影响使用（${updateInfo.error}）。`
               : updateInfo?.latest
-                ? '已是最新版本。'
+                ? updateInfo?.current && updateInfo?.latest && updateInfo.current !== updateInfo.latest && updateInfo.updateAvailable === false
+                  ? '本地版本比市场上的更新（还没发布）。'
+                  : '已是最新版本。'
                 : ''}
         </p>
         <div className="settings-actions">
