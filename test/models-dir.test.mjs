@@ -59,7 +59,14 @@ test('migrating moves existing model directories to the new root', () => {
   assert.ok(result.totalBytes >= 2560)
 })
 
+// 默认模型名跟平台走（macOS 是 MLX，Windows/Linux 是 SenseVoice + GGUF）。
+// 这里显式钉住配置，否则在 CI 的 Linux/Windows 上「使用中」判定会全错。
+function pinModelConfig() {
+  models.saveModelConfig({ asrModel: 'qwen3-asr-1.7b-8bit', translateModel: 'hy-mt2-1.8b-4bit' })
+}
+
 test('listing reports size, purpose and in-use flag', () => {
+  pinModelConfig()
   const items = models.listModels()
   const asr = items.find((item) => item.name === 'qwen3-asr-1.7b-8bit')
   assert.ok(asr)
@@ -79,6 +86,7 @@ test('rejects relative paths and nested directories', () => {
 })
 
 test('refuses to delete the model in use but deletes unused ones', () => {
+  pinModelConfig()
   const root = models.modelsDir()
   makeModel(root, 'hy-mt2-1.8b-q4km', { 'model.gguf': 256 })
   assert.throws(() => models.removeModel('qwen3-asr-1.7b-8bit'), /正在使用中/)
