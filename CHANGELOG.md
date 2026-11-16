@@ -1,3 +1,12 @@
+## 0.11.27 — 2026-11-16
+
+重新发布一版，让 `latest` 落在一个明确未被弃用的版本上；顺带给 npm 包页面补上 Issues 入口。
+
+- **为什么要发这一版**：0.11.26 在 npm 上被误标成弃用 —— 本意是只弃用带个人信息的旧版本，结果网页上的「Deprecate package」把全部 32 个版本一并打上 `Package no longer supported.`，连 `latest` 也在内，包页因此挂着一条红色横幅。
+- **旧版本为什么删不掉**：`npm unpublish` 在两条政策之间被堵死 —— bypass-2FA 的 granular token 执行该操作会报 `Granular access tokens that bypass two-factor authentication may not perform this action`，而普通 web token 又要求 6 位 OTP，账号当前只注册了安全密钥、产生不了 OTP。已在 https://www.npmjs.com/support 提交工单，请求官方删除 30 个含个人信息的版本并清掉 0.11.26 的弃用标记。
+- 这一版**没有功能改动**，代码与 0.11.26 一致，只有版本号变化和下面这一条字段补充。
+- `package.json` 补 `bugs` 字段，npm 包页侧栏会显示 Issues 链接，指向本仓库的 issue 列表。
+
 ## 0.11.26 — 2026-11-16
 
 发布物清理个人隐私，并修掉 Windows CI 里 `windows-runtime` 那个跑红的 job。
