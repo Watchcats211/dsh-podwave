@@ -57,10 +57,17 @@ if (process.platform === 'win32') {
 }
 
 // 3. verify() 比对的是「本平台应有的模型」，不是只判非空
+// 注意：转写/翻译默认走云端 API，此时模型配置只是「可选项」，填错不算失败。
+// 这一段要验的是本地模型模式下的平台判定，所以显式把两边都切成本地。
+const localProviders = { transcribe: { provider: 'local' }, translate: { provider: 'local' } }
 const configFile = path.join(process.env.PODWAVE_DATA_DIR, 'config.json')
 fs.writeFileSync(
   configFile,
-  JSON.stringify({ schemaVersion: 1, models: { asrModel: 'qwen3-asr-1.7b-8bit', translateModel: 'hy-mt2-1.8b-4bit' } }, null, 2),
+  JSON.stringify(
+    { schemaVersion: 1, ...localProviders, models: { asrModel: 'qwen3-asr-1.7b-8bit', translateModel: 'hy-mt2-1.8b-4bit' } },
+    null,
+    2,
+  ),
 )
 const wrong = await verify()
 const wrongCheck = wrong.checks.find((item) => item.id === 'config')
@@ -71,7 +78,11 @@ console.log(`配置错误时的提示：${wrongCheck.detail}`)
 // 4. 写对之后这一项必须通过
 fs.writeFileSync(
   configFile,
-  JSON.stringify({ schemaVersion: 1, models: { asrModel: expected.asrModel, translateModel: expected.translateModel } }, null, 2),
+  JSON.stringify(
+    { schemaVersion: 1, ...localProviders, models: { asrModel: expected.asrModel, translateModel: expected.translateModel } },
+    null,
+    2,
+  ),
 )
 const right = await verify()
 const rightCheck = right.checks.find((item) => item.id === 'config')
