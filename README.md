@@ -2,7 +2,7 @@
 
 DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘上的播客，自动记住进度，并且能转写、显示双语字幕、导出 SRT / Markdown。
 
-音频只从本地磁盘读取，不上传、不联网、不依赖订阅源。转写与翻译默认跑在本机（Apple Silicon / MLX），也可以切到 DeepSeek API。
+音频只从本地磁盘读取，不上传、不依赖订阅源。转写和翻译默认走 DeepSeek API——装好插件填一个 key 就能用，不用先下载模型；想省钱的可以在设置里切到本地模型（MLX / sherpa-onnx），模型一键安装、离线运行。
 
 ![单集详情：封面 + 双语字幕](docs/screenshot-detail.png)
 
@@ -11,9 +11,9 @@ DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘�
 - **单集详情**：点任意一集进入详情页——左侧封面与信息，右侧直接显示字幕，转写后可切中英对照。
 - **本地播放**：扫描文件夹（递归 6 层，支持 `mp3 / m4a / m4b / aac / wav / flac / ogg / opus / weba / webm / wma`），自动读标题、艺术家、封面。
 - **续播**：进度每 4 秒保存，切集 / 暂停 / 关闭时立即保存；重开从上次位置继续。
-- **转写**：本地 Qwen3-ASR-1.7B-8bit，带词级时间戳；按停顿与标点切成字幕行。
+- **转写**：默认走 DeepSeek 语音识别 API，按识别时长付费（约 ¥0.4/小时），装好填个 key 就能用；也可以一键装本地 Qwen3-ASR-1.7B 模型离线转写，免费但吃本机算力。
 - **任务面板与批量**：顶部「任务」查看队列、进度，可取消 / 重试；「选择」多选批量转写。
-- **长播客分块**：按 15 分钟切块转写，取消或失败后从已完成块续跑；热词可在设置里维护。
+- **长播客分块**：云端固定 30 秒一块（接口单次上限 120 秒），本地按设置里的分钟数切块；取消或失败后从已完成块续跑，热词可在设置里维护。
 - **说话人分离**：转写后自动分辨说话人（本地声纹，离线），字幕行带彩色「说话人 N」标签；字幕头部显示人数。
 - **收藏与筛选**：每行 ★ 收藏；筛选条可按 未听 / 有字幕 / 收藏 过滤，和左侧分类叠加。
 - **双语字幕**：点「字幕」打开面板，选「中文对照 / English」，只翻译另一种语言的行；点字幕行可以跳到对应时间。
@@ -33,7 +33,7 @@ DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘�
 - 转写中就能在详情页滚动、点行跳转、导出当前已出的 SRT/Markdown；
 - 重转时旧字幕会备份，取消或失败自动还原。
 
-分块时长可在设置 → 播客 → 转写里调整；块越小出字越快，块越大上下文越完整。
+本地模型的块大小可在设置 → 播客 → 转写里调整；块越小出字越快，块越大上下文越完整。云端转写固定 30 秒一块。
 
 ## 安装
 
@@ -57,7 +57,11 @@ dsh plugin --profile desktop add file:/path/to/dsh-podwave
 
 ## 转写与翻译（可选）
 
-播放器本身不需要额外依赖。要用转写 / 翻译，需要在本机准备运行时——**大多数用户不用手动做，直接在 DSH 设置 →「播客」→「一键安装」即可**，它会按平台自动选模型（Apple Silicon 用 MLX，Windows / Linux / Intel Mac 用 ONNX + llama.cpp）。
+播放器本身不需要额外依赖。
+
+**走云端 API（默认）**：只要 ffmpeg + 一把 DeepSeek key。装好后在 DSH 设置 →「播客」→「一键安装」装上 ffmpeg，再去「API 与翻译引擎」填 key 即可；转写和翻译共用这一把 key（转写那边留空会自动复用）。按识别时长计费，1 小时播客几毛钱。
+
+**走本地模型（免费、离线、吃算力）**：在设置 →「播客」→「转写」里把「转写方式」切到「本地模型」，点「一键安装本地模型」，会按平台自动选模型（Apple Silicon 用 MLX，Windows / Linux / Intel Mac 用 ONNX + llama.cpp）。下面的手动步骤只在自动安装失败时才需要。
 
 下面是手动安装（以 Apple Silicon 为例）：
 
@@ -76,7 +80,7 @@ tar xjf sherpa-onnx-pyannote-segmentation-3-0.tar.bz2
 curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx
 ```
 
-- 转写模型约 2.3 GB，翻译模型约 1 GB（Hy-MT2-1.8B，974 MB），说话人模型约 34 MB；只做播放可以都不装。
+- 转写模型约 2.3 GB，翻译模型约 1 GB（Hy-MT2-1.8B，974 MB），说话人模型约 34 MB；只做播放、或者只用云端 API，都可以都不装。
 - **平台差异**：Apple Silicon 用 MLX（上面的命令）；Windows / Linux / Intel Mac 用 SenseVoice Small（约 240 MB）+ Hy-MT2 GGUF，虚拟环境是 `.venv\Scripts\` 而不是 `bin/`，建议直接用「一键安装」。
 - 翻译可以不用本地模型：字幕面板 →「设置」→ 选 DeepSeek API，填 API key（默认 `api.deepseek.com` / `deepseek-chat`）。
 - 字幕面板 →「设置」里切换引擎；目标语言在字幕面板的「对照」下拉里选。
@@ -86,7 +90,7 @@ curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongi
 DSH 设置 →「播客」：
 
 - **历史记录**：所有已完成转写的单集（时长、语言、行数、位说话人、已翻语言、完成时间）。
-- **转写**：热词、分块时长（1–60 分钟）、是否自动识别说话人。
+- **转写**：转写方式（云端 API / 本地模型）、API 地址与 Key、热词、分块时长（1–60 分钟，只对本地生效）、是否自动识别说话人，「一键安装本地模型」。
 - **API 与翻译引擎**：DeepSeek API 地址 / 模型 / API Key，或切到本地模型。
 - **模型**：在模型目录（默认是项目里的 `models/`）下已就绪的模型里选转写模型（ASR）与翻译模型。
 - **界面**：开关「在主界面侧边栏显示播客入口」，保存后立即生效（不需要刷新）。

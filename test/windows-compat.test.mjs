@@ -191,6 +191,9 @@ test('verify() 的模型配置检查会比对本平台应有的模型，而不�
 
   // 塞一个本平台肯定不对的模型名（Mac 专用 / 纯瞎编）
   stored.models = { asrModel: 'totally-bogus-model', translateModel: 'also-bogus' }
+  // 这个用例针对的是本地模型场景：走云端 API 时模型配置不参与判定，所以先显式切到本地。
+  stored.transcribe = { ...(stored.transcribe || {}), provider: 'local' }
+  stored.translate = { ...(stored.translate || {}), provider: 'local' }
   writeFileSync(configFile, JSON.stringify(stored, null, 2))
 
   const report = await verify()

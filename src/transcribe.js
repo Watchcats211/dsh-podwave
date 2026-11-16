@@ -11,6 +11,7 @@ import { DATA_DIR } from './state.js'
 import { loadModelConfig, modelDir } from './models.js'
 import { ffmpegPath, ffprobePath, killTree, venvBin, venvPython } from './platform.js'
 import { getSection } from './config.js'
+import { API_CHUNK_SECONDS, asrApiConfig, asrProvider, buildApiLines, transcribeChunk } from './asr-api.js'
 import { artifactByDir } from './catalog.js'
 import { assignSpeakers, diarizeInfo, runDiarization } from './diarize.js'
 import { flushJobs, getJob, getJobFresh, jobKey, removeJob, upsertJob } from './jobs.js'
@@ -67,24 +68,34 @@ export function transcribeConfig() {
   const hotwords = Array.isArray(section.hotwords) ? section.hotwords.map((word) => String(word || '').trim()).filter(Boolean) : []
   const raw = Number(section.chunkMinutes)
   const chunkMinutes = Math.max(1, Math.min(60, Number.isFinite(raw) && raw > 0 ? raw : 15))
-  return { hotwords, chunkMinutes, diarize: section.diarize !== false }
+  return { provider: asrProvider(), hotwords, chunkMinutes, diarize: section.diarize !== false }
+}
+
+// 云端接口只吃 16 位 PCM WAV；本地 sherpa 也吃 wav，MLX 吃 m4a。
+function wantWav() {
+  return asrProvider() === 'api' || currentAsrModel().engine === 'sherpa'
 }
 
 export function runtimeInfo() {
   const model = currentAsrModel()
   const config = transcribeConfig()
+  const api = asrApiConfig()
   const sherpa = model.engine === 'sherpa'
   // sherpa 走 venv 里的 python 跑脚本；MLX 走 venv 里的命令行工具。
   // 两者都必须在 Windows 的 Scripts\ 下找，否则 installed 永远 false。
   const cliPath = sherpa ? venvPython() : CLI
   const installed = sherpa ? fs.existsSync(SHERPA_SCRIPT) && fs.existsSync(cliPath) : fs.existsSync(cliPath)
   return {
+    provider: config.provider,
+    // 当前这条路到底能不能开跑：云端看有没有 key，本地看运行时 + 模型。
+    ready: config.provider === 'api' ? api.hasKey : installed && model.ready,
     engine: model.engine,
     installed,
     modelReady: model.ready,
     model: model.dir,
     modelName: model.name,
     cli: cliPath,
+    api: { base: api.base, url: api.url, hasKey: api.hasKey, reusedKey: api.reusedKey },
     hotwords: config.hotwords,
     chunkMinutes: config.chunkMinutes,
     diarize: config.diarize,
@@ -316,7 +327,8 @@ function pump() {
   if (active || !queue.length) return
   const item = queue.shift()
   active = { key: jobId(item.episode.id), episodeId: item.episode.id }
-  runJob(item)
+  if (item.provider === 'api') runApiJob(item)
+  else runJob(item)
 }
 
 function waitChild(child) {
@@ -420,15 +432,15 @@ function planCuts(duration, chunkSeconds, silences) {
 
 async function splitAudioAt(file, dir, cuts, shouldCancel) {
   await mkdir(dir, { recursive: true })
-  const sherpa = currentAsrModel().engine === 'sherpa'
+  const wav = wantWav()
   const parts = []
   for (let index = 0; index < cuts.length - 1; index += 1) {
     if (shouldCancel && shouldCancel()) throw new Error('用户取消了转写')
     const start = cuts[index]
     const end = cuts[index + 1]
-    const ext = sherpa ? 'wav' : 'm4a'
+    const ext = wav ? 'wav' : 'm4a'
     const out = path.join(dir, `chunk-${String(index).padStart(3, '0')}.${ext}`)
-    const code = sherpa
+    const code = wav
       ? await runProcess(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-y', '-i', file, '-ss', String(start), '-to', String(end), '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', out])
       : await runProcess(FFMPEG, ['-hide_banner', '-loglevel', 'error', '-y', '-i', file, '-ss', String(start), '-to', String(end), '-vn', '-c:a', 'aac', '-b:a', '96k', out])
     if (code !== 0) throw new Error('音频切分失败（ffmpeg）')
@@ -440,12 +452,12 @@ async function splitAudioAt(file, dir, cuts, shouldCancel) {
 
 async function splitAudio(file, dir, chunkSeconds) {
   await mkdir(dir, { recursive: true })
-  const sherpa = currentAsrModel().engine === 'sherpa'
-  const ext = sherpa ? 'wav' : 'm4a'
+  const wav = wantWav()
+  const ext = wav ? 'wav' : 'm4a'
   const pattern = path.join(dir, `chunk-%03d.${ext}`)
   const base = ['-hide_banner', '-loglevel', 'error', '-y', '-i', file, '-f', 'segment', '-segment_time', String(chunkSeconds), '-reset_timestamps', '1']
   let code
-  if (sherpa) {
+  if (wav) {
     code = await runProcess(FFMPEG, [...base, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', pattern])
   } else {
     code = await runProcess(FFMPEG, [...base, '-c', 'copy', pattern])
@@ -466,9 +478,11 @@ async function splitAudio(file, dir, chunkSeconds) {
 }
 
 // 生成或复用切块计划；计划存 .work/<id>/meta.json，块结果在 .work/<id>/results/<index>.json。
-async function ensurePlan(episode, workDir, shouldCancel) {
+async function ensurePlan(episode, workDir, shouldCancel, provider = asrProvider()) {
+  const api = provider === 'api'
   const { chunkMinutes } = transcribeConfig()
-  const chunkSeconds = Math.round(chunkMinutes * 60)
+  // 云端接口硬限制单次 120 秒，所以固定切 30 秒一块；本地引擎沿用设置里的 chunkMinutes。
+  const chunkSeconds = api ? API_CHUNK_SECONDS : Math.round(chunkMinutes * 60)
   const duration = Number(episode.duration) || (await probeDuration(episode.file)) || 0
   if (!duration) throw new Error('无法读取音频时长（ffprobe）')
   const metaPath = path.join(workDir, 'meta.json')
@@ -490,7 +504,7 @@ async function ensurePlan(episode, workDir, shouldCancel) {
 
   await rm(path.join(workDir, 'parts'), { recursive: true, force: true })
   await rm(path.join(workDir, 'results'), { recursive: true, force: true })
-  const single = currentAsrModel().engine !== 'sherpa' && duration <= chunkSeconds * 1.2
+  const single = !api && currentAsrModel().engine !== 'sherpa' && duration <= chunkSeconds * 1.2
   let parts
   if (single) {
     parts = [{ index: 0, start: 0, end: round2(duration), file: episode.file, duration: round2(duration) }]
@@ -1044,10 +1058,209 @@ function buildSegments(raw, words) {
     }))
 }
 
+// 云端转写：把音频切成 30 秒小块并发打到 DeepSeek ASR，再把每块文本按字数摊进块内时间。
+// 和本地引擎共用 ensurePlan / mergedFromResults / 字幕落盘，差别只在「谁来识别」。
+// 并发 4：接口允许 50 并发，但一次任务打太多容易被同一账号的其它请求挤，4 条既快又不冒进。
+const API_CONCURRENCY = 4
+
+function apiTranscript(episode, plan, merged, speakers, source) {
+  return {
+    schemaVersion: 2,
+    id: episode.id,
+    title: episode.title,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    model: 'deepseek-asr',
+    language: merged.language,
+    duration: plan.duration || episode.duration || merged.lines[merged.lines.length - 1]?.end || 0,
+    text: merged.texts.join(' '),
+    source,
+    lines: merged.lines,
+    providers: {},
+    speakers,
+  }
+}
+
+async function runApiJob(item) {
+  const { episode, force } = item
+  const key = jobId(episode.id)
+  const work = path.join(WORK_DIR, episode.id)
+  const target = transcriptPath(episode.id)
+  const backup = `${target}.previous`
+  let plan = null
+  let backedUp = false
+  let partialWritten = false
+  try {
+    upsertJob({
+      key,
+      type: 'transcribe',
+      episodeId: episode.id,
+      episodeTitle: episode.title || '',
+      status: 'running',
+      stage: 'preparing',
+      startedAt: Date.now(),
+      finishedAt: null,
+      error: null,
+      progress: { done: 0, total: 0, percent: 0, unit: 'seconds' },
+      chunks: { total: 0, done: 0, current: null },
+    })
+    if (force) await rm(work, { recursive: true, force: true })
+    await mkdir(work, { recursive: true })
+    plan = await ensurePlan(episode, work, () => cancelRequested.has(key), 'api')
+    const resultsDir = path.join(work, 'results')
+    await mkdir(resultsDir, { recursive: true })
+
+    if (fs.existsSync(target)) {
+      await copyFile(target, backup).catch(() => {})
+      backedUp = fs.existsSync(backup)
+    }
+
+    // 续跑：已经落地的块直接跳过，只补缺的。
+    const pending = plan.parts.filter((part) => !hasResult(resultsDir, part.index))
+    let doneCount = plan.parts.length - pending.length
+    let doneSeconds = plan.parts
+      .filter((part) => hasResult(resultsDir, part.index))
+      .reduce((sum, part) => sum + part.duration, 0)
+    let cursor = 0
+    let lastPreview = doneCount
+
+    upsertJob({
+      key,
+      stage: 'transcribing',
+      chunks: { total: plan.parts.length, done: doneCount, current: pending[0] ? pending[0].index + 1 : null },
+    })
+
+    const worker = async () => {
+      for (;;) {
+        if (cancelRequested.has(key)) return
+        const index = cursor
+        cursor += 1
+        const part = pending[index]
+        if (!part) return
+        // 取消意图可能来自另一个模块实例（只写磁盘），所以这里轮询而不是只认内存标记。
+        const controller = new AbortController()
+        const watcher = setInterval(() => {
+          if (cancelRequested.has(key)) controller.abort()
+        }, 400)
+        try {
+          const { text } = await transcribeChunk(part.file, asrApiConfig(), { signal: controller.signal })
+          // 存的是「块内相对时间」：mergedFromResults 会把 part.start 加回去。
+          const lines = buildApiLines(text, 0, part.duration)
+          await writeFile(
+            resultPath(resultsDir, part.index),
+            JSON.stringify({ index: part.index, start: part.start, lines, language: '', text }),
+            'utf8',
+          )
+        } finally {
+          clearInterval(watcher)
+        }
+        doneCount += 1
+        doneSeconds += part.duration
+        upsertJob({
+          key,
+          stage: 'transcribing',
+          chunks: { total: plan.parts.length, done: doneCount, current: part.index + 1 },
+          progress: progressOf(plan, doneSeconds, 0),
+        })
+        // 每完成五分之一写一次预览，用户能边转边看，不用干等到最后。
+        const step = Math.max(1, Math.round(plan.parts.length / 5))
+        if (doneCount - lastPreview >= step) {
+          lastPreview = doneCount
+          const preview = mergedFromResults(plan, resultsDir)
+          if (preview.lines.length) {
+            const built = buildPreview(episode, plan, preview)
+            built.model = 'deepseek-asr'
+            await saveTranscript(built).catch(() => {})
+            partialWritten = true
+          }
+        }
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(API_CONCURRENCY, pending.length) }, () => worker()))
+    if (cancelRequested.has(key)) throw new Error('用户取消了转写')
+    const counts = countResults(resultsDir, plan)
+    if (counts.count < plan.parts.length) throw new Error('部分音频块没有识别结果')
+
+    upsertJob({ key, stage: 'merging' })
+    const merged = mergedFromResults(plan, resultsDir)
+    let speakers = []
+    if (transcribeConfig().diarize && diarizeInfo().modelsReady) {
+      const prevPercent = getJob(key)?.progress?.percent || 0
+      upsertJob({ key, stage: 'diarizing', progress: { done: 0, total: 0, percent: Math.max(prevPercent, 96), unit: 'seconds' } })
+      try {
+        const result = await runDiarization(episode.file)
+        speakers = assignSpeakers(merged.lines, result.segments || [])
+      } catch {
+        speakers = []
+      }
+    }
+
+    let source = null
+    try {
+      const info = fs.statSync(episode.file)
+      source = { path: episode.file, size: info.size, mtime: info.mtimeMs }
+    } catch {
+      source = { path: episode.file }
+    }
+
+    await saveTranscript(apiTranscript(episode, plan, merged, speakers, source))
+    await rm(backup, { force: true }).catch(() => {})
+    upsertJob({
+      key,
+      status: 'done',
+      stage: 'done',
+      finishedAt: Date.now(),
+      lineCount: merged.lines.length,
+      language: merged.language,
+      speakers: speakers.length,
+      error: null,
+      progress: { ...progressOf(plan, plan.duration, 0), percent: 100, done: plan.duration, total: plan.duration },
+      chunks: { total: plan.parts.length, done: plan.parts.length, current: null },
+    })
+    await rm(work, { recursive: true, force: true })
+  } catch (error) {
+    if (backedUp) await copyFile(backup, target).catch(() => {})
+    else if (partialWritten) await rm(target, { force: true }).catch(() => {})
+    const disk = getJobFresh(key)
+    const cancelledOnDisk = disk?.status === 'cancelled' || disk?.stage === 'cancelling'
+    if (cancelRequested.has(key) || cancelledOnDisk) {
+      cancelRequested.delete(key)
+      upsertJob({ key, status: 'cancelled', stage: 'cancelled', finishedAt: Date.now(), error: '用户取消了转写', pid: null })
+    } else {
+      upsertJob({
+        key,
+        status: 'error',
+        stage: 'error',
+        finishedAt: Date.now(),
+        error: error.message || String(error),
+      })
+    }
+  } finally {
+    cancelRequested.delete(key)
+    active = null
+    activeChild = null
+    upsertJob({ key, pid: null, orphan: false })
+    flushJobs()
+    pump()
+  }
+}
+
 export async function startTranscription(episode, { force = false, resume = false } = {}) {
   const info = runtimeInfo()
-  if (!info.installed) throw Object.assign(new Error('转写运行环境未安装（~/.podwave/runtime）'), { status: 503 })
-  if (!info.modelReady) throw Object.assign(new Error('转写模型未下载，请在设置里安装或检查模型目录'), { status: 503 })
+  // 云端只要一把 key：不装 python 运行时、不下 2.4G 模型也能转写，这就是「装好就能用」。
+  // 本地才检查运行时和模型，缺了就让用户去设置里一键装。
+  if (info.provider === 'api') {
+    if (!info.api.hasKey) {
+      throw Object.assign(
+        new Error('还没有填 DeepSeek API key。去「设置 → 播客 → 转写」填一个，或者切换成本地模型（免费但需要先下载模型）'),
+        { status: 400 },
+      )
+    }
+  } else {
+    if (!info.installed) throw Object.assign(new Error('转写运行环境未安装（~/.podwave/runtime），在设置里点「一键安装本地模型」'), { status: 503 })
+    if (!info.modelReady) throw Object.assign(new Error('转写模型未下载，请在设置里安装或检查模型目录'), { status: 503 })
+  }
 
   const key = jobId(episode.id)
   const currentJob = getJob(key)
@@ -1073,7 +1286,7 @@ export async function startTranscription(episode, { force = false, resume = fals
     progress: { done: 0, total: 0, percent: 0, unit: 'seconds' },
     chunks: { total: 0, done: 0, current: null },
   })
-  queue.push({ episode, force: Boolean(force) || !resumeWork, resume: resumeWork })
+  queue.push({ episode, provider: info.provider, force: Boolean(force) || !resumeWork, resume: resumeWork })
   pump()
   return { status: 'queued' }
 }

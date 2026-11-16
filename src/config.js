@@ -43,7 +43,17 @@ export const CONFIG_DEFAULTS = {
   get models() {
     return { dir: '', ...cachedDefaultModels() }
   },
-  transcribe: { hotwords: [], chunkMinutes: 1, diarize: true },
+  // 转写默认走云端 API：装好插件、填一个 DeepSeek key 就能用，不用先下载 2.4G 模型。
+  // 想省钱可以在设置里切成本地模型（provider: 'local'，需要先一键安装运行时和模型）。
+  // apiKey 留空时自动复用 translate.apiKey —— 用户填一次，转写和翻译都能用。
+  transcribe: {
+    provider: 'api',
+    apiBase: 'https://api.deepseek.com',
+    apiKey: '',
+    hotwords: [],
+    chunkMinutes: 1,
+    diarize: true,
+  },
   import: { mode: 'copy' },
 }
 

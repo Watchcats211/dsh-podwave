@@ -11,6 +11,7 @@ import { CATALOG, FFMPEG_BINARY, LLAMA_BINARY, SOURCE_LABELS, artifactFor, expec
 import { modelsDir } from './models.js'
 import { downloadArtifact, extractArchive } from './downloader.js'
 import { detectPlatform, findExecutable, ffmpegPath, ffprobePath, killTree, recommendEngine, venvDir, venvPython, isWindows, isMac } from './platform.js'
+import { asrProvider } from './asr-api.js'
 
 const RUNTIME_DIR = path.join(DATA_DIR, 'runtime')
 const SETUP_PATH = path.join(DATA_DIR, 'setup.json')
@@ -202,6 +203,10 @@ export async function verify() {
   const engine = recommendEngine(platform)
   const artifacts = artifactFor(platform, engine)
   const checks = []
+  // 云端转写的用户根本不需要 python 运行时和本地模型：这些检查项标成 optional，
+  // 缺了不算「检查没过」，只在列表里显示成灰色，免得用户以为装坏了。
+  const cloudAsr = asrProvider() === 'api'
+  const cloudTranslate = String(getSection('translate')?.provider || 'api') !== 'local'
 
   const ffmpeg = ffmpegPath()
   checks.push({ id: 'ffmpeg', label: 'ffmpeg 已找到', ok: Boolean(ffmpeg), detail: ffmpeg || '未找到' })
@@ -226,7 +231,13 @@ export async function verify() {
       checks.push({ id: 'python-mlx', label: 'MLX 组件可导入', ok: mlx.ok, detail: mlx.detail })
     }
   } else {
-    checks.push({ id: 'python', label: 'Python 环境存在', ok: false, detail: '虚拟环境不存在，请先安装' })
+    checks.push({
+      id: 'python',
+      label: 'Python 环境存在（本地模型才需要）',
+      ok: false,
+      optional: cloudAsr && cloudTranslate,
+      detail: '虚拟环境不存在；只用云端 API 的话可以忽略',
+    })
   }
 
   if (engine.id !== 'mlx') {
@@ -241,11 +252,13 @@ export async function verify() {
 
   for (const artifact of [artifacts.asr, artifacts.translate, artifacts.diarization]) {
     const state = modelState(artifact)
+    const cloudCovered = artifact.kind === 'asr' ? cloudAsr : artifact.kind === 'translate' ? cloudTranslate : false
     checks.push({
       id: `model-${artifact.id}`,
       label: `模型就绪：${artifact.label}`,
       ok: state.ready,
-      detail: state.ready ? state.dir : artifact.note || '未下载',
+      optional: cloudCovered,
+      detail: state.ready ? state.dir : `${artifact.note || '未下载'}${cloudCovered ? '（当前走云端 API，不需要）' : ''}`,
     })
   }
 
@@ -254,21 +267,23 @@ export async function verify() {
   const config = getSection('models')
   const expected = expectedModels(platform, engine)
   const problems = []
-  if (config.asrModel !== expected.asrModel) {
+  if (!cloudAsr && config.asrModel !== expected.asrModel) {
     problems.push(`转写模型应为 ${expected.asrModel}，当前 ${config.asrModel || '未设置'}`)
   }
-  if (config.translateModel !== expected.translateModel) {
+  if (!cloudTranslate && config.translateModel !== expected.translateModel) {
     problems.push(`翻译模型应为 ${expected.translateModel}，当前 ${config.translateModel || '未设置'}`)
   }
   checks.push({
     id: 'config',
     label: '模型配置与当前平台匹配',
     ok: problems.length === 0,
+    optional: cloudAsr && cloudTranslate,
     detail: problems.length ? problems.join('；') : `${config.asrModel} / ${config.translateModel}`,
   })
 
   return {
-    ok: checks.every((check) => check.ok),
+    // 只有「必须项」才决定通过与否；标了 optional 的缺了不算失败。
+    ok: checks.every((check) => check.ok || check.optional),
     checkedAt: new Date().toISOString(),
     platform,
     engine,
@@ -276,9 +291,12 @@ export async function verify() {
   }
 }
 
-export function plan({ source = 'auto', platform = detectPlatform() } = {}) {
+// mode: 'basic' 只装云端转写必需的 ffmpeg；'local' 才装 python 运行时 + 本地模型。
+// 默认 basic —— 绝大多数用户填个 key 就能用，不该为 2.4 GB 模型等上半小时。
+export function plan({ source = 'auto', mode = 'basic', platform = detectPlatform() } = {}) {
   const engine = recommendEngine(platform)
   const artifacts = artifactFor(platform, engine)
+  const local = mode === 'local'
   const items = []
   const ffAsset = !ffmpegPath() ? ffmpegAsset(platform) : null
   if (ffAsset) {
@@ -290,7 +308,7 @@ export function plan({ source = 'auto', platform = detectPlatform() } = {}) {
       sources: ['GitHub', 'gh-proxy.com'],
     })
   }
-  if (!runtimeReady(platform)) {
+  if (local && !runtimeReady(platform)) {
     items.push({
       id: 'runtime',
       label: 'Python 运行时 + 依赖（uv / PyPI）',
@@ -300,7 +318,7 @@ export function plan({ source = 'auto', platform = detectPlatform() } = {}) {
       note: '按 60–100 MB 估算，实际以 pip 下载为准',
     })
   }
-  if (engine.id !== 'mlx' && !llamaBinary(platform)) {
+  if (local && engine.id !== 'mlx' && !llamaBinary(platform)) {
     const asset = llamaAsset(platform)
     items.push({
       id: 'llama',
@@ -311,7 +329,7 @@ export function plan({ source = 'auto', platform = detectPlatform() } = {}) {
     })
     void asset
   }
-  for (const artifact of [artifacts.asr, artifacts.translate, artifacts.diarization]) {
+  for (const artifact of local ? [artifacts.asr, artifacts.translate, artifacts.diarization] : []) {
     if (modelState(artifact).ready) continue
     items.push({
       id: artifact.id,
@@ -327,6 +345,7 @@ export function plan({ source = 'auto', platform = detectPlatform() } = {}) {
     platform,
     engine,
     source,
+    mode: local ? 'local' : 'basic',
     items,
     totalBytes,
     note: engine.id === 'mlx' ? 'Apple Silicon 使用 MLX 模型；Windows / Linux 使用 ONNX + GGUF。' : 'Windows / Linux 使用 ONNX ASR + llama.cpp GGUF。',
@@ -417,13 +436,14 @@ function updateJob(patch) {
   return job
 }
 
-export async function install({ source = 'auto' } = {}) {
+export async function install({ source = 'auto', mode = 'basic' } = {}) {
   if (current?.running) throw new Error('安装已在进行中')
   current = { running: true, cancelled: false, startedAt: Date.now(), child: null, signal: null }
   const platform = detectPlatform()
   const engine = recommendEngine(platform)
   const artifacts = artifactFor(platform, engine)
-  const targets = [artifacts.asr, artifacts.translate, artifacts.diarization].filter((artifact) => !modelState(artifact).ready)
+  const local = mode === 'local'
+  const targets = local ? [artifacts.asr, artifacts.translate, artifacts.diarization].filter((artifact) => !modelState(artifact).ready) : []
   const ffAssetPending = !ffmpegPath() ? ffmpegAsset(platform) : null
   const totalBytes =
     targets.reduce((sum, artifact) => sum + (artifact.approxBytes || 0), 0) + (ffAssetPending?.bytes || 0)
@@ -470,8 +490,8 @@ export async function install({ source = 'auto' } = {}) {
       }
     }
 
-    // 1. Python 运行时
-    if (!runtimeReady(platform)) {
+    // 1. Python 运行时（只有本地模型才需要；云端转写不碰 python）
+    if (local && !runtimeReady(platform)) {
       report({ stage: '安装 uv 与 Python 运行时' })
       const uv = await ensureUv(platform, source, () => {})
       const venv = venvDir()
@@ -493,7 +513,7 @@ export async function install({ source = 'auto' } = {}) {
     }
 
     // 2. llama.cpp 运行时
-    if (engine.id !== 'mlx' && !llamaBinary(platform)) {
+    if (local && engine.id !== 'mlx' && !llamaBinary(platform)) {
       const asset = llamaAsset(platform)
       if (!asset) throw new Error('当前平台没有 llama.cpp 预编译包')
       report({ stage: '下载 llama.cpp 运行时' })
@@ -543,8 +563,8 @@ export async function install({ source = 'auto' } = {}) {
       }
     }
 
-    // 4. 写配置
-    updateSection('models', { asrModel: artifacts.asr.dir, translateModel: artifacts.translate.dir })
+    // 4. 写配置（只有真下了本地模型才写，否则会把 asrModel 指向一个不存在的目录）
+    if (local) updateSection('models', { asrModel: artifacts.asr.dir, translateModel: artifacts.translate.dir })
     writeSetup({ engine: engine.id, source, installedAt: Date.now(), lastSummary: summary })
     const warning = optionalFailures.length
       ? `可选组件失败，已跳过：${optionalFailures.map((item) => `${item.label}（${item.error}）`).join('；')}。核心转写与翻译已就绪，可以正常使用。`

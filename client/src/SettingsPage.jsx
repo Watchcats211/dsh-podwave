@@ -90,6 +90,10 @@ export default function SettingsPage() {
   const [hotwords, setHotwords] = useState('')
   const [chunkMinutes, setChunkMinutes] = useState(15)
   const [diarize, setDiarize] = useState(true)
+  // 转写走云端还是本地：和下面的 provider/apiBase/apiKey（那是翻译的）不是同一组，别混用。
+  const [asrProviderUi, setAsrProviderUi] = useState('api')
+  const [asrApiBase, setAsrApiBase] = useState('https://api.deepseek.com')
+  const [asrApiKeyDraft, setAsrApiKeyDraft] = useState('')
 
   const [provider, setProvider] = useState('api')
   const [apiBase, setApiBase] = useState('https://api.deepseek.com')
@@ -123,6 +127,9 @@ export default function SettingsPage() {
       setHotwords((txData.hotwords || []).join(' '))
       setChunkMinutes(txData.chunkMinutes || 15)
       setDiarize(txData.diarize !== false)
+      setAsrProviderUi(txData.provider || 'api')
+      setAsrApiBase(txData.apiBase || 'https://api.deepseek.com')
+      setAsrApiKeyDraft('')
       setHistory(historyData.items || [])
       setModels(modelsData.models || [])
       setStorage(modelsData.storage || null)
@@ -148,7 +155,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     let cancelled = false
-    getJSON(`${API}/setup/plan?source=${setupSource}`)
+    getJSON(`${API}/setup/plan?source=${setupSource}&mode=${asrProviderUi === 'local' ? 'local' : 'basic'}`)
       .then((data) => {
         if (!cancelled) setSetupPlan(data)
       })
@@ -156,7 +163,7 @@ export default function SettingsPage() {
     return () => {
       cancelled = true
     }
-  }, [setupSource, setup?.job?.status])
+  }, [setupSource, asrProviderUi, setup?.job?.status])
 
   useEffect(() => {
     if (!setupBusy && setup?.job?.status !== 'running') return
@@ -180,6 +187,21 @@ export default function SettingsPage() {
       const data = await getJSON(`${API}/setup`)
       setSetup(data)
       flash('开始安装')
+    } catch (err) {
+      setSetupBusy(false)
+      setError(err.message)
+    }
+  }
+
+  // 本地模型是「按需装」：只有用户主动切到本地、或点这个按钮，才去下 python 运行时和 2.4 GB 模型。
+  const startLocalInstall = async () => {
+    setError('')
+    setSetupBusy(true)
+    try {
+      await sendJSON(`${API}/setup/install`, 'POST', { source: setupSource, mode: 'local' })
+      const data = await getJSON(`${API}/setup`)
+      setSetup(data)
+      flash('开始下载本地模型')
     } catch (err) {
       setSetupBusy(false)
       setError(err.message)
@@ -387,6 +409,9 @@ export default function SettingsPage() {
         .filter(Boolean)
         .slice(0, 500)
       const data = await sendJSON(`${API}/transcribe/settings`, 'PUT', {
+        provider: asrProviderUi,
+        apiBase: asrApiBase,
+        apiKey: asrApiKeyDraft,
         hotwords: words,
         chunkMinutes: Math.min(60, Math.max(1, Number(chunkMinutes) || 15)),
         diarize,
@@ -394,6 +419,10 @@ export default function SettingsPage() {
       setHotwords((data.hotwords || []).join(' '))
       setChunkMinutes(data.chunkMinutes || 15)
       setDiarize(data.diarize !== false)
+      setAsrProviderUi(data.provider || 'api')
+      setAsrApiBase(data.apiBase || 'https://api.deepseek.com')
+      setAsrApiKeyDraft('')
+      if (data.runtime) setTranscribeInfo(data.runtime)
       flash('转写设置已保存')
     } catch (err) {
       setError(err.message)
@@ -546,8 +575,51 @@ export default function SettingsPage() {
 
       <section className="settings-card">
         <h2>转写</h2>
-        <p className="settings-hint">热词用空格或逗号分隔，会作为 --context 传给 MLX 引擎，专有名词更准；Windows / Linux 的 SenseVoice 引擎暂不支持热词。长播客按分钟切块，失败只重跑那一块。</p>
+        <p className="settings-hint">
+          云端 API 装好就能用，按识别时长付费（DeepSeek 语音识别约 ¥0.4/小时，一集 1 小时的播客几毛钱）；本地模型免费，但要先下载约 2.4 GB，并且用你自己的电脑算。
+        </p>
         <div className="settings-fields">
+          <label className="field-row">
+            <span>转写方式</span>
+            <select value={asrProviderUi} onChange={(event) => setAsrProviderUi(event.target.value)}>
+              <option value="api">云端 API（DeepSeek，按量付费）</option>
+              <option value="local">本地模型（免费，需下载）</option>
+            </select>
+          </label>
+          {asrProviderUi === 'api' ? (
+            <>
+              <label className="field-row">
+                <span>API 地址</span>
+                <input
+                  value={asrApiBase}
+                  onChange={(event) => setAsrApiBase(event.target.value)}
+                  placeholder="https://api.deepseek.com"
+                />
+              </label>
+              <label className="field-row">
+                <span>API Key</span>
+                <input
+                  type="password"
+                  value={asrApiKeyDraft}
+                  onChange={(event) => setAsrApiKeyDraft(event.target.value)}
+                  placeholder={transcribeInfo?.api?.reusedKey ? '留空 = 复用「API 与翻译引擎」里的 key' : 'sk-...'}
+                />
+              </label>
+              <p className="settings-status">
+                {transcribeInfo?.api?.hasKey
+                  ? transcribeInfo.api.reusedKey
+                    ? '已复用「API 与翻译引擎」里的 DeepSeek key，可以直接转写'
+                    : 'API Key 已保存，可以直接转写'
+                  : '还没有 API Key，转写时会提示去填'}
+              </p>
+            </>
+          ) : (
+            <p className="settings-status">
+              {transcribeInfo?.installed && transcribeInfo?.modelReady
+                ? `本地运行时和模型已就绪（${transcribeInfo.modelName || '本地模型'}），转写不花钱`
+                : '本地运行时或模型还没装好，点下面「一键安装本地模型」'}
+            </p>
+          )}
           <label className="field-row">
             <span>热词</span>
             <input
@@ -566,15 +638,21 @@ export default function SettingsPage() {
               onChange={(event) => setChunkMinutes(event.target.value)}
             />
           </label>
+          <p className="settings-status">分块时长只对本地模型生效；云端转写固定 30 秒一块（接口单次上限 120 秒）。</p>
           <label className="check-row">
             <input type="checkbox" checked={diarize} onChange={(event) => setDiarize(event.target.checked)} />
-            <span>自动识别说话人（本地声纹，分离失败不影响转写）</span>
+            <span>自动识别说话人（需要本地声纹模型，分离失败不影响转写）</span>
           </label>
         </div>
         <div className="settings-actions">
           <button className="settings-btn" onClick={saveTranscribe} disabled={saving === 'transcribe'}>
             {saving === 'transcribe' ? '保存中…' : '保存转写设置'}
           </button>
+          {asrProviderUi === 'local' && !(transcribeInfo?.installed && transcribeInfo?.modelReady) ? (
+            <button className="settings-btn" onClick={startLocalInstall} disabled={setupBusy}>
+              {setupBusy ? '安装中…' : '一键安装本地模型'}
+            </button>
+          ) : null}
           <span className="settings-status">热词最多 500 个</span>
         </div>
       

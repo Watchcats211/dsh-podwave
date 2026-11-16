@@ -1,0 +1,183 @@
+// 云端转写：DeepSeek 语音识别接口（2026-11-13 随「全家桶」开放）。
+//
+// POST {base}/v1/tools/asr，multipart/form-data 上传一整段音频，返回整段文本。
+// 官方硬限制：单次 ≤120 秒、≤8 MiB、16 位 PCM WAV 或 Ogg Opus；语种自动识别；
+// 不支持流式；响应只有整段 text，**没有词级/句级时间戳**，所以时间轴要靠自己切块 + 按字数分配。
+//
+// 这里只放「调一次接口」和「把一整段文本变成带时间的行」两件事，
+// 切片、并发、落盘、合并都留在 transcribe.js 里，和本地引擎复用同一套流程。
+import fs from 'node:fs'
+import { getSection } from './config.js'
+
+export const API_ASR_PATH = '/v1/tools/asr'
+// 官方要求 ≤120 秒。留 20 秒余量：切片是按容器时间戳切的，
+// 有些音频的重采样/补帧会多出零点几秒，卡在 120 上迟早翻车。
+export const API_CHUNK_SECONDS = 30
+export const API_MAX_SECONDS = 100
+export const API_MAX_BYTES = 8 * 1024 * 1024
+const REQUEST_TIMEOUT_MS = 180000
+const MAX_ATTEMPTS = 4
+
+const SENTENCE_END = /[。！？!?…]/
+const CLAUSE_END = /[，,；;、]/
+
+function round2(value) {
+  return Math.round((Number(value) || 0) * 100) / 100
+}
+
+/**
+ * 转写走哪条路：`'api'`（默认，开箱即用）还是 `'local'`（本地模型，省钱但费机器）。
+ * 只有明确写了 `local` 才走本地，其它一律按云端处理，避免老配置突然掉回「没装模型」的死胡同。
+ */
+export function asrProvider() {
+  const section = getSection('transcribe') || {}
+  return String(section.provider || '').toLowerCase() === 'local' ? 'local' : 'api'
+}
+
+/**
+ * 云端转写用到的端点与密钥。apiKey 留空时自动复用翻译那把 DeepSeek key ——
+ * 用户填一次就能同时用转写和翻译，不用记两次。
+ */
+export function asrApiConfig() {
+  const section = getSection('transcribe') || {}
+  const translate = getSection('translate') || {}
+  const ownKey = String(section.apiKey || '').trim()
+  const sharedKey = String(translate.apiKey || '').trim()
+  const base = String(section.apiBase || translate.apiBase || 'https://api.deepseek.com').trim().replace(/\/+$/, '')
+  const key = ownKey || sharedKey
+  return {
+    base,
+    url: `${base}${API_ASR_PATH}`,
+    key,
+    hasKey: Boolean(key),
+    reusedKey: !ownKey && Boolean(sharedKey),
+  }
+}
+
+function describeFailure(status, payload) {
+  const message = String(payload?.error?.message || payload?.message || '').trim()
+  if (status === 401 || status === 403) {
+    return 'DeepSeek API key 无效或没有语音识别权限，请到设置里检查'
+  }
+  if (status === 402) return 'DeepSeek 账户余额不足，请充值后再转写'
+  if (status === 413) return '音频块太大，超过接口限制'
+  if (status === 429) return '请求太频繁被限流，稍后会自动重试'
+  if (message) return `语音识别失败：${message}`
+  return `语音识别失败（HTTP ${status}）`
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * 把一段音频发给 DeepSeek ASR。
+ * @returns {Promise<{text: string, durationMs: number}>}
+ */
+export async function transcribeChunk(file, config = asrApiConfig(), { signal } = {}) {
+  if (!config.hasKey) {
+    throw Object.assign(new Error('还没有填 DeepSeek API key，去设置里填一个就能用云端转写'), { status: 400 })
+  }
+  const bytes = await fs.promises.readFile(file)
+  if (!bytes.length) throw new Error('音频块是空的')
+  if (bytes.length > API_MAX_BYTES) {
+    throw new Error(`音频块 ${(bytes.length / 1024 / 1024).toFixed(1)} MB，超过接口的 8 MB 上限`)
+  }
+
+  let lastError = null
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    const form = new FormData()
+    form.append('file', new Blob([bytes], { type: 'audio/wav' }), 'chunk.wav')
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    const onAbort = () => controller.abort()
+    if (signal) signal.addEventListener('abort', onAbort, { once: true })
+    try {
+      const response = await fetch(config.url, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${config.key}` },
+        body: form,
+        signal: controller.signal,
+      })
+      const raw = await response.text()
+      let payload = null
+      try {
+        payload = raw ? JSON.parse(raw) : null
+      } catch {
+        payload = null
+      }
+      if (!response.ok) {
+        const error = Object.assign(new Error(describeFailure(response.status, payload)), { status: response.status })
+        // 4xx 里只有 429 值得重试，其余（key 错、余额空、参数错）重试也没用。
+        if (response.status !== 429 && response.status < 500) throw error
+        lastError = error
+      } else {
+        return {
+          text: String(payload?.text || ''),
+          durationMs: Number(payload?.duration_ms) || 0,
+        }
+      }
+    } catch (error) {
+      if (error?.name === 'AbortError') {
+        if (signal?.aborted) throw new Error('用户取消了转写')
+        lastError = Object.assign(new Error('语音识别超时，稍后会自动重试'), { status: 504 })
+      } else if (error?.status && error.status !== 429 && error.status < 500) {
+        throw error
+      } else {
+        lastError = error
+      }
+    } finally {
+      clearTimeout(timer)
+      if (signal) signal.removeEventListener('abort', onAbort)
+    }
+    if (signal?.aborted) throw new Error('用户取消了转写')
+    if (attempt < MAX_ATTEMPTS) await sleep(600 * attempt)
+  }
+  throw lastError || new Error('语音识别失败')
+}
+
+/**
+ * 把一整段识别文本切成字幕行，并在 [start, start+duration) 之间按字数比例分配时间。
+ * 接口不给时间戳，这个分配是估算：短块（30 秒）内误差可以接受，
+ * 比起「一行 30 秒」那种粗粒度，按标点切句读起来舒服得多。
+ */
+export function buildApiLines(text, start, duration) {
+  const clean = String(text || '').replace(/\s+/g, ' ').trim()
+  if (!clean) return []
+  const pieces = []
+  let buffer = ''
+  for (const char of clean) {
+    buffer += char
+    const hard = SENTENCE_END.test(char)
+    // 逗号只在已经攒了 24 个字以上才切，避免「但是，」「所以，」这种碎行。
+    const soft = CLAUSE_END.test(char) && buffer.length >= 24
+    if (hard || soft || buffer.length >= 60) {
+      const piece = buffer.trim()
+      if (piece) pieces.push(piece)
+      buffer = ''
+    }
+  }
+  const tail = buffer.trim()
+  if (tail) pieces.push(tail)
+  if (!pieces.length) return []
+
+  const totalChars = pieces.reduce((sum, piece) => sum + piece.length, 0) || 1
+  const span = Math.max(Number(duration) || 0, pieces.length * 0.4)
+  const lines = []
+  let cursor = 0
+  for (const [index, piece] of pieces.entries()) {
+    const length = (piece.length / totalChars) * span
+    const lineStart = round2(start + cursor)
+    cursor += length
+    const isLast = index === pieces.length - 1
+    const lineEnd = round2(start + (isLast ? span : cursor))
+    lines.push({
+      id: index + 1,
+      start: lineStart,
+      // 单字符行（「好。」）也至少给 0.3 秒，不然播放器高亮会一闪而过。
+      end: Math.max(lineEnd, round2(lineStart + 0.3)),
+      text: piece,
+    })
+  }
+  return lines
+}

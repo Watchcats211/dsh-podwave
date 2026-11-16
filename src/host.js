@@ -490,7 +490,8 @@ async function route(ctx, req, res) {
   }
   if (routePath === 'api/setup/plan' && method === 'GET') {
     const source = url.searchParams.get('source') || 'auto'
-    return json(res, 200, planSetup({ source }))
+    const mode = url.searchParams.get('mode') === 'local' ? 'local' : 'basic'
+    return json(res, 200, planSetup({ source, mode }))
   }
 
   if (routePath === 'api/setup/verify' && method === 'GET') {
@@ -509,7 +510,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.27',
+      version: '0.11.28',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -526,7 +527,8 @@ async function route(ctx, req, res) {
   if (routePath === 'api/setup/install' && method === 'POST') {
     const body = await readJson(req)
     if (setupJob()?.running) return json(res, 409, { error: '安装已在进行中' })
-    installSetup({ source: body?.source || 'auto' }).catch(() => {})
+    // basic：只装 ffmpeg，配合云端 API 用；local：额外装 python 运行时 + 本地模型。
+    installSetup({ source: body?.source || 'auto', mode: body?.mode === 'local' ? 'local' : 'basic' }).catch(() => {})
     return json(res, 200, { started: true })
   }
   if (routePath === 'api/setup/cancel' && method === 'POST') {
@@ -538,7 +540,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.27', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.28', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -959,15 +961,28 @@ async function route(ctx, req, res) {
   }
 
   if (routePath === 'api/transcribe/settings') {
-    if (method === 'GET') return json(res, 200, { ...getSection('transcribe'), runtime: runtimeInfo() })
+    if (method === 'GET') {
+      // 不把密钥回传给前端：前端看 runtime.api.hasKey / reusedKey 就知道填没填。
+      const section = getSection('transcribe') || {}
+      return json(res, 200, { ...section, apiKey: '', runtime: runtimeInfo() })
+    }
     if (method === 'PUT') {
       const body = await readJson(req)
       const patch = {}
+      if (typeof body?.provider === 'string') patch.provider = body.provider === 'local' ? 'local' : 'api'
+      if (typeof body?.apiBase === 'string') {
+        const base = body.apiBase.trim()
+        if (base && !/^https?:\/\//i.test(base)) return json(res, 400, { error: '接口地址要以 http:// 或 https:// 开头' })
+        patch.apiBase = base || 'https://api.deepseek.com'
+      }
+      // 空字符串是有效值：表示「不单独存 key，复用翻译那把」。
+      if (typeof body?.apiKey === 'string') patch.apiKey = body.apiKey.trim()
       if (Array.isArray(body?.hotwords)) patch.hotwords = body.hotwords.map((word) => String(word || '').trim()).filter(Boolean).slice(0, 500)
       if (Number.isFinite(Number(body?.chunkMinutes))) patch.chunkMinutes = Math.max(1, Math.min(60, Number(body.chunkMinutes)))
       if (typeof body?.diarize === 'boolean') patch.diarize = body.diarize
       if (!Object.keys(patch).length) return json(res, 400, { error: '没有可保存的设置' })
-      return json(res, 200, { ...updateSection('transcribe', patch), runtime: runtimeInfo() })
+      const saved = updateSection('transcribe', patch)
+      return json(res, 200, { ...saved, apiKey: '', runtime: runtimeInfo() })
     }
   }
 
