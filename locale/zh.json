@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "播客",
+    "description": "在 DSH 侧栏里播放本地播客：续播进度、本地转写、双语字幕与字幕翻译。",
+    "detail": "docs/DETAIL.zh.md"
+  }
+}

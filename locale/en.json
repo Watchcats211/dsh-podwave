@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Podwave",
+    "description": "Play local podcasts in the DSH sidebar: resume progress, local transcription, bilingual subtitles and subtitle translation.",
+    "detail": "docs/DETAIL.md"
+  }
+}

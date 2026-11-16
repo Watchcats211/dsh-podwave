@@ -1,13 +1,15 @@
 {
   "name": "dsh-podwave",
-  "version": "0.11.24",
+  "version": "0.11.25",
   "description": "DeepSeek Harness 插件：本地优先的播客播放器 + 转写 + 双语字幕 + 字幕翻译。",
   "type": "module",
   "main": "./src/host.js",
+  "icon": "./icon.svg",
   "exports": {
     ".": "./src/host.js",
     "./client": "./dist/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "dsh": {
@@ -55,6 +57,13 @@
     "dist",
     "cordis.patch.yml",
     "README.md",
-    "scripts"
+    "CHANGELOG.md",
+    "locale",
+    "icon.svg",
+    "docs/DETAIL.md",
+    "docs/DETAIL.zh.md",
+    "docs/ARCHITECTURE.md",
+    "docs/screenshot-detail.png",
+    "scripts/*.py"
   ]
 }

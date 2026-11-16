@@ -1,3 +1,15 @@
+## 0.11.25 — 2026-11-16
+
+发布包补齐 DSH 插件展示元数据：装上之后在插件列表里显示中文名和图标，详情页有自己的介绍和配图。
+
+- 新增 `locale/en.json`、`locale/zh.json`：`meta.title` / `meta.description` 中英文各一份。以前列表里显示的是包名 `dsh-podwave` 加 `package.json` 的 description，现在中文环境显示「播客」。
+- 新增 `icon.svg`（754 字节，36×36，取插件主色 `#E6A54A` → `#B26A12` 的渐变波形）。`package.json` 加了 `icon` 字段。
+- 新增 `docs/DETAIL.md` / `docs/DETAIL.zh.md`：详情页不再回退整篇 README，只显示一句介绍加一张截图（复用 `docs/screenshot-detail.png`）。
+- `package.json` 的 `exports` 补 `"./locale/*.json"`。DSH 通过这个 subpath 读 locale，不声明就静默拿不到（退回包名兜底），本地开发看不出来。
+- `files` 白名单补 `locale`、`icon.svg`、两份 `DETAIL.md`、`docs/ARCHITECTURE.md`、`docs/screenshot-detail.png`、`CHANGELOG.md`；`scripts` 收窄成 `scripts/*.py`，不再把 `release.mjs` 和 `__pycache__` 打进包里。
+- 修掉 README 引用的 `docs/screenshot-detail.png` 和 `docs/ARCHITECTURE.md` 不在包内的问题——之前从 npm 装的用户，详情页图片是断的。
+- 新增 `test/package-metadata.test.mjs`（6 个用例）：校验 exports / files 白名单、每个 locale 的字段与 detail 文件、详情文档与 README 的图片都在包内、icon 类型与 256 KiB 上限。测试总数 111（108 通过、3 跳过）。
+
 ## 0.11.24 — 2026-11-16
 
 发布版（从 npm 装的）也默认把模型下载到项目文件夹，不再一律塞进 `~/.podwave/models`。
