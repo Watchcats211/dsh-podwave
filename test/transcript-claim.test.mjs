@@ -54,7 +54,7 @@ function writeOrphan(name, overrides = {}) {
 
 function cleanup() {
   for (const name of fs.readdirSync(TRANSCRIPTS_DIR)) {
-    fs.rmSync(path.join(TRANSCRIPTS_DIR, name), { force: true })
+    fs.rmSync(path.join(TRANSCRIPTS_DIR, name), { force: true, recursive: true })
   }
 }
 
@@ -71,7 +71,12 @@ test('claims an orphan transcript whose title and duration match', async () => {
   assert.equal(claimed.source.path, episode.file)
   // 认领结果写到当前 id，原文件保留作备份
   assert.ok(fs.existsSync(path.join(TRANSCRIPTS_DIR, `${episode.id}.json`)))
-  assert.ok(fs.existsSync(orphanFile), 'original orphan file should be kept')
+  // 原件不删，挪进 .claimed/ 留档：留在原地会在下次认领时变成第二个候选。
+  assert.ok(!fs.existsSync(orphanFile), 'original orphan should be moved aside')
+  assert.ok(
+    fs.existsSync(path.join(TRANSCRIPTS_DIR, '.claimed', '9bb9477b8839e808.json')),
+    'original orphan should be kept in .claimed/',
+  )
 })
 
 test('returns null when no orphan matches the duration', async () => {
@@ -81,12 +86,18 @@ test('returns null when no orphan matches the duration', async () => {
   assert.equal(await readTranscript(episode.id), null)
 })
 
-test('refuses to claim when several orphans match', async () => {
+test('picks one candidate when several orphans match instead of giving up', async () => {
   cleanup()
   const episode = makeEpisode('claim-c', '2024年12月N1音频', 2956.3297959183674)
   writeOrphan('orphan-dup-a', { title: episode.title, duration: episode.duration })
   writeOrphan('orphan-dup-b', { title: episode.title, duration: episode.duration })
-  assert.equal(await readTranscript(episode.id), null)
+  const claimed = await readTranscript(episode.id)
+  // 多候选时不再放弃（放弃对用户就等于「字幕丢了」），挑一个并把它挪进 .claimed/。
+  assert.ok(claimed, 'should still claim one of the candidates')
+  assert.equal(claimed.id, episode.id)
+  assert.ok(['orphan-dup-a', 'orphan-dup-b'].includes(claimed.claimedFrom))
+  const backups = fs.readdirSync(path.join(TRANSCRIPTS_DIR, '.claimed'))
+  assert.equal(backups.length, 1)
 })
 
 test('ignores v1 files without lines', async () => {

@@ -56,6 +56,7 @@ import {
   deleteTranscript,
   getTranscriptionState,
   migrateAllTranscripts,
+  sweepWorkDirs,
   readTranscript,
   runtimeInfo,
   startTranscription,
@@ -256,7 +257,8 @@ function boot() {
     booted = (async () => {
       await initState()
       loadXyz()
-      await migrateAllTranscripts().catch((error) => console.error('[dsh-podwave] transcript migration failed:', error.message))
+      await sweepWorkDirs().catch(() => {})
+    await migrateAllTranscripts().catch((error) => console.error('[dsh-podwave] transcript migration failed:', error.message))
       if (getState().folders.length) {
         scanLibrary()
           .then(() => refreshWatchers())
@@ -1158,7 +1160,25 @@ async function route(ctx, req, res) {
       })
     }
     items.sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0))
-    return json(res, 200, { items })
+    let bytes = 0
+    try {
+      for (const file of files) bytes += (await stat(path.join(TRANSCRIPTS_DIR, file))).size
+    } catch {
+      bytes = bytes || 0
+    }
+    return json(res, 200, { items, dir: TRANSCRIPTS_DIR, bytes })
+  }
+
+  if (method === 'POST' && routePath === 'api/history/open') {
+    try {
+      fs.mkdirSync(TRANSCRIPTS_DIR, { recursive: true })
+      const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open'
+      const { spawn } = await import('node:child_process')
+      spawn(command, [TRANSCRIPTS_DIR], { detached: true, stdio: 'ignore' }).unref()
+    } catch {
+      return json(res, 500, { error: '无法打开文件夹' })
+    }
+    return json(res, 200, { ok: true, dir: TRANSCRIPTS_DIR })
   }
 
   if (routePath === 'api/ui-settings') {

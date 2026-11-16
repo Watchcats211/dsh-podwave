@@ -70,6 +70,8 @@ function modelsPathLabel(storage) {
 export default function SettingsPage() {
   const theme = useTheme()
   const [history, setHistory] = useState([])
+  const [historyDir, setHistoryDir] = useState('')
+  const [historyBytes, setHistoryBytes] = useState(0)
   const [models, setModels] = useState([])
   const [storage, setStorage] = useState(null)
   const [dirDraft, setDirDraft] = useState('')
@@ -127,6 +129,8 @@ export default function SettingsPage() {
       setDiarize(txData.diarize !== false)
       setAsrProviderUi(txData.provider || 'api')
       setHistory(historyData.items || [])
+      setHistoryDir(historyData.dir || '')
+      setHistoryBytes(Number(historyData.bytes) || 0)
       setModels(modelsData.models || [])
       setStorage(modelsData.storage || null)
       setDirDraft(modelsData.storage?.dir || '')
@@ -190,6 +194,14 @@ export default function SettingsPage() {
   }
 
   // 本地模型是「按需装」：只有用户主动切到本地、或点这个按钮，才去下 python 运行时和 2.4 GB 模型。
+  const openHistoryDir = async () => {
+    try {
+      await sendJSON(`${API}/history/open`, 'POST', {})
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   const startLocalInstall = async () => {
     setError('')
     setSetupBusy(true)
@@ -542,7 +554,9 @@ export default function SettingsPage() {
 
       <section className="settings-card">
         <h2>历史记录</h2>
-        <p className="settings-hint">已经完成转写的单集，共 {history.length} 条。</p>
+        <p className="settings-hint">
+          已经完成转写的单集，共 {history.length} 条。字幕和译文都存在本机，关掉插件、重装插件都还在。
+        </p>
         {history.length ? (
           <ul className="history-list">
             {history.map((item) => (
@@ -563,6 +577,14 @@ export default function SettingsPage() {
         ) : (
           <p className="settings-empty">还没有完成过转写。在「播客」面板里打开一集，点「转写字幕」。</p>
         )}
+        <div className="settings-actions">
+          <button className="settings-btn" onClick={openHistoryDir} disabled={!historyDir}>
+            打开字幕文件夹
+          </button>
+          <span className="settings-status">
+            {historyDir ? `${historyDir}${historyBytes ? ` · ${fmtBytes(historyBytes)}` : ''}` : ''}
+          </span>
+        </div>
       </section>
 
       <section className="settings-card">

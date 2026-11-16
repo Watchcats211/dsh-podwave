@@ -42,7 +42,7 @@ function isInside(parent, child) {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
 }
 
-async function walk(dir, depth, files) {
+async function walk(dir, depth, files, root, realRoot = root) {
   let entries
   try {
     entries = await fsp.readdir(dir, { withFileTypes: true })
@@ -53,14 +53,15 @@ async function walk(dir, depth, files) {
     if (entry.name.startsWith('.')) continue
     const full = path.join(dir, entry.name)
     if (entry.isDirectory()) {
-      if (depth < SCAN_DEPTH) await walk(full, depth + 1, files)
+      if (depth < SCAN_DEPTH) await walk(full, depth + 1, files, root, realRoot)
     } else if (entry.isFile() && AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
-      files.push(full)
+      // 记下这个文件属于哪个「添加进来的根文件夹」，前端才能按目录逐层浏览。
+      files.push({ file: full, root, realRoot })
     }
   }
 }
 
-async function readEpisode(file) {
+async function readEpisode(file, root, realRoot = root) {
   const stat = await fsp.stat(file)
   const id = episodeId(file)
   const cacheKey = `${stat.mtimeMs}:${stat.size}`
@@ -107,6 +108,9 @@ async function readEpisode(file) {
     duration,
     hasCover,
     folder: path.dirname(file),
+    root,
+    // 相对根文件夹的路径（'' 表示就在根目录里），前端靠它逐层浏览目录树。
+    rel: path.relative(realRoot || root || '', path.dirname(file)).split(path.sep).join('/'),
     file,
   }
   metaCache.set(id, { key: cacheKey, data })
@@ -125,31 +129,37 @@ async function doScan() {
     } catch {
       continue
     }
-    await walk(folder, 0, files)
+    let realRoot = folder
+    try {
+      realRoot = await fsp.realpath(folder)
+    } catch {
+      realRoot = folder
+    }
+    await walk(folder, 0, files, folder, realRoot)
   }
 
   const unique = []
   const seen = new Set()
-  for (const file of files) {
-    let real = file
+  for (const entry of files) {
+    let real = entry.file
     try {
-      real = await fsp.realpath(file)
+      real = await fsp.realpath(entry.file)
     } catch {
       /* keep the original path */
     }
     if (seen.has(real)) continue
     seen.add(real)
-    unique.push(real)
+    unique.push({ file: real, root: entry.root, realRoot: entry.realRoot })
   }
 
   const items = []
   let cursor = 0
   async function worker() {
     while (cursor < unique.length) {
-      const file = unique[cursor]
+      const entry = unique[cursor]
       cursor += 1
       try {
-        items.push(await readEpisode(file))
+        items.push(await readEpisode(entry.file, entry.root, entry.realRoot))
       } catch {
         /* skip unreadable files */
       }
@@ -196,10 +206,10 @@ export function getEpisodePaths() {
 }
 
 export function getEpisodes() {
-  return episodes.map(({ file, folder, ...rest }) => ({
+  return episodes.map(({ file, ...rest }) => ({
     ...rest,
-    // Only expose the last two path segments to the client.
-    location: folder.split(path.sep).slice(-2).join('/'),
+    // folder/root 是绝对路径，前端靠它们做逐层目录浏览；location 只是给人看的短路径。
+    location: (rest.folder || '').split(path.sep).slice(-2).join('/'),
   }))
 }
 

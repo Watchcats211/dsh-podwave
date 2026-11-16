@@ -382,6 +382,39 @@ select:focus-visible {
 
 .continue-text .mini-track { margin-top: 3px; }
 
+/* 目录面包屑与子文件夹行：点进文件夹只看那一层的音频 */
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 10px 8px;
+  font-size: 13px;
+  color: var(--dim);
+}
+
+.crumb-item { display: inline-flex; align-items: center; gap: 2px; }
+
+.crumb {
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.crumb:hover:not(:disabled) { background: var(--hover); }
+
+.crumb.is-current { color: var(--dim); cursor: default; }
+
+.crumb-sep { color: var(--dim); opacity: 0.6; }
+
+.folder-row .row-title { font-weight: 500; }
+
+.folder-row .col-duration { color: var(--dim); }
+
 /* ---------- list ---------- */
 
 .list-section { border-top: 1px solid var(--line-soft); }

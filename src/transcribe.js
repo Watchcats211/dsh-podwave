@@ -216,19 +216,37 @@ async function claimOrphanTranscript(id) {
     if (!Array.isArray(raw?.lines) || !raw.lines.length) continue
     if (normalizeTitle(raw.title) !== title) continue
     if (Math.abs((Number(raw.duration) || 0) - duration) > 2) continue
-    matches.push({ file, raw })
+    let mtimeMs = 0
+    try {
+      mtimeMs = fs.statSync(file).mtimeMs
+    } catch {
+      mtimeMs = 0
+    }
+    matches.push({ file, raw, mtimeMs })
   }
 
-  // 只有唯一候选才认领，避免把另一个同名同长的单集字幕错挂过来。
-  if (matches.length !== 1) {
-    if (matches.length > 1) {
-      console.warn(`[dsh-podwave] 字幕认领放弃：${title} 有 ${matches.length} 个候选字幕`)
-    }
+  if (!matches.length) {
     claimMisses.set(id, Date.now())
     return null
   }
 
+  // 多个候选时按可信度挑一个，而不是直接放弃 —— 放弃会让用户看到「字幕没了」。
+  // 优先级：音频路径完全一致 > 文件大小一致 > 行数更多 > 更新的文件。
+  const score = (match) => {
+    const sourcePath = String(match.raw?.source?.path || '')
+    const sourceSize = Number(match.raw?.source?.size || 0)
+    let value = 0
+    if (episode?.file && sourcePath === episode.file) value += 1000
+    if (episode?.size && sourceSize && sourceSize === Number(episode.size)) value += 100
+    value += Math.min(99, (match.raw?.lines?.length || 0) / 100)
+    return value
+  }
+  matches.sort((a, b) => score(b) - score(a) || (b.mtimeMs || 0) - (a.mtimeMs || 0))
+
   const [{ file, raw }] = matches
+  if (matches.length > 1) {
+    console.warn(`[dsh-podwave] 字幕认领：${title} 有 ${matches.length} 个候选，按音频路径/大小取最可能的一个`)
+  }
   const claimed = normalizeTranscript(
     {
       ...raw,
@@ -252,6 +270,14 @@ async function claimOrphanTranscript(id) {
     return null
   }
   console.warn(`[dsh-podwave] 字幕认领：${path.basename(file)} → ${id}.json（${title}）`)
+  // 旧的那份已经复制成新 id 了，留着只会在下次认领时变成第二个候选；挪进备份目录，不直接删。
+  const backupDir = path.join(TRANSCRIPTS_DIR, '.claimed')
+  try {
+    await mkdir(backupDir, { recursive: true })
+    await rename(file, path.join(backupDir, path.basename(file)))
+  } catch {
+    /* 挪不动就算了，不影响读取 */
+  }
   return claimed
 }
 
@@ -274,6 +300,57 @@ export async function readTranscript(id) {
 }
 
 // 启动时把目录里所有老 transcript 迁成 v2，并留一份 <id>.json.v1.bak。
+// 分块缓存（.work/<id>/parts、results）在转写成功后会被清掉，
+// 但取消/失败/老版本留下的会一直堆着 —— 几百兆就是这么来的。启动时扫一遍。
+export async function sweepWorkDirs({ maxAgeMs = 7 * 24 * 60 * 60 * 1000 } = {}) {
+  let entries = []
+  try {
+    entries = await readdir(WORK_DIR, { withFileTypes: true })
+  } catch {
+    return { removed: 0 }
+  }
+  let removed = 0
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const dir = path.join(WORK_DIR, entry.name)
+    // 已经有完整字幕的目录，缓存没有保留价值，直接清。
+    let hasTranscript = false
+    try {
+      await fs.promises.access(transcriptPath(entry.name))
+      hasTranscript = true
+    } catch {
+      hasTranscript = false
+    }
+    let stale = false
+    if (!hasTranscript) {
+      try {
+        const stat = fs.statSync(dir)
+        const age = Date.now() - stat.mtimeMs
+        // 一个结果都没产出的目录，一天以上就是纯粹的垃圾（早就没得续）；
+        // 有结果的留满 7 天，给「续转」留余地。
+        let resultCount = 0
+        try {
+          resultCount = (await readdir(path.join(dir, 'results'))).length
+        } catch {
+          resultCount = 0
+        }
+        stale = resultCount === 0 ? age > 24 * 60 * 60 * 1000 : age > maxAgeMs
+      } catch {
+        stale = false
+      }
+    }
+    if (!hasTranscript && !stale) continue
+    try {
+      await rm(dir, { recursive: true, force: true })
+      removed += 1
+    } catch {
+      /* 删不掉就下次再说 */
+    }
+  }
+  if (removed) console.log(`[dsh-podwave] 清理了 ${removed} 个过期的分块缓存目录`)
+  return { removed }
+}
+
 export async function migrateAllTranscripts() {
   let names = []
   try {
@@ -282,16 +359,39 @@ export async function migrateAllTranscripts() {
     return { migrated: 0 }
   }
   let migrated = 0
+  const claimed = new Set()
+  const raws = new Map()
   for (const name of names) {
     if (!name.endsWith('.json') || name.startsWith('.')) continue
-    const file = path.join(TRANSCRIPTS_DIR, name)
-    let raw
     try {
-      raw = JSON.parse(await readFile(file, 'utf8'))
+      const parsed = JSON.parse(await readFile(path.join(TRANSCRIPTS_DIR, name), 'utf8'))
+      raws.set(name, parsed)
+      if (parsed?.claimedFrom) claimed.add(String(parsed.claimedFrom))
     } catch {
-      continue
+      /* 坏文件交给下面的迁移分支忽略 */
     }
-    if (raw?.schemaVersion === 2) continue
+  }
+  // 旧逻辑认领完不删原件，同一集会留下「孤儿 + 认领后」两份，用户看到重复条目。
+  // 这里把已经被别人认领走的孤儿挪进 .claimed/ 留档（不删）。
+  for (const [name, parsed] of raws) {
+    const id = name.replace(/\.json$/, '')
+    if (!claimed.has(id)) continue
+    const backupDir = path.join(TRANSCRIPTS_DIR, '.claimed')
+    try {
+      await mkdir(backupDir, { recursive: true })
+      await rename(path.join(TRANSCRIPTS_DIR, name), path.join(backupDir, name))
+      migrated += 1
+    } catch {
+      /* ignore */
+    }
+    raws.delete(name)
+  }
+
+  for (const name of raws.keys()) {
+    if (!name.endsWith('.json') || name.startsWith('.')) continue
+    const file = path.join(TRANSCRIPTS_DIR, name)
+    const raw = raws.get(name)
+    if (!raw || raw?.schemaVersion === 2) continue
     const normalized = normalizeTranscript(raw, name.replace(/\.json$/, ''))
     if (!normalized) continue
     const backup = `${file}.v1.bak`

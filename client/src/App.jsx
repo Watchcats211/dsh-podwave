@@ -4,6 +4,7 @@ import Cover from './components/Cover.jsx'
 import TranscriptPanel from './components/TranscriptPanel.jsx'
 import XyzPanel from './components/XyzPanel.jsx'
 import { fmtTime, fmtDuration, fmtDate, initialOf, shortPath } from './lib/format.js'
+import { childDirs as buildChildDirs, crumbsFor } from './lib/tree.js'
 import { jobLabel } from './lib/jobLabel.js'
 
 const API = '/podwave/api'
@@ -188,7 +189,10 @@ export default function App() {
   const [sort, setSort] = useState('recent')
   const [view, setView] = useState('all')
   const [folderView, setFolderView] = useState('')
+  // folderView 是「添加进来的根文件夹」，subDir 是点进去的子目录（绝对路径）。
+  const [subDir, setSubDir] = useState('')
   const [filter, setFilter] = useState('all')
+
   const [detailId, setDetailId] = useState(null)
   const [current, setCurrent] = useState(null)
   const [playing, setPlaying] = useState(false)
@@ -657,11 +661,27 @@ export default function App() {
     return list
   }, [items, sort])
 
+  // 选中根文件夹后逐层往下钻：subDir 是当前目录相对根文件夹的路径（'' 就是根目录本身），
+  // 服务端已经算好每个单集的 rel，前端不用再拼绝对路径，Windows 上也不会踩分隔符的坑。
+  const currentRel = folderView ? subDir : ''
+  const dirItems = useMemo(
+    () => (folderView ? items.filter((item) => item.root === folderView) : []),
+    [items, folderView],
+  )
+  const childDirs = useMemo(
+    () => (folderView ? buildChildDirs(dirItems, currentRel) : []),
+    [dirItems, folderView, currentRel],
+  )
+
   const visible = useMemo(() => {
     const text = query.trim().toLowerCase()
     return ordered.filter((item) => {
       // 选中某个文件夹时只看这个文件夹里的内容（小宇宙等远端条目不归任何本地文件夹）。
       if (folderView && item.root !== folderView) return false
+      if (folderView) {
+        // 只看当前这一层：子目录里的内容要点进去才出现，避免所有目录的音频混在一起。
+        if ((item.rel || '') !== currentRel) return false
+      }
       if (text && !`${item.title} ${item.artist} ${item.album}`.toLowerCase().includes(text)) return false
       const saved = progress[item.id]
       const pos = saved?.position || 0
@@ -674,7 +694,7 @@ export default function App() {
       if (filter === 'favorites') return Boolean(item.favorite)
       return true
     })
-  }, [ordered, query, view, filter, progress, folderView])
+  }, [ordered, query, view, filter, progress, folderView, currentRel])
 
   const activeJobs = useMemo(() => jobs.filter((job) => job.status === 'queued' || job.status === 'running'), [jobs])
   const unTranscribed = useMemo(() => visible.filter((item) => !item.hasTranscript), [visible])
@@ -693,8 +713,14 @@ export default function App() {
   const totalSeconds = useMemo(() => items.reduce((sum, item) => sum + (item.duration || 0), 0), [items])
   const totalHours = Math.round((totalSeconds / 3600) * 10) / 10
 
+  // 面包屑：根文件夹 → 逐层子目录，点任意一段跳回去。
+  const crumbs = useMemo(
+    () => (folderView ? crumbsFor(shortPath(folderView), currentRel) : []),
+    [folderView, currentRel],
+  )
+
   const viewTitle = folderView
-    ? shortPath(folderView)
+    ? crumbs.length > 1 ? crumbs[crumbs.length - 1].label : shortPath(folderView)
     : view === 'inprogress' ? '继续收听' : view === 'finished' ? '已播完' : view === 'xyz' ? '小宇宙' : '全部单集'
   const detailItem = detailId ? (items.find((item) => item.id === detailId) || (current?.id === detailId ? current : null)) : null
   const subline = loading
@@ -702,7 +728,7 @@ export default function App() {
     : scan.running
       ? '正在扫描文件夹…'
       : folderView
-        ? `${visible.length} 集 · 只显示这个文件夹`
+        ? `${visible.length} 集${childDirs.length ? ` · ${childDirs.length} 个子文件夹` : ''} · 只看这一层`
         : `${visible.length} 集 · 共 ${totalHours} 小时 · ${folders.length} 个文件夹`
 
   const currentIndex = useMemo(() => {
@@ -1405,6 +1431,23 @@ export default function App() {
           </section>
         ) : null}
 
+        {folderView ? (
+          <nav className="crumbs" aria-label="目录">
+            {crumbs.map((crumb, index) => (
+              <span key={crumb.rel || 'root'} className="crumb-item">
+                {index > 0 ? <span className="crumb-sep">/</span> : <Icon name="folder" size={14} />}
+                <button
+                  className={`crumb ${index === crumbs.length - 1 ? 'is-current' : ''}`}
+                  onClick={() => setSubDir(crumb.rel)}
+                  disabled={index === crumbs.length - 1}
+                >
+                  {crumb.label}
+                </button>
+              </span>
+            ))}
+          </nav>
+        ) : null}
+
         <section className="list-section">
           <div className="list-head">
             <span className="col-index">#</span>
@@ -1413,16 +1456,34 @@ export default function App() {
             <span className="col-progress">进度</span>
           </div>
 
+          {!loading && folderView && childDirs.length > 0 && !query ? (
+            <div className="folder-rows">
+              {childDirs.map((dir) => (
+                <button key={dir.rel} className="row folder-row" onClick={() => setSubDir(dir.rel)} title={dir.name}>
+                  <span className="col-index row-index"><Icon name="folder" size={16} /></span>
+                  <span className="row-main">
+                    <span className="row-text">
+                      <span className="row-title">{dir.name}</span>
+                      <span className="row-meta">{dir.count} 个音频 · 点进去只看这个文件夹</span>
+                    </span>
+                  </span>
+                  <span className="col-duration row-duration">›</span>
+                </button>
+              ))}
+            </div>
+          ) : null}
+
           {loading ? (
             <div className="empty">正在读取…</div>
-          ) : visible.length === 0 ? (
+          ) : visible.length === 0 && !(folderView && childDirs.length > 0 && !query) ? (
             <div className="empty">
               <p>{items.length === 0 ? '媒体库还是空的' : '没有符合条件的单集'}</p>
               <p className="empty-hint">
                 {items.length === 0
                   ? '添加一个存放播客音频的文件夹，Podwave 会自动列出所有单集。'
                   : folderView
-                    ? `这个文件夹里没有可播放的内容。点「全部单集」看其它文件夹。`
+                    ? `这个文件夹里没有直接放在这里的音频${childDirs.length ? '，点上面的子文件夹进去看看' : '。'}`
+
                     : '换个关键词或切回全部单集。'}
               </p>
               {items.length === 0 ? <button className="btn primary" onClick={() => setAddOpen(true)}>添加文件夹</button> : null}
