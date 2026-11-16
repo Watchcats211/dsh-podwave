@@ -12,7 +12,8 @@ import { getSection } from './config.js'
 export const API_ASR_PATH = '/v1/tools/asr'
 // 官方要求 ≤120 秒。留 20 秒余量：切片是按容器时间戳切的，
 // 有些音频的重采样/补帧会多出零点几秒，卡在 120 上迟早翻车。
-export const API_CHUNK_SECONDS = 30
+// 块越大，句子被块边界切开的概率越低（切点还会吸附到静音处，见 transcribe.js 的 planCuts）。
+export const API_CHUNK_SECONDS = 100
 export const API_MAX_SECONDS = 100
 export const API_MAX_BYTES = 8 * 1024 * 1024
 const REQUEST_TIMEOUT_MS = 180000
@@ -20,6 +21,14 @@ const MAX_ATTEMPTS = 4
 
 const SENTENCE_END = /[。！？!?…]/
 const CLAUSE_END = /[，,；;、]/
+// 紧跟句末标点的右引号/右括号要留在同一行，不然会出现「他说：」+「」」这种断裂。
+const CLOSER = /[」』）)】》”’"]/
+// 一条字幕的长度上限（字符数）。有词边界的语言可以长一点，中日文没有空格，短一些。
+const HARD_LIMIT = 84
+const CJK_HARD_LIMIT = 48
+// 逗号/顿号只有攒到这么长才算断点：短句里的逗号断开反而更难读。
+// 中日文一行 30 字左右最好读，超过 48 字就必须断。
+const SOFT_MIN = 30
 
 function round2(value) {
   return Math.round((Number(value) || 0) * 100) / 100
@@ -131,28 +140,69 @@ export async function transcribeChunk(file, config = asrApiConfig(), { signal } 
 }
 
 /**
+ * 把一整段识别文本切成字幕句：句末标点断句；逗号只在够长时才断；
+ * 超长且没有标点（日语、中文常见）就退到最近的空格/标点处断，实在没有才硬断。
+ */
+export function splitApiSentences(text) {
+  const chars = Array.from(String(text || ''))
+  const pieces = []
+  let buffer = ''
+  const flush = () => {
+    const piece = buffer.trim()
+    if (piece) pieces.push(piece)
+    buffer = ''
+  }
+  for (let index = 0; index < chars.length; index += 1) {
+    const char = chars[index]
+    buffer += char
+    const next = chars[index + 1] || ''
+    // 句末标点：后面还跟着右引号/右括号时先不断，等它们进来再断。
+    if (SENTENCE_END.test(char)) {
+      if (CLOSER.test(next)) continue
+      flush()
+      continue
+    }
+    if (CLOSER.test(char) && SENTENCE_END.test(chars[index - 1] || '')) {
+      flush()
+      continue
+    }
+    const length = buffer.trim().length
+    if (CLAUSE_END.test(char) && length >= SOFT_MIN) {
+      flush()
+      continue
+    }
+    if (length >= (/\s/.test(buffer) ? HARD_LIMIT : CJK_HARD_LIMIT)) {
+      const cut = lastBreakIndex(buffer)
+      if (cut > SOFT_MIN) {
+        const head = buffer.slice(0, cut).trim()
+        if (head) pieces.push(head)
+        buffer = buffer.slice(cut)
+      } else {
+        flush()
+      }
+    }
+  }
+  flush()
+  return pieces
+}
+
+// 在超长且没有标点的片段里挑一个断点：优先空格（英法等有词边界），其次标点。
+function lastBreakIndex(text) {
+  for (let index = text.length - 1; index > 0; index -= 1) {
+    if (/[\s，,；;、]/.test(text[index])) return index + 1
+  }
+  return -1
+}
+
+/**
  * 把一整段识别文本切成字幕行，并在 [start, start+duration) 之间按字数比例分配时间。
- * 接口不给时间戳，这个分配是估算：短块（30 秒）内误差可以接受，
- * 比起「一行 30 秒」那种粗粒度，按标点切句读起来舒服得多。
+ * 接口不给时间戳，这个分配是估算：块内误差可以接受，
+ * 比起「一行 30 秒」那种粗粒度，按句读切分读起来舒服得多。
  */
 export function buildApiLines(text, start, duration) {
   const clean = String(text || '').replace(/\s+/g, ' ').trim()
   if (!clean) return []
-  const pieces = []
-  let buffer = ''
-  for (const char of clean) {
-    buffer += char
-    const hard = SENTENCE_END.test(char)
-    // 逗号只在已经攒了 24 个字以上才切，避免「但是，」「所以，」这种碎行。
-    const soft = CLAUSE_END.test(char) && buffer.length >= 24
-    if (hard || soft || buffer.length >= 60) {
-      const piece = buffer.trim()
-      if (piece) pieces.push(piece)
-      buffer = ''
-    }
-  }
-  const tail = buffer.trim()
-  if (tail) pieces.push(tail)
+  const pieces = splitApiSentences(clean)
   if (!pieces.length) return []
 
   const totalChars = pieces.reduce((sum, piece) => sum + piece.length, 0) || 1

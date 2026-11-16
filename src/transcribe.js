@@ -515,7 +515,7 @@ async function detectSilenceMidpoints(file) {
   return mids
 }
 
-function planCuts(duration, chunkSeconds, silences) {
+export function planCuts(duration, chunkSeconds, silences) {
   const cuts = [0]
   let target = chunkSeconds
   while (target < duration - 20) {
@@ -705,8 +705,27 @@ function countResults(resultsDir, plan) {
   return { count, seconds }
 }
 
+// 切点即使吸附到静音，块边界仍可能落在句子中间；云端接口还会给被截断的片段补个句号。
+// 所以合并时把「上一块最后一行」和「下一块第一行」按时间连续性接回去。
+const TERMINAL_END = /[。！？!?…][」』）)】》”’"]?$/
+
+export function stitchAcrossParts(prev, next) {
+  const gap = Number(next.start) - Number(prev.end)
+  if (!(gap >= -0.25 && gap <= 0.45)) return null
+  const left = String(prev.text || '')
+  const right = String(next.text || '')
+  if (!left || !right) return null
+  // 上一行没有句末标点，或者短得像半句（「明日。」），就认定它被切断了。
+  const suspicious = !TERMINAL_END.test(left) || left.replace(/\s/g, '').length <= 6
+  if (!suspicious) return null
+  const joiner = /[A-Za-z0-9]$/.test(left) && /^[A-Za-z0-9]/.test(right) ? ' ' : ''
+  const text = `${left}${joiner}${right}`
+  if (text.length > 120) return null
+  return { text, end: Number(next.end) }
+}
+
 function mergedFromResults(plan, resultsDir) {
-  const lines = []
+  const groups = []
   let language = ''
   const texts = []
   for (const part of [...plan.parts].sort((a, b) => a.index - b.index)) {
@@ -719,19 +738,39 @@ function mergedFromResults(plan, resultsDir) {
     }
     if (!language && data.language) language = data.language
     if (data.text) texts.push(data.text)
+    const group = []
     for (const line of data.lines || []) {
       const text = String(line.text || '').trim()
       if (!text) continue
-      lines.push({
-        id: lines.length + 1,
+      group.push({
         start: round2(Number(line.start) + part.start),
         end: round2(Number(line.end) + part.start),
         text,
-        speaker: null,
-        translations: {},
       })
     }
+    if (group.length) groups.push(group)
   }
+
+  const joined = []
+  for (const group of groups) {
+    if (joined.length && group.length) {
+      const stitched = stitchAcrossParts(joined[joined.length - 1], group[0])
+      if (stitched) {
+        joined[joined.length - 1] = { ...joined[joined.length - 1], text: stitched.text, end: stitched.end }
+        group.shift()
+      }
+    }
+    joined.push(...group)
+  }
+
+  const lines = joined.map((line, index) => ({
+    id: index + 1,
+    start: round2(line.start),
+    end: round2(line.end),
+    text: line.text,
+    speaker: null,
+    translations: {},
+  }))
   return { lines, language, texts }
 }
 

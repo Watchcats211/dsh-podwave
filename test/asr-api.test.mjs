@@ -25,9 +25,11 @@ test('默认走云端 API，只有明确写 local 才切本地', () => {
   assert.equal(asrProvider(), 'api')
 })
 
-test('云端切片固定 30 秒，远低于接口 120 秒上限', () => {
-  assert.equal(API_CHUNK_SECONDS, 30)
-  assert.ok(API_CHUNK_SECONDS * 1.5 < 120)
+test('云端切片取 100 秒，离接口 120 秒上限留足余量', () => {
+  assert.equal(API_CHUNK_SECONDS, 100)
+  // 块越大，句子被块边界切开的概率越低；但必须给重采样/补帧留下的余量。
+  assert.ok(API_CHUNK_SECONDS < 120)
+  assert.ok(120 - API_CHUNK_SECONDS >= 15)
 })
 
 test('没有 key 时明确报错，而不是静默失败', async () => {
@@ -93,6 +95,53 @@ test('没有标点的长串也会被切成多行，不会一行写满整块', ()
   assert.ok(lines.length >= 4)
   for (const line of lines) assert.ok(line.text.length <= 60)
   assert.equal(lines[lines.length - 1].end, 30)
+})
+
+test('句末标点后面的右引号不会被甩到下一行', () => {
+  const lines = buildApiLines('他说：「これはテストです。」それから帰った。', 0, 6)
+  assert.equal(lines.length, 2)
+  assert.ok(lines[0].text.endsWith('。」'))
+  assert.ok(lines[1].text.endsWith('。'))
+})
+
+test('短句里的逗号不当作断点，避免「はい、」这种碎片行', () => {
+  const lines = buildApiLines('はい、そうです。', 0, 2)
+  assert.equal(lines.length, 1)
+  assert.equal(lines[0].text, 'はい、そうです。')
+})
+
+test('短句保持一行，不会因为一个逗号就被劈开', () => {
+  const lines = buildApiLines('今日は東京に行く予定がありますので、早めに起きなければなりません。', 0, 6)
+  assert.equal(lines.length, 1)
+})
+
+test('超过 30 字还在继续的句子，在逗号处断开', () => {
+  const long = '今日は東京に行く予定があるので早めに起きなければならないと思っているのですが、まだ荷物をまとめていなくて困っています。'
+  const lines = buildApiLines(long, 0, 12)
+  assert.ok(lines.length >= 2)
+  assert.ok(lines.every((line) => line.text.length <= 48))
+})
+
+test('切点吸附到静音：块边界落在停顿处，而不是硬切在话中间', async () => {
+  const { planCuts } = await import('../src/transcribe.js')
+  const cuts = planCuts(300, 100, [95, 198, 289])
+  assert.deepEqual(cuts, [0, 95, 198, 300])
+})
+
+test('块边界把句子切开时，合并阶段会把两半接回去', async () => {
+  const { stitchAcrossParts } = await import('../src/transcribe.js')
+  const tail = { start: 96, end: 100, text: '明日' }
+  const head = { start: 100, end: 103, text: 'は東京に行く予定です。' }
+  const joined = stitchAcrossParts(tail, head)
+  assert.equal(joined.text, '明日は東京に行く予定です。')
+  assert.equal(joined.end, 103)
+})
+
+test('两句话本来都完整，就不硬接在一起', async () => {
+  const { stitchAcrossParts } = await import('../src/transcribe.js')
+  const prev = { start: 96, end: 100, text: '今日はいい天気ですね。' }
+  const next = { start: 100.1, end: 103, text: 'それではまた後で会いましょう。' }
+  assert.equal(stitchAcrossParts(prev, next), null)
 })
 
 test('极短块也给每行留出可读的最小时长', () => {

@@ -100,11 +100,37 @@ test('translateWithApi 中途失败时，已保存的批次仍然保留', async 
   }
 })
 
-test('translateWithApi 缺号会报不完整，并带 incomplete 计数', async () => {
+test('日语/韩语行不算中文，照样要翻 —— 以前假名被当成 CJK 就整段跳过了', async () => {
+  const translate = await import('../src/translate.js')
+  assert.equal(translate.needsTranslation({ text: 'これはテストです。' }, 'zh'), true)
+  assert.equal(translate.needsTranslation({ text: '明日は東京に行く予定です。' }, 'zh'), true)
+  assert.equal(translate.needsTranslation({ text: '안녕하세요 반갑습니다.' }, 'zh'), true)
+  assert.equal(translate.needsTranslation({ text: 'これは漢字だけの行' }, 'zh'), true)
+})
+
+test('已经是目标语言的行不重复翻译', async () => {
+  const translate = await import('../src/translate.js')
+  assert.equal(translate.needsTranslation({ text: '今天天气不错，适合出门散步。' }, 'zh'), false)
+  assert.equal(translate.needsTranslation({ text: 'The weather is nice today.' }, 'zh'), true)
+  assert.equal(translate.needsTranslation({ text: 'The weather is nice today.' }, 'en'), false)
+  assert.equal(translate.needsTranslation({ text: '今天天气不错。' }, 'en'), true)
+  // 纯数字、纯标点没什么可翻的
+  assert.equal(translate.needsTranslation({ text: '12:34' }, 'zh'), false)
+  assert.equal(translate.needsTranslation({ text: '...' }, 'en'), false)
+})
+
+test('模型把多行并成一行时，降批重试保证一行对一行', async () => {
   const originalFetch = globalThis.fetch
-  globalThis.fetch = async () => {
-    // 故意只返回第 1 行，缺第 2、3 行
-    return apiReply('1. 只有第一行')
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body)
+    const user = body.messages.find((message) => message.role === 'user').content
+    const lines = user.split('\n')
+    if (lines.length === 1) {
+      const text = lines[0].replace(/^\d+\.\s*/, '')
+      return apiReply(`1. 译:${text}`)
+    }
+    // 多行时故意只回一行（小模型常见的「合并短行」行为）
+    return apiReply('1. 合并后的一行')
   }
   try {
     const items = [
@@ -112,14 +138,11 @@ test('translateWithApi 缺号会报不完整，并带 incomplete 计数', async 
       { id: 2, text: 'two' },
       { id: 3, text: 'three' },
     ]
-    await assert.rejects(
-      () => translateWithApi(items, 'zh', config, { onBatch: () => {} }),
-      (error) => {
-        assert.match(error.message, /API 返回不完整：2 行/)
-        assert.equal(error.incomplete, 2)
-        return true
-      },
-    )
+    const result = await translateWithApi(items, 'zh', config, { onBatch: () => {} })
+    assert.equal(result.size, 3)
+    assert.equal(result.get(1), '译:one')
+    assert.equal(result.get(2), '译:two')
+    assert.equal(result.get(3), '译:three')
   } finally {
     globalThis.fetch = originalFetch
   }

@@ -85,17 +85,55 @@ export function publicConfig() {
   }
 }
 
-function cjkRatio(text) {
-  const chars = Array.from(String(text || ''))
-  if (!chars.length) return 0
-  const cjk = chars.filter((char) => /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(char)).length
-  return cjk / chars.length
+const KANA_RE = /[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]/
+const HANGUL_RE = /[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]/
+const HAN_RE = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/
+// 拉丁字母 + 常见带音标的拉丁字母（法/德/西/葡…）+ 希腊/西里尔，都算「非汉字」。
+const LATIN_RE = /[A-Za-z\u00c0-\u024f\u0370-\u03ff\u0400-\u04ff]/
+
+export function scriptCounts(text) {
+  const counts = { han: 0, kana: 0, hangul: 0, latin: 0 }
+  for (const char of Array.from(String(text || ''))) {
+    if (KANA_RE.test(char)) counts.kana += 1
+    else if (HANGUL_RE.test(char)) counts.hangul += 1
+    else if (HAN_RE.test(char)) counts.han += 1
+    else if (LATIN_RE.test(char)) counts.latin += 1
+  }
+  return counts
 }
 
-// 只翻与目标语言不同的行：目标中文翻英文行，目标英文翻中文行。
-function needsTranslation(line, target) {
-  const ratio = cjkRatio(line.text)
-  return target === 'zh' ? ratio < 0.35 : ratio > 0.15
+function looksChinese(text) {
+  const { han, kana, hangul, latin } = scriptCounts(text)
+  if (!han || kana || hangul) return false
+  return han >= latin
+}
+
+function looksEnglish(text) {
+  const { han, kana, hangul, latin } = scriptCounts(text)
+  if (!latin) return false
+  return latin >= han + kana + hangul
+}
+
+/**
+ * 只翻与目标语言不同的行。
+ *
+ * 以前按「CJK 字符占比」判断，假名和谚文都被算进 CJK：日语行占比接近 1，
+ * 就被当成「已经是中文 → 不用翻」，日语/韩语视频一行译文都生不出来。
+ * 现在按文字体系判断：有假名或谚文一定不是中文，纯汉字才算中文。
+ */
+export function needsTranslation(line, target) {
+  const text = String(line?.text || '')
+  const { han, kana, hangul, latin } = scriptCounts(text)
+  if (!han && !kana && !hangul && !latin) return false // 纯数字/标点不用翻
+  if (target === 'zh') {
+    if (kana || hangul) return true
+    return !looksChinese(text)
+  }
+  if (target === 'en') {
+    if (han || kana || hangul) return true
+    return !looksEnglish(text)
+  }
+  return true
 }
 
 export function parseNumbered(text, count) {
@@ -146,6 +184,46 @@ async function fetchWithRetry(url, init, { attempts = 3, timeoutMs = 120000 } = 
   throw lastError
 }
 
+async function requestApiBatch(batch, system, config) {
+  const content = batch.map((line, index) => `${index + 1}. ${line.text}`).join('\n')
+  const response = await fetchWithRetry(`${config.apiBase.replace(/\/+$/, '')}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${config.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: config.apiModel,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content },
+      ],
+    }),
+  })
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(`翻译 API ${response.status}：${detail.slice(0, 200)}`)
+  }
+  const data = await response.json().catch(() => null)
+  if (!data || !Array.isArray(data.choices) || typeof data.choices[0]?.message?.content !== 'string') {
+    throw new Error(data?.error?.message ? `翻译 API：${String(data.error.message).slice(0, 200)}` : '翻译 API 返回格式不正确：没有字幕内容')
+  }
+  const parsed = parseNumbered(data.choices[0].message.content, batch.length)
+  if (parsed.size === batch.length) return parsed
+  // 行数对不上说明模型把几行并成一行（短行尤其常见），编号会整体后移。
+  // 降批重试，直到一行对一行；单行不可能再错位。
+  if (batch.length > 1) {
+    const mid = Math.ceil(batch.length / 2)
+    const merged = new Map()
+    for (const [index, text] of await requestApiBatch(batch.slice(0, mid), system, config)) merged.set(index, text)
+    for (const [index, text] of await requestApiBatch(batch.slice(mid), system, config)) merged.set(index + mid, text)
+    return merged
+  }
+  const single = String(parsed.get(1) || '').trim()
+  return single ? new Map([[1, single]]) : new Map()
+}
+
 export async function translateWithApi(items, target, config, { onBatch, shouldContinue = () => true } = {}) {
   const language = target === 'zh' ? 'Simplified Chinese' : 'English'
   const system = `You are a professional subtitle translator. Translate each numbered line into ${language}. Preserve proper names, numbers and terminology. Output only numbered lines in the format "1. translation".`
@@ -155,31 +233,7 @@ export async function translateWithApi(items, target, config, { onBatch, shouldC
   for (let start = 0; start < items.length; start += batchSize) {
     if (!shouldContinue()) throw new Error('翻译已取消')
     const batch = items.slice(start, start + batchSize)
-    const content = batch.map((line, index) => `${index + 1}. ${line.text}`).join('\n')
-    const response = await fetchWithRetry(`${config.apiBase.replace(/\/+$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: config.apiModel,
-        temperature: 0.2,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content },
-        ],
-      }),
-    })
-    if (!response.ok) {
-      const detail = await response.text().catch(() => '')
-      throw new Error(`翻译 API ${response.status}：${detail.slice(0, 200)}`)
-    }
-    const data = await response.json().catch(() => null)
-    if (!data || !Array.isArray(data.choices) || typeof data.choices[0]?.message?.content !== 'string') {
-      throw new Error(data?.error?.message ? `翻译 API：${String(data.error.message).slice(0, 200)}` : '翻译 API 返回格式不正确：没有字幕内容')
-    }
-    const parsed = parseNumbered(data.choices[0].message.content, batch.length)
+    const parsed = await requestApiBatch(batch, system, config)
     const missing = missingNumberedItems(batch, parsed)
     incomplete += missing.length
     batch.forEach((line, index) => {
@@ -197,10 +251,21 @@ export async function translateWithApi(items, target, config, { onBatch, shouldC
   return result
 }
 
+// llama-server 也会把短行并起来，编号一错就整批错位；行数对不上就降批重试。
+async function translateWithLlamaAligned(items, target) {
+  const parsed = await translateWithLlama(items, target)
+  if (parsed.length === items.length) return parsed
+  if (items.length <= 1) return parsed.slice(0, 1)
+  const mid = Math.ceil(items.length / 2)
+  const left = await translateWithLlamaAligned(items.slice(0, mid), target)
+  const right = await translateWithLlamaAligned(items.slice(mid), target)
+  return [...left, ...right.map((entry) => ({ index: entry.index + mid, text: entry.text }))]
+}
+
 async function translateWithLocal(items, target) {
   const model = currentLocalModel()
   if (model.engine === 'llama') {
-    const parsed = await translateWithLlama(items, target)
+    const parsed = await translateWithLlamaAligned(items, target)
     const result = new Map()
     for (const entry of parsed) {
       const line = items[entry.index]
