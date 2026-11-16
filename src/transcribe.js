@@ -7,14 +7,16 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
-import { DATA_DIR } from './state.js'
+import { DATA_DIR, getState } from './state.js'
 import { loadModelConfig, modelDir } from './models.js'
 import { ffmpegPath, ffprobePath, killTree, venvBin, venvPython } from './platform.js'
 import { getSection } from './config.js'
-import { API_CHUNK_SECONDS, asrApiConfig, asrProvider, buildApiLines, transcribeChunk } from './asr-api.js'
+import { API_CHUNK_SECONDS, REALTIME_CHUNK_SECONDS, asrApiConfig, asrProvider, buildApiLines, transcribeChunk } from './asr-api.js'
 import { artifactByDir } from './catalog.js'
 import { assignSpeakers, diarizeInfo, runDiarization } from './diarize.js'
 import { resegmentLines } from './segment.js'
+import { closeLiveSpeakers, createLiveSpeakers } from './live-speaker.js'
+import { loadConfig as loadTranslateConfig, needsTranslation, translateWithApi } from './translate.js'
 import { flushJobs, getJob, getJobFresh, jobKey, removeJob, upsertJob } from './jobs.js'
 
 export const TRANSCRIPTS_DIR = path.join(DATA_DIR, 'transcripts')
@@ -579,11 +581,12 @@ async function splitAudio(file, dir, chunkSeconds) {
 }
 
 // 生成或复用切块计划；计划存 .work/<id>/meta.json，块结果在 .work/<id>/results/<index>.json。
-async function ensurePlan(episode, workDir, shouldCancel, provider = asrProvider()) {
+async function ensurePlan(episode, workDir, shouldCancel, provider = asrProvider(), chunkSecondsOverride) {
   const api = provider === 'api'
   const { chunkMinutes } = transcribeConfig()
-  // 云端接口硬限制单次 120 秒，所以固定切 30 秒一块；本地引擎沿用设置里的 chunkMinutes。
-  const chunkSeconds = api ? API_CHUNK_SECONDS : Math.round(chunkMinutes * 60)
+  // 云端接口硬限制单次 120 秒：整段转写用 100 秒的大块，实时跟播用 12 秒的小块。
+  // 本地引擎沿用设置里的 chunkMinutes。
+  const chunkSeconds = chunkSecondsOverride || (api ? API_CHUNK_SECONDS : Math.round(chunkMinutes * 60))
   const duration = Number(episode.duration) || (await probeDuration(episode.file)) || 0
   if (!duration) throw new Error('无法读取音频时长（ffprobe）')
   const metaPath = path.join(workDir, 'meta.json')
@@ -768,6 +771,46 @@ function mergedFromResults(plan, resultsDir) {
   // 先整理成整句再落盘：翻译按行送模型，碎片行会让小模型自己合并、译文整体错位。
   const lines = resegmentLines(joined)
   return { lines, language, texts }
+}
+
+// 实时跟播：每完成一块就把这一块的行立刻翻译出来，用户不用等整段转完。
+const LIVE_TARGET = 'zh'
+
+async function translateLiveLines(lines, cache) {
+  const config = loadTranslateConfig()
+  if (!config.apiKey) return 0
+  const batch = []
+  const seen = new Set()
+  for (const line of lines) {
+    const text = String(line.text || '').trim()
+    if (!text || cache.has(text) || seen.has(text)) continue
+    if (!needsTranslation(line, LIVE_TARGET)) continue
+    seen.add(text)
+    batch.push({ id: text, text })
+  }
+  if (!batch.length) return 0
+  const result = await translateWithApi(batch, LIVE_TARGET, config)
+  for (const [key, value] of result) cache.set(key, value)
+  return result.size
+}
+
+// 译文按「原文」缓存：断句重排会让行号变，但同一句原文的译文可以复用。
+function applyLiveTranslations(lines, cache) {
+  if (!cache.size) return
+  for (const line of lines) {
+    const text = String(line.text || '').trim()
+    const hit = cache.get(text)
+    if (hit) line.translations = { ...(line.translations || {}), [LIVE_TARGET]: hit }
+  }
+}
+
+function playbackPosition(episodeId) {
+  try {
+    const position = Number(getState().progress?.[episodeId]?.position)
+    return Number.isFinite(position) && position > 0 ? position : 0
+  } catch {
+    return 0
+  }
 }
 
 function buildPreview(episode, plan, merged) {
@@ -1218,8 +1261,10 @@ function apiTranscript(episode, plan, merged, speakers, source) {
 
 async function runApiJob(item) {
   const { episode, force } = item
+  const realtime = Boolean(item.realtime)
   const key = jobId(episode.id)
-  const work = path.join(WORK_DIR, episode.id)
+  // 实时跟播和整段转写的块号不通用，缓存目录必须分开，否则续跑会读到别的切法。
+  const work = path.join(WORK_DIR, realtime ? `${episode.id}-rt` : episode.id)
   const target = transcriptPath(episode.id)
   const backup = `${target}.previous`
   let plan = null
@@ -1241,7 +1286,7 @@ async function runApiJob(item) {
     })
     if (force) await rm(work, { recursive: true, force: true })
     await mkdir(work, { recursive: true })
-    plan = await ensurePlan(episode, work, () => cancelRequested.has(key), 'api')
+    plan = await ensurePlan(episode, work, () => cancelRequested.has(key), 'api', realtime ? REALTIME_CHUNK_SECONDS : undefined)
     const resultsDir = path.join(work, 'results')
     await mkdir(resultsDir, { recursive: true })
 
@@ -1258,6 +1303,32 @@ async function runApiJob(item) {
       .reduce((sum, part) => sum + part.duration, 0)
     let cursor = 0
     let lastPreview = doneCount
+    // 实时模式：在线说话人 + 译文缓存，都随任务结束丢弃。
+    const taken = new Array(pending.length).fill(false)
+    const liveTranslations = new Map()
+    const live = realtime ? await createLiveSpeakers().catch(() => null) : null
+
+    // 4 个 worker 会同时完成，预览必须串行落盘，否则两个 writeFile 交错会把 JSON 写坏。
+    let publishChain = Promise.resolve()
+    const publishLivePreview = () => {
+      publishChain = publishChain.then(() => doPublishLivePreview()).catch(() => {})
+      return publishChain
+    }
+
+    const doPublishLivePreview = async () => {
+      lastPreview = doneCount
+      const preview = mergedFromResults(plan, resultsDir)
+      if (!preview.lines.length) return
+      if (live) await live.labelLines(preview.lines, plan.parts).catch(() => {})
+      await translateLiveLines(preview.lines, liveTranslations).catch(() => {})
+      applyLiveTranslations(preview.lines, liveTranslations)
+      const built = buildPreview(episode, plan, preview)
+      built.model = 'deepseek-asr'
+      if (liveTranslations.size) built.providers = { [LIVE_TARGET]: 'api' }
+      if (live) built.speakers = live.speakers()
+      await saveTranscript(built).catch(() => {})
+      partialWritten = true
+    }
 
     upsertJob({
       key,
@@ -1265,12 +1336,33 @@ async function runApiJob(item) {
       chunks: { total: plan.parts.length, done: doneCount, current: pending[0] ? pending[0].index + 1 : null },
     })
 
+    const takePart = () => {
+      if (!realtime) {
+        const part = pending[cursor]
+        cursor += 1
+        return part
+      }
+      // 实时：挑离播放头最近的一块，用户听到哪儿，字幕就跟到哪儿。
+      const position = playbackPosition(episode.id)
+      let bestIndex = -1
+      let bestScore = Number.POSITIVE_INFINITY
+      for (let index = 0; index < pending.length; index += 1) {
+        if (taken[index]) continue
+        const score = Math.abs(pending[index].start - position)
+        if (score < bestScore) {
+          bestScore = score
+          bestIndex = index
+        }
+      }
+      if (bestIndex < 0) return undefined
+      taken[bestIndex] = true
+      return pending[bestIndex]
+    }
+
     const worker = async () => {
       for (;;) {
         if (cancelRequested.has(key)) return
-        const index = cursor
-        cursor += 1
-        const part = pending[index]
+        const part = takePart()
         if (!part) return
         // 取消意图可能来自另一个模块实例（只写磁盘），所以这里轮询而不是只认内存标记。
         const controller = new AbortController()
@@ -1297,9 +1389,11 @@ async function runApiJob(item) {
           chunks: { total: plan.parts.length, done: doneCount, current: part.index + 1 },
           progress: progressOf(plan, doneSeconds, 0),
         })
-        // 每完成五分之一写一次预览，用户能边转边看，不用干等到最后。
+        // 实时：每块都发一次，字幕才跟得上；批量：每完成五分之一写一次预览。
         const step = Math.max(1, Math.round(plan.parts.length / 5))
-        if (doneCount - lastPreview >= step) {
+        if (realtime) {
+          await publishLivePreview().catch(() => {})
+        } else if (doneCount - lastPreview >= step) {
           lastPreview = doneCount
           const preview = mergedFromResults(plan, resultsDir)
           if (preview.lines.length) {
@@ -1320,6 +1414,11 @@ async function runApiJob(item) {
     upsertJob({ key, stage: 'merging' })
     const merged = mergedFromResults(plan, resultsDir)
     let speakers = []
+    // 实时期间攒下的译文要带进最终字幕；整段说话人分离不可用时，保留在线标签。
+    if (realtime) {
+      applyLiveTranslations(merged.lines, liveTranslations)
+      if (live) speakers = live.speakers()
+    }
     if (transcribeConfig().diarize && diarizeInfo().modelsReady) {
       const prevPercent = getJob(key)?.progress?.percent || 0
       upsertJob({ key, stage: 'diarizing', progress: { done: 0, total: 0, percent: Math.max(prevPercent, 96), unit: 'seconds' } })
@@ -1339,7 +1438,9 @@ async function runApiJob(item) {
       source = { path: episode.file }
     }
 
-    await saveTranscript(apiTranscript(episode, plan, merged, speakers, source))
+    const final = apiTranscript(episode, plan, merged, speakers, source)
+    if (realtime && liveTranslations.size) final.providers = { [LIVE_TARGET]: 'api' }
+    await saveTranscript(final)
     await rm(backup, { force: true }).catch(() => {})
     upsertJob({
       key,
@@ -1356,7 +1457,7 @@ async function runApiJob(item) {
     await rm(work, { recursive: true, force: true })
   } catch (error) {
     if (backedUp) await copyFile(backup, target).catch(() => {})
-    else if (partialWritten) await rm(target, { force: true }).catch(() => {})
+    else if (partialWritten && !realtime) await rm(target, { force: true }).catch(() => {})
     const disk = getJobFresh(key)
     const cancelledOnDisk = disk?.status === 'cancelled' || disk?.stage === 'cancelling'
     if (cancelRequested.has(key) || cancelledOnDisk) {
@@ -1375,13 +1476,17 @@ async function runApiJob(item) {
     cancelRequested.delete(key)
     active = null
     activeChild = null
+    // 声纹服务是常驻进程，任务结束就关掉，否则会一直挂在后台。
+    if (realtime) closeLiveSpeakers()
     upsertJob({ key, pid: null, orphan: false })
     flushJobs()
     pump()
   }
 }
 
-export async function startTranscription(episode, { force = false, resume = false } = {}) {
+// realtime=true：边播边转（12 秒小块、按播放头挑块、每块立刻出字幕/译文/说话人）。
+// 只有云端 API 支持这种走法；本地引擎是整段 batch 的，忽略 realtime 走普通流程。
+export async function startTranscription(episode, { force = false, resume = false, realtime = false } = {}) {
   const info = runtimeInfo()
   // 云端只要一把 key：不装 python 运行时、不下 2.4G 模型也能转写，这就是「装好就能用」。
   // 本地才检查运行时和模型，缺了就让用户去设置里一键装。
@@ -1403,10 +1508,15 @@ export async function startTranscription(episode, { force = false, resume = fals
     return { status: currentJob.status }
   }
 
-  const existing = await readTranscript(episode.id)
-  if (existing && !force && !resume) return { status: 'done', lines: existing.lines.length }
+  const useRealtime = Boolean(realtime) && info.provider === 'api'
+  const workRoot = useRealtime ? path.join(WORK_DIR, `${episode.id}-rt`) : path.join(WORK_DIR, episode.id)
 
-  const resumeWork = Boolean(resume) && fs.existsSync(path.join(WORK_DIR, episode.id, 'results'))
+  const existing = await readTranscript(episode.id)
+  // 实时跟播可能只跑了一半（partial），下次播放要接着补，不能因为「已经有字幕」就当成完成。
+  const halfDone = useRealtime && existing && existing.partial
+  if (existing && !force && !resume && !halfDone) return { status: 'done', lines: existing.lines.length }
+
+  const resumeWork = Boolean(resume || (useRealtime && halfDone)) && fs.existsSync(path.join(workRoot, 'results'))
   upsertJob({
     key,
     type: 'transcribe',
@@ -1421,7 +1531,7 @@ export async function startTranscription(episode, { force = false, resume = fals
     progress: { done: 0, total: 0, percent: 0, unit: 'seconds' },
     chunks: { total: 0, done: 0, current: null },
   })
-  queue.push({ episode, provider: info.provider, force: Boolean(force) || !resumeWork, resume: resumeWork })
+  queue.push({ episode, provider: info.provider, realtime: useRealtime, force: Boolean(force) || !resumeWork, resume: resumeWork })
   pump()
   return { status: 'queued' }
 }

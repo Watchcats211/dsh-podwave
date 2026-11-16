@@ -74,6 +74,7 @@ import {
   splitTranscriptLine,
   validateTranscript,
 } from './transcribe.js'
+import { closeLiveSpeakers } from './live-speaker.js'
 import { isLinux, isMac, isWindows } from './platform.js'
 import { listJobs, removeJob, upsertJob, getJob } from './jobs.js'
 import { scan as scanSetup, plan as planSetup, install as installSetup, cancelSetup, setupJob, llamaBinary, verify as verifySetup } from './setup.js'
@@ -513,7 +514,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.28',
+      version: '0.11.29',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -543,7 +544,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.28', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.29', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -926,7 +927,7 @@ async function route(ctx, req, res) {
     }
     if (!episode) return json(res, 404, { error: '单集不存在' })
     const body = await readJson(req)
-    const result = await startTranscription(episode, { force: Boolean(body?.force), resume: Boolean(body?.resume) })
+    const result = await startTranscription(episode, { force: Boolean(body?.force), resume: Boolean(body?.resume), realtime: Boolean(body?.realtime) })
     return json(res, 200, result)
   }
 
@@ -976,6 +977,7 @@ async function route(ctx, req, res) {
       if (Array.isArray(body?.hotwords)) patch.hotwords = body.hotwords.map((word) => String(word || '').trim()).filter(Boolean).slice(0, 500)
       if (Number.isFinite(Number(body?.chunkMinutes))) patch.chunkMinutes = Math.max(1, Math.min(60, Number(body.chunkMinutes)))
       if (typeof body?.diarize === 'boolean') patch.diarize = body.diarize
+      if (typeof body?.realtime === 'boolean') patch.realtime = body.realtime
       if (!Object.keys(patch).length) return json(res, 400, { error: '没有可保存的设置' })
       const saved = updateSection('transcribe', patch)
       return json(res, 200, { ...saved, runtime: runtimeInfo() })
@@ -1329,6 +1331,9 @@ export default {
         }),
       'dsh-podwave: /podwave routes',
     )
-    ctx.effect(() => () => stopAll(), 'dsh-podwave: stop transcription workers')
+    ctx.effect(() => () => {
+      stopAll()
+      closeLiveSpeakers()
+    }, 'dsh-podwave: stop transcription workers')
   },
 }

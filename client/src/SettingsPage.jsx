@@ -94,6 +94,7 @@ export default function SettingsPage() {
   const [diarize, setDiarize] = useState(true)
   // 转写走云端还是本地。密钥不在这儿配：转写和翻译共用下面那张 DeepSeek API 卡片里的 key。
   const [asrProviderUi, setAsrProviderUi] = useState('api')
+  const [realtime, setRealtime] = useState(true)
 
   const [provider, setProvider] = useState('api')
   const [apiBase, setApiBase] = useState('https://api.deepseek.com')
@@ -128,6 +129,7 @@ export default function SettingsPage() {
       setChunkMinutes(txData.chunkMinutes || 15)
       setDiarize(txData.diarize !== false)
       setAsrProviderUi(txData.provider || 'api')
+      setRealtime(txData.realtime !== false)
       setHistory(historyData.items || [])
       setHistoryDir(historyData.dir || '')
       setHistoryBytes(Number(historyData.bytes) || 0)
@@ -421,6 +423,7 @@ export default function SettingsPage() {
         hotwords: words,
         chunkMinutes: Math.min(60, Math.max(1, Number(chunkMinutes) || 15)),
         diarize,
+        realtime,
       })
       setHotwords((data.hotwords || []).join(' '))
       setChunkMinutes(data.chunkMinutes || 15)
@@ -631,7 +634,11 @@ export default function SettingsPage() {
               onChange={(event) => setChunkMinutes(event.target.value)}
             />
           </label>
-          <p className="settings-status">分块时长只对本地模型生效；云端转写固定 30 秒一块（接口单次上限 120 秒）。</p>
+          <p className="settings-status">分块时长只对本地模型生效；云端整段转写用 100 秒一块，实时跟播用 12 秒一块（接口单次上限 120 秒）。</p>
+          <label className="check-row">
+            <input type="checkbox" checked={realtime} onChange={(event) => setRealtime(event.target.checked)} />
+            <span>边播边出字幕（云端 API，播放时按 12 秒小块滚动识别，字幕/译文/说话人跟着播放进度出现）</span>
+          </label>
           <label className="check-row">
             <input type="checkbox" checked={diarize} onChange={(event) => setDiarize(event.target.checked)} />
             <span>自动识别说话人（需要本地声纹模型，分离失败不影响转写）</span>

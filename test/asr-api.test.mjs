@@ -11,7 +11,7 @@ process.env.HOME = tmp
 process.env.PODWAVE_DATA_DIR = path.join(tmp, '.podwave')
 fs.mkdirSync(process.env.PODWAVE_DATA_DIR, { recursive: true })
 
-const { API_CHUNK_SECONDS, asrApiConfig, asrProvider, buildApiLines, transcribeChunk } = await import('../src/asr-api.js')
+const { API_CHUNK_SECONDS, REALTIME_CHUNK_SECONDS, asrApiConfig, asrProvider, buildApiLines, transcribeChunk } = await import('../src/asr-api.js')
 const { updateSection } = await import('../src/config.js')
 const { transcribeConfig } = await import('../src/transcribe.js')
 
@@ -30,6 +30,13 @@ test('云端切片取 100 秒，离接口 120 秒上限留足余量', () => {
   // 块越大，句子被块边界切开的概率越低；但必须给重采样/补帧留下的余量。
   assert.ok(API_CHUNK_SECONDS < 120)
   assert.ok(120 - API_CHUNK_SECONDS >= 15)
+})
+
+test('实时跟播用 12 秒小块，比整段转写的 100 秒短得多', () => {
+  assert.equal(REALTIME_CHUNK_SECONDS, 12)
+  // 块越小字幕越跟手，代价是边界重复开销；12 秒 = 延迟 3~5 秒与成本上浮 15%~30% 的折中。
+  assert.ok(REALTIME_CHUNK_SECONDS < API_CHUNK_SECONDS)
+  assert.ok(API_CHUNK_SECONDS / REALTIME_CHUNK_SECONDS >= 4)
 })
 
 test('没有 key 时明确报错，而不是静默失败', async () => {

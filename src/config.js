@@ -55,6 +55,8 @@ export const CONFIG_DEFAULTS = {
     hotwords: [],
     chunkMinutes: 1,
     diarize: true,
+    // 边播边出字幕：播放某集时自动用小段滚动转写，字幕/译文/说话人跟着播放进度出现。
+    realtime: true,
   },
   import: { mode: 'copy' },
 }

@@ -204,6 +204,8 @@ export default function App() {
   const [toast, setToast] = useState('')
   const [transcript, setTranscript] = useState(null)
   const [txStatus, setTxStatus] = useState('none')
+  const [txSettings, setTxSettings] = useState(null)
+  const realtimeTried = useRef(new Set())
   const [txElapsed, setTxElapsed] = useState(0)
   const [txError, setTxError] = useState('')
   const [subsOpen, setSubsOpen] = useState(false)
@@ -239,6 +241,14 @@ export default function App() {
   useEffect(() => { settingsRef.current = settings }, [settings])
   useEffect(() => { currentRef.current = current }, [current])
   useEffect(() => { durationRef.current = duration }, [duration])
+
+  useEffect(() => {
+    let cancelled = false
+    getJSON(`${API}/transcribe/settings`)
+      .then((data) => { if (!cancelled) setTxSettings(data || null) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -461,6 +471,23 @@ export default function App() {
     setSettings((prev) => ({ ...prev, ...patch }))
     sendJSON(`${API}/settings`, 'PATCH', patch).catch(() => {})
   }, [])
+
+  // 边播边出字幕：开始播放时如果这集还没有完整字幕、也没在转写，就自动起一个实时任务。
+  // 只对云端 API 生效（本地模型是整段批量跑的，不适合边播边算）。
+  useEffect(() => {
+    if (!playing || !current) return
+    if (txSettings?.realtime === false || txSettings?.provider === 'local') return
+    if (transcript && !transcript.partial) return
+    if (txStatus === 'queued' || txStatus === 'running') return
+    const id = current.id
+    if (realtimeTried.current.has(id)) return
+    realtimeTried.current.add(id)
+    sendJSON(`${API}/episodes/${id}/transcribe`, 'POST', { realtime: true })
+      .then((res) => {
+        if (res?.status === 'queued') setTxStatus('queued')
+      })
+      .catch(() => { /* 没 key 之类的原因起不来就静默放弃，用户手动点转写时会给提示 */ })
+  }, [playing, current, transcript, txStatus, txSettings])
 
   const startTranscript = useCallback(async () => {
     if (!currentRef.current) return

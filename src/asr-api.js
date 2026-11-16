@@ -14,6 +14,9 @@ export const API_ASR_PATH = '/v1/tools/asr'
 // 有些音频的重采样/补帧会多出零点几秒，卡在 120 上迟早翻车。
 // 块越大，句子被块边界切开的概率越低（切点还会吸附到静音处，见 transcribe.js 的 planCuts）。
 export const API_CHUNK_SECONDS = 100
+// 实时跟播模式（边播边出字幕）用小段滚动：块越小，字幕越跟手，代价是块边界的
+// 重复开销（识别成本大约上浮 15%~30%）。12 秒在「延迟 3~5 秒」和成本之间折中。
+export const REALTIME_CHUNK_SECONDS = 12
 export const API_MAX_SECONDS = 100
 export const API_MAX_BYTES = 8 * 1024 * 1024
 const REQUEST_TIMEOUT_MS = 180000
