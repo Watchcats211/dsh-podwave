@@ -31,12 +31,16 @@ function cachedDefaultModels() {
 export const CONFIG_DEFAULTS = {
   schemaVersion: 1,
   ui: { showSidebarPanel: true, sidebarCollapsed: false },
+  // DeepSeek API 的地址 / 密钥 / 对话模型：转写和翻译共用这一份，用户只填一次。
+  // 老版本把这三项存在 translate 段里，读到时由 migrateApiSection() 挪过来。
+  api: {
+    base: 'https://api.deepseek.com',
+    key: '',
+    model: 'deepseek-chat',
+  },
   translate: {
     provider: 'api',
     target: 'zh',
-    apiBase: 'https://api.deepseek.com',
-    apiModel: 'deepseek-chat',
-    apiKey: '',
   },
   // 默认模型绝不能写死 MLX：那套模型 platform 是 darwin-arm64，Windows 装不了。
   // dir 为空表示用默认目录（<数据目录>/models）；用户改过则存绝对路径。
@@ -45,11 +49,9 @@ export const CONFIG_DEFAULTS = {
   },
   // 转写默认走云端 API：装好插件、填一个 DeepSeek key 就能用，不用先下载 2.4G 模型。
   // 想省钱可以在设置里切成本地模型（provider: 'local'，需要先一键安装运行时和模型）。
-  // apiKey 留空时自动复用 translate.apiKey —— 用户填一次，转写和翻译都能用。
+  // 密钥与地址统一在 api 段，转写这里只管「用哪个引擎」。
   transcribe: {
     provider: 'api',
-    apiBase: 'https://api.deepseek.com',
-    apiKey: '',
     hotwords: [],
     chunkMinutes: 1,
     diarize: true,
@@ -122,11 +124,32 @@ function migrateLegacy() {
 let cache = null
 let cacheKey = null
 
+// 老配置（0.11.28 及以前）把 API 地址/密钥/对话模型存在 translate 段里，
+// 转写要再填一次。这里在读到时把它们搬进 api 段并落盘一次，之后只认 api 段。
+function migrateApiSection(stored, merged) {
+  if (!stored || stored.api) return false
+  const legacy = stored.translate || {}
+  const base = String(legacy.apiBase || '').trim()
+  const model = String(legacy.apiModel || '').trim()
+  const apiKey = String(legacy.apiKey || '').trim()
+  if (!base && !model && !apiKey) return false
+  if (base) merged.api.base = base
+  if (model) merged.api.model = model
+  if (apiKey) merged.api.key = apiKey
+  return true
+}
+
 export function loadConfig() {
   const key = statKey()
   if (cache && cacheKey === key) return clone(cache)
   const stored = key === 'missing' ? null : readJson(CONFIG_PATH)
   cache = stored ? merge(clone(CONFIG_DEFAULTS), stored) : migrateLegacy()
+  if (migrateApiSection(stored, cache)) {
+    // 迁移只做一次：写回失败也不影响本次读取，下次再试。
+    try {
+      writeConfig(cache)
+    } catch {}
+  }
   cacheKey = statKey()
   return clone(cache)
 }

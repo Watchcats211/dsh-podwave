@@ -39,19 +39,13 @@ export function asrProvider() {
  * 用户填一次就能同时用转写和翻译，不用记两次。
  */
 export function asrApiConfig() {
-  const section = getSection('transcribe') || {}
+  const api = getSection('api') || {}
   const translate = getSection('translate') || {}
-  const ownKey = String(section.apiKey || '').trim()
-  const sharedKey = String(translate.apiKey || '').trim()
-  const base = String(section.apiBase || translate.apiBase || 'https://api.deepseek.com').trim().replace(/\/+$/, '')
-  const key = ownKey || sharedKey
-  return {
-    base,
-    url: `${base}${API_ASR_PATH}`,
-    key,
-    hasKey: Boolean(key),
-    reusedKey: !ownKey && Boolean(sharedKey),
-  }
+  const base = String(api.base || translate.apiBase || 'https://api.deepseek.com')
+    .trim()
+    .replace(/\/+$/, '')
+  const key = String(api.key || translate.apiKey || '').trim()
+  return { base, url: `${base}${API_ASR_PATH}`, key, hasKey: Boolean(key) }
 }
 
 function describeFailure(status, payload) {

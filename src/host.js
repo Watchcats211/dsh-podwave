@@ -962,27 +962,20 @@ async function route(ctx, req, res) {
 
   if (routePath === 'api/transcribe/settings') {
     if (method === 'GET') {
-      // 不把密钥回传给前端：前端看 runtime.api.hasKey / reusedKey 就知道填没填。
+      // 密钥统一放在「DeepSeek API」那张卡片里，这里只回引擎选择；前端看 runtime.api.hasKey 判断填没填。
       const section = getSection('transcribe') || {}
-      return json(res, 200, { ...section, apiKey: '', runtime: runtimeInfo() })
+      return json(res, 200, { ...section, runtime: runtimeInfo() })
     }
     if (method === 'PUT') {
       const body = await readJson(req)
       const patch = {}
       if (typeof body?.provider === 'string') patch.provider = body.provider === 'local' ? 'local' : 'api'
-      if (typeof body?.apiBase === 'string') {
-        const base = body.apiBase.trim()
-        if (base && !/^https?:\/\//i.test(base)) return json(res, 400, { error: '接口地址要以 http:// 或 https:// 开头' })
-        patch.apiBase = base || 'https://api.deepseek.com'
-      }
-      // 空字符串是有效值：表示「不单独存 key，复用翻译那把」。
-      if (typeof body?.apiKey === 'string') patch.apiKey = body.apiKey.trim()
       if (Array.isArray(body?.hotwords)) patch.hotwords = body.hotwords.map((word) => String(word || '').trim()).filter(Boolean).slice(0, 500)
       if (Number.isFinite(Number(body?.chunkMinutes))) patch.chunkMinutes = Math.max(1, Math.min(60, Number(body.chunkMinutes)))
       if (typeof body?.diarize === 'boolean') patch.diarize = body.diarize
       if (!Object.keys(patch).length) return json(res, 400, { error: '没有可保存的设置' })
       const saved = updateSection('transcribe', patch)
-      return json(res, 200, { ...saved, apiKey: '', runtime: runtimeInfo() })
+      return json(res, 200, { ...saved, runtime: runtimeInfo() })
     }
   }
 

@@ -90,10 +90,8 @@ export default function SettingsPage() {
   const [hotwords, setHotwords] = useState('')
   const [chunkMinutes, setChunkMinutes] = useState(15)
   const [diarize, setDiarize] = useState(true)
-  // 转写走云端还是本地：和下面的 provider/apiBase/apiKey（那是翻译的）不是同一组，别混用。
+  // 转写走云端还是本地。密钥不在这儿配：转写和翻译共用下面那张 DeepSeek API 卡片里的 key。
   const [asrProviderUi, setAsrProviderUi] = useState('api')
-  const [asrApiBase, setAsrApiBase] = useState('https://api.deepseek.com')
-  const [asrApiKeyDraft, setAsrApiKeyDraft] = useState('')
 
   const [provider, setProvider] = useState('api')
   const [apiBase, setApiBase] = useState('https://api.deepseek.com')
@@ -128,8 +126,6 @@ export default function SettingsPage() {
       setChunkMinutes(txData.chunkMinutes || 15)
       setDiarize(txData.diarize !== false)
       setAsrProviderUi(txData.provider || 'api')
-      setAsrApiBase(txData.apiBase || 'https://api.deepseek.com')
-      setAsrApiKeyDraft('')
       setHistory(historyData.items || [])
       setModels(modelsData.models || [])
       setStorage(modelsData.storage || null)
@@ -410,8 +406,6 @@ export default function SettingsPage() {
         .slice(0, 500)
       const data = await sendJSON(`${API}/transcribe/settings`, 'PUT', {
         provider: asrProviderUi,
-        apiBase: asrApiBase,
-        apiKey: asrApiKeyDraft,
         hotwords: words,
         chunkMinutes: Math.min(60, Math.max(1, Number(chunkMinutes) || 15)),
         diarize,
@@ -420,8 +414,6 @@ export default function SettingsPage() {
       setChunkMinutes(data.chunkMinutes || 15)
       setDiarize(data.diarize !== false)
       setAsrProviderUi(data.provider || 'api')
-      setAsrApiBase(data.apiBase || 'https://api.deepseek.com')
-      setAsrApiKeyDraft('')
       if (data.runtime) setTranscribeInfo(data.runtime)
       flash('转写设置已保存')
     } catch (err) {
@@ -587,32 +579,11 @@ export default function SettingsPage() {
             </select>
           </label>
           {asrProviderUi === 'api' ? (
-            <>
-              <label className="field-row">
-                <span>API 地址</span>
-                <input
-                  value={asrApiBase}
-                  onChange={(event) => setAsrApiBase(event.target.value)}
-                  placeholder="https://api.deepseek.com"
-                />
-              </label>
-              <label className="field-row">
-                <span>API Key</span>
-                <input
-                  type="password"
-                  value={asrApiKeyDraft}
-                  onChange={(event) => setAsrApiKeyDraft(event.target.value)}
-                  placeholder={transcribeInfo?.api?.reusedKey ? '留空 = 复用「API 与翻译引擎」里的 key' : 'sk-...'}
-                />
-              </label>
-              <p className="settings-status">
-                {transcribeInfo?.api?.hasKey
-                  ? transcribeInfo.api.reusedKey
-                    ? '已复用「API 与翻译引擎」里的 DeepSeek key，可以直接转写'
-                    : 'API Key 已保存，可以直接转写'
-                  : '还没有 API Key，转写时会提示去填'}
-              </p>
-            </>
+            <p className="settings-status">
+              {transcribeInfo?.api?.hasKey
+                ? '用下面 DeepSeek API 里那把 key，已经在用了，可以直接转写'
+                : '还没有 DeepSeek key —— 去下面「DeepSeek API」卡片填一次，转写和翻译都能用'}
+            </p>
           ) : (
             <p className="settings-status">
               {transcribeInfo?.installed && transcribeInfo?.modelReady
@@ -678,8 +649,8 @@ export default function SettingsPage() {
         </div></section>
 
       <section className="settings-card">
-        <h2>API 与翻译引擎</h2>
-        <p className="settings-hint">字幕翻译可以走 DeepSeek API，也可以用本机模型。</p>
+        <h2>DeepSeek API（转写与翻译共用）</h2>
+        <p className="settings-hint">转写和翻译用同一把 key，填一次就够。字幕翻译也可以改用本机模型，那时用不着 key。</p>
         <div className="settings-fields">
           <label className="field-row">
             <span>翻译引擎</span>

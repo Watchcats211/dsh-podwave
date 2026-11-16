@@ -18,12 +18,45 @@ import { artifactByDir } from './catalog.js'
 const PYTHON = venvPython()
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'translate_local.py')
 
+// API 地址/密钥/对话模型统一放在 config.api，转写和翻译共用，用户只填一次。
+// 这里把 api 段叠加到 translate 段上，下游代码照旧读 config.apiBase / apiModel / apiKey。
 export function loadConfig() {
-  return getSection('translate')
+  const translate = getSection('translate') || {}
+  const api = getSection('api') || {}
+  return {
+    ...translate,
+    apiBase: api.base || translate.apiBase || 'https://api.deepseek.com',
+    apiModel: api.model || translate.apiModel || 'deepseek-chat',
+    apiKey: api.key || translate.apiKey || '',
+  }
 }
 
 export function saveConfig(patch) {
-  return updateSection('translate', patch)
+  const rest = { ...patch }
+  const api = {}
+  if (typeof rest.apiBase === 'string') {
+    api.base = rest.apiBase.trim() || 'https://api.deepseek.com'
+    delete rest.apiBase
+  }
+  if (typeof rest.apiModel === 'string') {
+    api.model = rest.apiModel.trim() || 'deepseek-chat'
+    delete rest.apiModel
+  }
+  if (typeof rest.apiKey === 'string') {
+    api.key = rest.apiKey.trim()
+    delete rest.apiKey
+  }
+  if (Object.keys(api).length) {
+    updateSection('api', api)
+    // 老版本插件仍从 translate 段读这三项，顺手镜像一份，降级回去也不会丢 key。
+    const mirror = {}
+    if (api.base !== undefined) mirror.apiBase = api.base
+    if (api.model !== undefined) mirror.apiModel = api.model
+    if (api.key !== undefined) mirror.apiKey = api.key
+    updateSection('translate', mirror)
+  }
+  if (Object.keys(rest).length) updateSection('translate', rest)
+  return loadConfig()
 }
 
 export function currentLocalModel() {

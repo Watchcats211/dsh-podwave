@@ -95,7 +95,7 @@ export function runtimeInfo() {
     model: model.dir,
     modelName: model.name,
     cli: cliPath,
-    api: { base: api.base, url: api.url, hasKey: api.hasKey, reusedKey: api.reusedKey },
+    api: { base: api.base, url: api.url, hasKey: api.hasKey },
     hotwords: config.hotwords,
     chunkMinutes: config.chunkMinutes,
     diarize: config.diarize,

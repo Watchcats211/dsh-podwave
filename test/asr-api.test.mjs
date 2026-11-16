@@ -31,32 +31,40 @@ test('云端切片固定 30 秒，远低于接口 120 秒上限', () => {
 })
 
 test('没有 key 时明确报错，而不是静默失败', async () => {
-  updateSection('transcribe', { apiKey: '' })
-  updateSection('translate', { apiKey: '' })
+  updateSection('api', { key: '' })
   const config = asrApiConfig()
   assert.equal(config.hasKey, false)
   await assert.rejects(() => transcribeChunk('/tmp/whatever.wav'), /API key/)
 })
 
-test('转写自己的 key 为空时复用翻译那把', () => {
-  updateSection('translate', { apiKey: 'sk-translate' })
-  updateSection('transcribe', { apiKey: '' })
-  const reused = asrApiConfig()
-  assert.equal(reused.key, 'sk-translate')
-  assert.equal(reused.reusedKey, true)
-})
-
-test('转写单独填了 key 就用自己的', () => {
-  updateSection('translate', { apiKey: 'sk-translate' })
-  updateSection('transcribe', { apiKey: 'sk-transcribe' })
-  const own = asrApiConfig()
-  assert.equal(own.key, 'sk-transcribe')
-  assert.equal(own.reusedKey, false)
+test('转写和翻译读同一份 key —— 用户只填一次', async () => {
+  updateSection('api', { key: 'sk-shared' })
+  assert.equal(asrApiConfig().key, 'sk-shared')
+  const translate = await import('../src/translate.js')
+  assert.equal(translate.loadConfig().apiKey, 'sk-shared')
+  assert.equal(translate.publicConfig().hasApiKey, true)
 })
 
 test('API 地址去掉结尾斜杠，拼出正确的接口路径', () => {
-  updateSection('transcribe', { apiBase: 'https://api.deepseek.com///' })
+  updateSection('api', { base: 'https://api.deepseek.com///' })
   assert.equal(asrApiConfig().url, 'https://api.deepseek.com/v1/tools/asr')
+})
+
+test('老配置里存在 translate 段的密钥时会自动迁移到 api 段', async () => {
+  const file = path.join(process.env.PODWAVE_DATA_DIR, 'config.json')
+  // 模拟 0.11.28 及以前写下的配置：只有 translate.apiKey / apiBase / apiModel。
+  const legacy = {
+    translate: { provider: 'api', target: 'zh', apiKey: 'sk-legacy', apiBase: 'https://api.deepseek.com', apiModel: 'deepseek-chat' },
+  }
+  fs.writeFileSync(file, JSON.stringify(legacy, null, 2))
+  const { loadConfig } = await import('../src/config.js')
+  const config = loadConfig()
+  assert.equal(config.api.key, 'sk-legacy')
+  assert.equal(config.api.base, 'https://api.deepseek.com')
+  // 迁移要落盘，否则下次读文件又回到老样子。
+  const persisted = JSON.parse(fs.readFileSync(file, 'utf8'))
+  assert.equal(persisted.api.key, 'sk-legacy')
+  assert.equal(asrApiConfig().key, 'sk-legacy')
 })
 
 test('空文本切出 0 行', () => {
