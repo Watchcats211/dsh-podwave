@@ -3,7 +3,7 @@ import React, { useEffect, useRef } from 'react'
 import Icon from './Icon.jsx'
 import { fmtTime } from '../lib/format.js'
 
-export default function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onTranslate, onOpenSettings, inline = false, editingId = null, draft = '', onDraftChange, onEditLine, onSaveLine, onCancelEdit, onSplitLine, onMergeLine, onUndo, onValidate, issues = [] }) {
+export default function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onTranslate, onOpenSettings, inline = false, editingId = null, draft = '', onDraftChange, onEditLine, onSaveLine, onCancelEdit, onSplitLine, onMergeLine, onUndo, onValidate, onResegment, issues = [] }) {
   const bodyRef = useRef(null)
   const editRef = useRef(null)
   const activeIndex = transcript?.lines?.findIndex((line) => position >= line.start && position < line.end) ?? -1
@@ -37,6 +37,7 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
             <>
               <button className="mini-link" onClick={onUndo} title="撤销上一步编辑">撤销</button>
               <button className="mini-link" onClick={onValidate} title="导出前检查字幕">校验</button>
+              {onResegment ? <button className="mini-link" onClick={onResegment} title="把碎片行按标点重新拼成整句，方便翻译">整理断句</button> : null}
               <a className="mini-link" href={`${API}/episodes/${transcript.id}/transcript/export?format=srt`} download>SRT</a>
               <a className="mini-link" href={`${API}/episodes/${transcript.id}/transcript/export?format=md`} download>Markdown</a>
             </>

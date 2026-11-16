@@ -575,6 +575,18 @@ export default function App() {
     if (data) flash('已撤销上一步')
   }, [transcript, transcriptMutate, flash])
 
+  const resegmentTx = useCallback(async () => {
+    if (!transcript) return
+    const data = await transcriptMutate(`/episodes/${transcript.id}/transcript/resegment`, 'POST', {})
+    if (!data) return
+    if (data.cleared) {
+      setTrJob({ status: 'none', missing: data.after })
+      flash(`断句已整理：${data.before} 行 → ${data.after} 行，旧译文已备份，需要重新翻译`)
+    } else {
+      flash(`断句已整理：${data.before} 行 → ${data.after} 行`)
+    }
+  }, [transcript, transcriptMutate, flash])
+
   const validateTx = useCallback(async () => {
     if (!transcript) return
     try {
@@ -1362,6 +1374,7 @@ export default function App() {
                   onMergeLine={mergeLine}
                   onUndo={undoTranscript}
                   onValidate={validateTx}
+                  onResegment={resegmentTx}
                   issues={txIssues}
                   onCancel={cancelTranscript}
                   error={txError}
@@ -1559,6 +1572,7 @@ export default function App() {
           onMergeLine={mergeLine}
           onUndo={undoTranscript}
           onValidate={validateTx}
+          onResegment={resegmentTx}
           issues={txIssues}
           onCancel={cancelTranscript}
           error={txError}

@@ -69,6 +69,7 @@ import {
   editTranscriptLine,
   enqueueBatch,
   mergeTranscriptLine,
+  resegmentTranscript,
   saveTranscript,
   splitTranscriptLine,
   validateTranscript,
@@ -1023,6 +1024,21 @@ async function route(ctx, req, res) {
       pushUndo(id, before)
       const transcript = await mergeTranscriptLine(id, decodeURIComponent(mergeMatch[2]))
       return json(res, 200, { transcript })
+    } catch (error) {
+      return json(res, 400, { error: error.message })
+    }
+  }
+
+  const resegmentMatch = /^api\/episodes\/([^/]+)\/transcript\/resegment$/.exec(routePath)
+  if (resegmentMatch && method === 'POST') {
+    const id = decodeURIComponent(resegmentMatch[1])
+    if (!findEpisode(id) && !isXyzId(id)) return json(res, 404, { error: '单集不存在' })
+    const before = await readTranscript(id)
+    if (!before) return json(res, 404, { error: '还没有转写' })
+    try {
+      pushUndo(id, before)
+      const result = await resegmentTranscript(id)
+      return json(res, 200, result)
     } catch (error) {
       return json(res, 400, { error: error.message })
     }

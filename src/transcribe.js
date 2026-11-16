@@ -14,6 +14,7 @@ import { getSection } from './config.js'
 import { API_CHUNK_SECONDS, asrApiConfig, asrProvider, buildApiLines, transcribeChunk } from './asr-api.js'
 import { artifactByDir } from './catalog.js'
 import { assignSpeakers, diarizeInfo, runDiarization } from './diarize.js'
+import { resegmentLines } from './segment.js'
 import { flushJobs, getJob, getJobFresh, jobKey, removeJob, upsertJob } from './jobs.js'
 
 export const TRANSCRIPTS_DIR = path.join(DATA_DIR, 'transcripts')
@@ -763,14 +764,9 @@ function mergedFromResults(plan, resultsDir) {
     joined.push(...group)
   }
 
-  const lines = joined.map((line, index) => ({
-    id: index + 1,
-    start: round2(line.start),
-    end: round2(line.end),
-    text: line.text,
-    speaker: null,
-    translations: {},
-  }))
+  // 识别出来的分段是按模型自己的声学块来的，本地引擎经常两三词一行、句尾还没标点。
+  // 先整理成整句再落盘：翻译按行送模型，碎片行会让小模型自己合并、译文整体错位。
+  const lines = resegmentLines(joined)
   return { lines, language, texts }
 }
 
@@ -1610,6 +1606,30 @@ export async function mergeTranscriptLine(id, lineId) {
   refreshText(transcript)
   await saveTranscript(transcript)
   return transcript
+}
+
+export async function resegmentTranscript(id) {
+  const transcript = await readTranscript(id)
+  if (!transcript) return null
+  const before = transcript.lines.length
+  const lines = resegmentLines(transcript.lines)
+  if (!lines.length) throw new Error('没有可以整理的字幕行')
+  const hasTranslations = transcript.lines.some((line) => line.translations && Object.keys(line.translations).length)
+  // 断句一改，逐行译文就对不上了：旧译文先留一份备份，不直接丢。
+  if (hasTranslations) {
+    transcript.legacyTranslations = transcript.lines.map((line) => ({
+      id: line.id,
+      start: line.start,
+      end: line.end,
+      text: line.text,
+      translations: line.translations || {},
+    }))
+  }
+  transcript.lines = lines
+  transcript.providers = {}
+  refreshText(transcript)
+  await saveTranscript(transcript)
+  return { transcript, before, after: lines.length, cleared: hasTranslations }
 }
 
 export async function validateTranscript(id) {
