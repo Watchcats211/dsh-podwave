@@ -3,7 +3,7 @@
 import { spawnSync } from 'node:child_process'
 import { readdirSync } from 'node:fs'
 import path from 'node:path'
-import { DATA_DIR } from '../../src/state.js'
+import { modelsDir } from '../../src/models.js'
 import { llamaAsset } from '../../src/catalog.js'
 import { detectPlatform } from '../../src/platform.js'
 import { downloadArtifact } from '../../src/downloader.js'
@@ -36,7 +36,7 @@ function findBinary(dir) {
   return null
 }
 
-const root = path.join(DATA_DIR, 'models', '_ci', 'llama')
+const root = path.join(modelsDir(), '_ci', 'llama')
 const binary = findBinary(root)
 if (!binary) throw new Error(`解压后没有找到 llama-server：${root}`)
 

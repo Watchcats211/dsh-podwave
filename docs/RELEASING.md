@@ -52,7 +52,7 @@ gh release create vX.Y.Z /tmp/dsh-podwave-X.Y.Z.tgz --title "vX.Y.Z" --notes-fil
 dsh plugin --profile desktop add file:$PWD
 ```
 
-或在 DSH 的插件管理里移除后重新安装本目录，确认 `~/.dsh/profiles/desktop/node_modules/dsh-podwave/package.json` 的版本号。
+或在 DSH 的插件管理里移除后重新安装本目录，确认 `<DSH profile>/node_modules/dsh-podwave/package.json` 的版本号。
 
 ## 7. 验收
 

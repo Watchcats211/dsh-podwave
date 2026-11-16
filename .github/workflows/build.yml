@@ -52,7 +52,12 @@ jobs:
           $synth.Dispose()
       - name: 运行 sherpa-onnx 转写
         shell: pwsh
-        run: python scripts/asr_sherpa_batch.py test-speech.wav --model-dir "$env:USERPROFILE\.podwave\models\sensevoice-small-int8" --out-dir out
+        # 模型目录由插件自己决定（发布版落在当前工作区 models/，CI 里没有工作区、落到数据目录），
+        # 这里问它要路径，别写死 ~/.podwave/models，否则改默认位置后 CI 会静默失效。
+        run: |
+          $modelDir = node --input-type=module -e "import { modelsDir } from './src/models.js'; import path from 'node:path'; console.log(path.join(modelsDir(), 'sensevoice-small-int8'))"
+          Write-Host "模型目录：$modelDir"
+          python scripts/asr_sherpa_batch.py test-speech.wav --model-dir "$modelDir" --out-dir out
       - name: 校验转写结果
         run: node test/ci/assert-transcript.mjs
       - name: 下载 llama.cpp 并校验可执行

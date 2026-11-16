@@ -135,4 +135,4 @@ library.js（媒体库）  state.js（播放进度/文件夹）
 1. `npm run build` 生成 `dist/client.js`。
 2. 更新 `package.json`、`CHANGELOG.md`、README。
 3. `npm pack` 产物校验后 `git commit` → `git tag vX.Y.Z` → `gh release create vX.Y.Z dsh-podwave-X.Y.Z.tgz`。
-4. 桌面端：`plugin_manager` remove + install `<plugin-path>`（或刷新 DSH）。
+4. 桌面端：`plugin_manager` remove + install `file:<本仓库路径>`（或刷新 DSH）。

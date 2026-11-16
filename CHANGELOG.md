@@ -1,3 +1,16 @@
+## 0.11.26 — 2026-11-16
+
+发布物清理个人隐私，并修掉 Windows CI 里 `windows-runtime` 那个跑红的 job。
+
+- **截图全部重做**：删掉 10 张没人引用的截图（`screenshot.png`、`screenshot-setup.png`、`screenshot-player-detail.png`、`screenshot-dark.png`、`screenshot-light.png`、`screenshot-collapsed.png`、`screenshot-tasks.png`、`screenshot-xyz.png`、`screenshot-xyz-public.png`、`screenshot-0.2.png`），保留的 7 张裁掉 DSH 侧栏（`screenshot-live.png` 侧栏本来就收起了，无需裁）。之前的截图泄露了 DSH 侧栏里的会话标题、工作区名、账号昵称与头像，其中 `screenshot-setup.png` 和 `screenshot-player-detail.png` 还带着真实的 `/Users/<用户名>` 路径。**这些图此前已随公开仓库和 npm 包分发过**，本次连 git 历史一起重写清除（旧截图文件从全部 70 个提交、65 个 tag 里彻底移除，含 `/Users/<用户名>` 路径的 `docs/ARCHITECTURE.md` 历史版本也一并替换成占位）。
+- 保留的截图统一重新导出为真 PNG：其中 `screenshot-detail.png`、`screenshot-notes.png` 之前后缀是 `.png`、内容其实是 JPEG（顺带解决了小字发糊）。
+- `docs/ARCHITECTURE.md`、`docs/RELEASING.md` 里的本机绝对路径改成 `<本仓库路径>`、`<DSH profile>` 占位。
+- 新增 `test/privacy.test.mjs`（5 个用例）：源码与文档里不得出现具体本机家目录（`/Users/<名字>`、`/home/<名字>`、`C:\Users\<名字>`，`tom`/`someone` 等明显占位除外）、文档引用的图必须存在、`docs/` 不得留没人引用的截图、`screenshots.json` 条目必须存在、随包分发的截图必须是真 PNG（校验文件头）。
+- 修 Windows CI 的 `windows-runtime` job：模型默认目录改到项目/工作区下的 `models/` 之后，workflow 仍写死 `$env:USERPROFILE\.podwave\models\...`，模型下到了新位置、sherpa 去老位置找，报 `Load model ... failed. File doesn't exist`。现在改为用 `node --input-type=module` 调 `modelsDir()` 现算路径。同两处写死已修：`test/ci/llama-check.mjs` 改用 `modelsDir()`，`src/transcribe.js` 的「模型未下载」提示不再点名 `~/.podwave/models`。
+- 新增 `test/ci-model-path.test.mjs`（4 个用例）守住模型路径不再被写死。
+- 顺带修掉 `api/health` 返回的版本号落后一版（一直是 `0.11.24`）。
+- 测试总数 120（117 通过、3 个 Windows 专用跳过）。
+
 ## 0.11.25 — 2026-11-16
 
 发布包补齐 DSH 插件展示元数据：装上之后在插件列表里显示中文名和图标，详情页有自己的介绍和配图。

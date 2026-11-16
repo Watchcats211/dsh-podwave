@@ -1047,7 +1047,7 @@ function buildSegments(raw, words) {
 export async function startTranscription(episode, { force = false, resume = false } = {}) {
   const info = runtimeInfo()
   if (!info.installed) throw Object.assign(new Error('转写运行环境未安装（~/.podwave/runtime）'), { status: 503 })
-  if (!info.modelReady) throw Object.assign(new Error('转写模型未下载（~/.podwave/models）'), { status: 503 })
+  if (!info.modelReady) throw Object.assign(new Error('转写模型未下载，请在设置里安装或检查模型目录'), { status: 503 })
 
   const key = jobId(episode.id)
   const currentJob = getJob(key)
