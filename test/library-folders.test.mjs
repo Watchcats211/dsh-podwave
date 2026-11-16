@@ -31,8 +31,12 @@ test('getEpisodes exposes absolute folder and root for drilled-down browsing', a
   const items = getEpisodes()
   assert.equal(items.length, 3, '只扫根文件夹下的 3 个音频')
 
-  // 扫描时会对路径做 realpath（macOS 上 /var 会变成 /private/var）。
-  const realRoot = fs.realpathSync(root)
+  // 扫描时会对路径做 realpath（macOS 上 /var 会变成 /private/var；Windows 上
+  // 临时目录是 8.3 短名 C:\Users\RUNNER~1\... ，realpath 之后会变成长名）。
+  // 这里必须用跟 library.js 同一个异步 realpath，否则两种写法在 Windows 上拼出来的
+  // 字符串不是一个样子，断言会假失败。
+  const { realpath } = await import('node:fs/promises')
+  const realRoot = await realpath(root)
   const byTitle = new Map(items.map((item) => [item.title, item]))
   assert.equal(byTitle.get('top').folder, realRoot)
   assert.equal(byTitle.get('mid').folder, path.join(realRoot, 'sub'))
