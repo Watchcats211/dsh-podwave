@@ -45,6 +45,28 @@ function fmtDate(ms) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
+// 「项目文件夹」在发布版里指的是当前工作区，文案要说清是哪一个，
+// 免得用户以为模型会塞进 node_modules。
+function storageHint(storage) {
+  const dir = storage?.projectDir
+  if (!dir) return '模型默认放在数据目录里'
+  if (storage?.projectKind === 'workspace') return `模型默认下载到当前工作区的 models/（${dir}）`
+  return `模型默认下载到插件项目文件夹（${dir}）`
+}
+
+function projectButtonLabel(storage) {
+  return storage?.projectKind === 'workspace' ? '用工作区文件夹' : '用项目文件夹'
+}
+
+function modelsPathLabel(storage) {
+  if (storage?.custom) return '自定义位置'
+  if (storage?.projectDir && storage.dir === storage.projectDir) {
+    return storage.projectKind === 'workspace' ? '工作区文件夹' : '项目文件夹'
+  }
+  if (storage?.legacyDir && storage.dir === storage.legacyDir) return '原有的 ~/.podwave/models'
+  return '默认位置'
+}
+
 export default function SettingsPage() {
   const theme = useTheme()
   const [history, setHistory] = useState([])
@@ -636,13 +658,13 @@ export default function SettingsPage() {
       <section className="settings-card">
         <h2>模型</h2>
         <p className="settings-hint">
-          模型默认下载到项目文件夹 {storage?.projectDir || 'dsh-podwave/models'}，可以改成任意目录（比如外置硬盘），改完会把已有模型一起搬过去。
+          {storageHint(storage)}，可以改成任意目录（比如外置硬盘），改完会把已有模型一起搬过去。
         </p>
         {storage ? (
           <>
             <div className="model-path">
               <code className="model-path-text" title={storage.dir}>{storage.dir}</code>
-              <span className="model-path-size">{storage.custom ? '自定义位置' : storage.dir === storage.projectDir ? '项目文件夹' : '默认位置'} · 共 {fmtBytes(storage.totalBytes)}</span>
+              <span className="model-path-size">{modelsPathLabel(storage)} · 共 {fmtBytes(storage.totalBytes)}</span>
             </div>
             <div className="settings-fields">
               <label className="field-row">
@@ -662,7 +684,7 @@ export default function SettingsPage() {
               <button className="settings-btn ghost" onClick={openModelsDir}>在文件管理器中打开</button>
               {storage.projectDir && storage.dir !== storage.projectDir ? (
                 <button className="settings-btn ghost" disabled={moving} onClick={() => changeModelsDir(storage.projectDir, true)}>
-                  用项目文件夹
+                  {projectButtonLabel(storage)}
                 </button>
               ) : null}
               {storage.custom ? (

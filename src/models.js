@@ -1,8 +1,11 @@
-// 模型目录与选择：默认放 ~/.podwave/models/<name>，也可以在设置里改到任意目录
-// （比如项目文件夹或外置硬盘），改完能把已有模型原样搬过去。
+// 模型目录与选择：默认放在「项目文件夹」里，也可以在设置里改到任意目录
+// （比如外置硬盘），改完能把已有模型原样搬过去。
 //
-// 为什么不把目录写死：模型有 5 GB 量级，用户往往不想让它占家目录；
-// 但也绝不能硬编码到「插件自己的目录」——桌面端装的是拷贝，升级会整个替换掉。
+// 「项目文件夹」分两种情况：
+// - 开发工作树 / file: 安装 → 插件自己的仓库目录下的 models/
+// - 发布版（npm 安装）→ 用户当前工作区下的 models/
+// 两者都由 modelsDirCandidates() 解析，绝不硬编码：模型有 5 GB 量级，
+// 但也不能塞进 node_modules——桌面端装的是拷贝，升级会整个替换掉。
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -89,18 +92,93 @@ function hasModels(dir) {
   }
 }
 
-// 默认下载位置：
-// 1. 开发工作树里 → 项目下的 models/（用户要的「装在项目文件夹」）
-// 2. 但家目录里已经存过模型 → 继续沿用，不搬家（避免升级后突然要重下 5 GB）
-// 3. 其余情况（npm 安装）→ 家目录
-export function defaultModelsDir(start) {
+// 发布版（npm 安装）没有源码工作树，认不出「项目文件夹」，
+// 所以由 host 每次请求前把「当前工作区」灌进来，模型就落在 <工作区>/models。
+// 这里只存提示值，models.js 本身不依赖 DSH 的任何 service。
+let workspaceRoot = ''
+// 其他已知工作区：切走再切回来时，模型不至于「凭空消失」。
+let otherWorkspaces = []
+
+function absoluteRoot(dir) {
+  const next = String(dir || '').trim()
+  return next && path.isAbsolute(next) ? next : ''
+}
+
+function uniqueRoots(list) {
+  const seen = new Set()
+  const out = []
+  for (const item of list) {
+    const dir = absoluteRoot(item)
+    if (!dir || seen.has(dir)) continue
+    seen.add(dir)
+    out.push(dir)
+  }
+  return out
+}
+
+// 当前工作区 + 其他已知工作区，当前的那个永远排第一。
+export function setWorkspaceRoots(list) {
+  const roots = uniqueRoots(Array.isArray(list) ? list : [])
+  workspaceRoot = roots[0] || ''
+  otherWorkspaces = roots.slice(1)
+  return workspaceRoot
+}
+
+export function setWorkspaceRoot(dir) {
+  const next = absoluteRoot(dir)
+  if (!next) {
+    workspaceRoot = ''
+    otherWorkspaces = []
+    return ''
+  }
+  // 换到已知工作区时，别把原来那个忘了。
+  const rest = [workspaceRoot, ...otherWorkspaces].filter((item) => item && item !== next)
+  return setWorkspaceRoots([next, ...rest])
+}
+
+export function getWorkspaceRoot() {
+  return workspaceRoot
+}
+
+export function knownWorkspaceRoots() {
+  return workspaceRoot ? [workspaceRoot, ...otherWorkspaces] : [...otherWorkspaces]
+}
+
+// 工作区里的模型目录：发布版的默认位置。
+export function workspaceModelsDir() {
+  return workspaceRoot ? path.join(workspaceRoot, 'models') : ''
+}
+
+// 默认下载位置的候选，按优先级排列：
+// 1. 开发工作树 / file: 安装 → 插件仓库自己的 models/
+// 2. 发布版 → 当前工作区下的 models/
+// 3. 其他已知工作区 → 切工作区时接着用旧模型，而不是重下一遍
+// 设置页把它第一个当成「项目文件夹」，一键切过去。
+export function modelsDirCandidates(start) {
   // 测试/便携场景可以关掉「项目内默认」，让默认位置稳定落到数据目录。
-  const project =
-    process.env.PODWAVE_MODELS_NO_PROJECT === '1' ? '' : projectModelsDir(start) || installModelsDir(start)
-  if (!project) return LEGACY_MODELS_DIR
-  if (hasModels(project)) return project
+  if (process.env.PODWAVE_MODELS_NO_PROJECT === '1') return []
+  const list = []
+  const project = projectModelsDir(start) || installModelsDir(start)
+  if (project) list.push({ kind: 'project', dir: project })
+  for (const root of knownWorkspaceRoots()) {
+    const dir = path.join(root, 'models')
+    if (!project || dir !== project) list.push({ kind: 'workspace', dir })
+  }
+  return list
+}
+
+// 默认下载位置：
+// 1. 候选目录里已经有模型 → 用它（装了就用，不来回横跳）
+// 2. 都没有、但老位置（~/.podwave/models）有模型 → 沿用，不搬家（避免升级后突然要重下 5 GB）
+// 3. 全新安装 → 候选第一名（项目文件夹）；连候选都没有才回落老位置
+export function defaultModelsDir(start) {
+  const candidates = modelsDirCandidates(start)
+  for (const candidate of candidates) {
+    if (hasModels(candidate.dir)) return candidate.dir
+  }
   if (hasModels(LEGACY_MODELS_DIR)) return LEGACY_MODELS_DIR
-  return project
+  if (candidates.length) return candidates[0].dir
+  return LEGACY_MODELS_DIR
 }
 
 // 把 ~ / ~/x / %VAR% 解析成绝对路径；空串返回 ''。只接受绝对路径或 ~ 开头。
@@ -224,17 +302,24 @@ export function listModels() {
     .sort((a, b) => b.bytes - a.bytes || a.name.localeCompare(b.name))
 }
 
-export function modelsSummary() {
+export function modelsSummary(start) {
   const items = listModels()
   const totalBytes = items.reduce((sum, item) => sum + item.bytes, 0)
-  const fallback = defaultModelsDir()
-  // 项目文件夹里的模型目录：设置页用它做「用项目文件夹」的一键入口。
-  const project = process.env.PODWAVE_MODELS_NO_PROJECT === '1' ? '' : projectModelsDir() || installModelsDir()
+  const fallback = defaultModelsDir(start)
+  // 「项目文件夹」候选：开发/file: 安装是插件仓库，发布版是当前工作区。
+  // 设置页拿第一个当一键入口，第二个用来提示「发布版会落在工作区」。
+  const candidates = modelsDirCandidates(start)
+  const project = candidates[0]?.dir || ''
+  const workspace = candidates.find((candidate) => candidate.kind === 'workspace')?.dir || workspaceModelsDir()
+  const dir = modelsDir()
   return {
-    dir: modelsDir(),
+    dir,
     defaultDir: fallback,
     projectDir: project,
-    custom: modelsDir() !== fallback,
+    projectKind: candidates[0]?.kind || '',
+    workspaceDir: workspace,
+    legacyDir: LEGACY_MODELS_DIR,
+    custom: dir !== fallback,
     totalBytes,
     items,
   }

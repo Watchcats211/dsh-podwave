@@ -78,7 +78,7 @@ import { scan as scanSetup, plan as planSetup, install as installSetup, cancelSe
 import { getSection, updateSection } from './config.js'
 import { diarizeInfo } from './diarize.js'
 import { getTranslationState, publicConfig, saveConfig, startTranslation } from './translate.js'
-import { listModels, loadModelConfig, modelsDir, modelsMoveState, modelsSummary, removeModel, saveModelConfig, setModelsDir } from './models.js'
+import { listModels, loadModelConfig, modelsDir, modelsMoveState, modelsSummary, removeModel, saveModelConfig, setModelsDir, setWorkspaceRoots, getWorkspaceRoot } from './models.js'
 import { findEpisode, getProviderById, listAllEpisodes } from './providers.js'
 // 设置页每次打开都会拉 /api/update；漏了这个 import 会让整页 500（v0.11.10 起就漏了）。
 import { checkUpdate } from './update.js'
@@ -207,6 +207,48 @@ export function closeWatchers() {
   watchers.clear()
   if (watchPollTimer) { clearInterval(watchPollTimer); watchPollTimer = null }
   if (rescanTimer) { clearTimeout(rescanTimer); rescanTimer = null }
+}
+
+// 发布版（npm 安装）没有源码工作树，模型该落在「用户当前工作区」下的 models/。
+// host 侧唯一能无 Session 拿到工作区的地方就是 workspaceRegistry，
+// 这里挑「最近用过的那个」，并把它灌给 models.js 当默认目录候选。
+function registeredWorkspaces(ctx) {
+  try {
+    return ctx.get('workspaceRegistry')?.list?.() || []
+  } catch {
+    /* 拿不到注册表就当没有工作区 */
+    return []
+  }
+}
+
+// 会话开在具体某个目录时，比「最近更新的工作区」更准：优先认它。
+function rememberWorkspaceFor(ctx, cwd) {
+  const dir = String(cwd || '').trim()
+  if (!dir || !path.isAbsolute(dir)) return
+  const workspaces = registeredWorkspaces(ctx)
+  const hit = workspaces.find((workspace) => {
+    const target = String(workspace?.path || '').trim()
+    return target && (target === dir || dir.startsWith(target + path.sep))
+  })
+  setWorkspaceRoots(workspaceOrder(ctx, hit ? hit.path : dir))
+}
+
+// 当前工作区排第一，其余按「最近更新」排；切工作区时旧模型照样认。
+function workspaceOrder(ctx, current) {
+  const list = registeredWorkspaces(ctx)
+    .map((workspace) => ({ dir: String(workspace?.path || '').trim(), time: Date.parse(workspace?.updatedAt || workspace?.createdAt || '') || 0 }))
+    .filter((item) => item.dir)
+    .sort((a, b) => b.time - a.time)
+    .map((item) => item.dir)
+  const head = String(current || '').trim()
+  const ordered = head ? [head, ...list] : list
+  return ordered
+}
+
+function rememberWorkspace(ctx) {
+  // 已经有精确值（会话给过 cwd）就别被「最近更新」覆盖掉。
+  const current = getWorkspaceRoot()
+  setWorkspaceRoots(workspaceOrder(ctx, current))
 }
 
 function boot() {
@@ -467,7 +509,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.23',
+      version: '0.11.24',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -496,7 +538,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.23', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.24', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -1184,6 +1226,22 @@ export default {
   apply(ctx) {
     const ready = boot()
     startMediaServer()
+    // 记住「当前工作区」：发布版靠它决定模型默认落在哪儿。
+    // 优先认会话真正开在的目录（session/created 带 cwd），
+    // 拿不到就退化成「最近更新的工作区」。
+    rememberWorkspace(ctx)
+    ctx.effect(() => {
+      // 测试用的假 ctx 没有 on；真 DSH 里跟着 session/created 学 cwd。
+      if (typeof ctx.on !== 'function') return () => {}
+      const off = ctx.on('session/created', (session) => {
+        rememberWorkspaceFor(ctx, session?.header?.cwd)
+      })
+      return () => {
+        // cordis 的 ctx.on 返回 dispose 函数；个别版本给的是对象，兜一下。
+        if (typeof off === 'function') off()
+        else if (typeof off?.dispose === 'function') off.dispose()
+      }
+    }, 'dsh-podwave: track workspace')
     ctx.effect(() => () => {
       closeWatchers()
       try {
@@ -1205,6 +1263,8 @@ export default {
                 return
               }
               await ready
+              // 还没拿到精确 cwd 时，先用「最近更新的工作区」顶一下。
+              if (!getWorkspaceRoot()) rememberWorkspace(ctx)
               if (req.method && req.method !== 'GET' && req.method !== 'HEAD') {
                 const site = req.headers['sec-fetch-site']
                 if (site && site !== 'same-origin' && site !== 'none') {

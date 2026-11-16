@@ -65,7 +65,7 @@ dsh plugin --profile desktop add file:/path/to/dsh-podwave
 uv venv ~/.podwave/runtime/.venv --python 3.12
 uv pip install --python ~/.podwave/runtime/.venv/bin/python "mlx-qwen3-asr==0.4.4" mlx-lm sherpa-onnx
 
-# 默认下载到项目文件夹里的 models/（npm 安装则是 ~/.podwave/models，可在设置里改）
+# 默认下载到项目文件夹里的 models/（npm 安装则是当前工作区的 models/，可在设置里改）
 hf download mlx-community/Qwen3-ASR-1.7B-8bit --local-dir models/qwen3-asr-1.7b-8bit
 hf download mlx-community/Hy-MT2-1.8B-4bit --local-dir models/hy-mt2-1.8b-4bit
 
@@ -179,7 +179,7 @@ CI（GitHub Actions）在每次 push / PR 跑 `npm test` 与 `npm run build`。
 
 - 下载线路可选「自动测速 / 国际（Hugging Face、GitHub）/ 国内（hf-mirror、gh-proxy、ModelScope）」。
 - 「一键安装」会准备 uv 与 Python 虚拟环境、安装 sherpa-onnx（MLX 平台额外装 mlx-qwen3-asr、mlx-lm）、下载 llama.cpp 预编译包和缺失模型，并在完成后列出每项内容与体积。
-- 模型默认保存在项目文件夹的 `models/`（npm 安装为 `~/.podwave/models`），运行时在 `~/.podwave/runtime`；位置可在设置里改，卸载插件不会删除这些文件。
+- 模型默认保存在项目文件夹的 `models/`（npm 安装为当前工作区的 `models/`，老用户已有 `~/.podwave/models` 会继续沿用），运行时在 `~/.podwave/runtime`；位置可在设置里改，卸载插件不会删除这些文件。
 - 注意：Hy-MT2 1.25bit GGUF 是自定义量化，主线 llama.cpp 加载会报 `failed to read tensor data`，所以非 MLX 平台用 Q4_K_M。
 
 ### Windows 需要准备什么
