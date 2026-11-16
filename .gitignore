@@ -6,3 +6,5 @@ client/src/styles.prefixed.css
 *.tgz
 __pycache__/
 *.pyc
+# 模型（5 GB 量级）默认下载到项目里的 models/，不纳入版本控制
+models/

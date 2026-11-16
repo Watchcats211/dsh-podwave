@@ -11,6 +11,7 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), 'podwave-models-'))
 const dataDir = path.join(home, '.podwave')
 process.env.HOME = home
 process.env.PODWAVE_DATA_DIR = dataDir
+process.env.PODWAVE_MODELS_NO_PROJECT = '1'
 
 const models = await import('../src/models.js')
 

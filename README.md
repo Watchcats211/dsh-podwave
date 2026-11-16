@@ -65,11 +65,12 @@ dsh plugin --profile desktop add file:/path/to/dsh-podwave
 uv venv ~/.podwave/runtime/.venv --python 3.12
 uv pip install --python ~/.podwave/runtime/.venv/bin/python "mlx-qwen3-asr==0.4.4" mlx-lm sherpa-onnx
 
-hf download mlx-community/Qwen3-ASR-1.7B-8bit --local-dir ~/.podwave/models/qwen3-asr-1.7b-8bit
-hf download mlx-community/Hy-MT2-1.8B-4bit --local-dir ~/.podwave/models/hy-mt2-1.8b-4bit
+# 默认下载到项目文件夹里的 models/（npm 安装则是 ~/.podwave/models，可在设置里改）
+hf download mlx-community/Qwen3-ASR-1.7B-8bit --local-dir models/qwen3-asr-1.7b-8bit
+hf download mlx-community/Hy-MT2-1.8B-4bit --local-dir models/hy-mt2-1.8b-4bit
 
 # 说话人分离模型（约 34MB）
-mkdir -p ~/.podwave/models/diarization && cd ~/.podwave/models/diarization
+mkdir -p models/diarization && cd models/diarization
 curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2
 tar xjf sherpa-onnx-pyannote-segmentation-3-0.tar.bz2
 curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx
@@ -87,7 +88,7 @@ DSH 设置 →「播客」：
 - **历史记录**：所有已完成转写的单集（时长、语言、行数、位说话人、已翻语言、完成时间）。
 - **转写**：热词、分块时长（1–60 分钟）、是否自动识别说话人。
 - **API 与翻译引擎**：DeepSeek API 地址 / 模型 / API Key，或切到本地模型。
-- **模型**：在 `~/.podwave/models/` 下已就绪的模型里选转写模型（ASR）与翻译模型。
+- **模型**：在模型目录（默认是项目里的 `models/`）下已就绪的模型里选转写模型（ASR）与翻译模型。
 - **界面**：开关「在主界面侧边栏显示播客入口」，保存后立即生效（不需要刷新）。
 - **导入与清理**：选择复制/原地引用；清理没有被文件夹引用的 `imports/` 批次。
 
@@ -178,7 +179,7 @@ CI（GitHub Actions）在每次 push / PR 跑 `npm test` 与 `npm run build`。
 
 - 下载线路可选「自动测速 / 国际（Hugging Face、GitHub）/ 国内（hf-mirror、gh-proxy、ModelScope）」。
 - 「一键安装」会准备 uv 与 Python 虚拟环境、安装 sherpa-onnx（MLX 平台额外装 mlx-qwen3-asr、mlx-lm）、下载 llama.cpp 预编译包和缺失模型，并在完成后列出每项内容与体积。
-- 模型保存在 `~/.podwave/models`，运行时在 `~/.podwave/runtime`；卸载插件不会删除这些文件。
+- 模型默认保存在项目文件夹的 `models/`（npm 安装为 `~/.podwave/models`），运行时在 `~/.podwave/runtime`；位置可在设置里改，卸载插件不会删除这些文件。
 - 注意：Hy-MT2 1.25bit GGUF 是自定义量化，主线 llama.cpp 加载会报 `failed to read tensor data`，所以非 MLX 平台用 Q4_K_M。
 
 ### Windows 需要准备什么
@@ -186,7 +187,7 @@ CI（GitHub Actions）在每次 push / PR 跑 `npm test` 与 `npm run build`。
 - 安装中心会自动下载 ffmpeg（约 202 MB）、llama.cpp（约 25 MB）、SenseVoice（约 239 MB）与 Hy-MT2-Q4_K_M（约 1.1 GB），合计约 1.6 GB，建议预留 3 GB 磁盘。
 - Windows 10 及以上自带 `tar` 与 `powershell`，解压和文件夹选择器无需额外安装。
 - 安装时会校验下载文件的 sha256（GitHub Release 官方 digest / Hugging Face LFS），并拒绝含 `..` 或绝对路径的压缩包；macOS 没有 ffmpeg 时会尝试通过 Homebrew 安装。
-- 首次安装完成后，设置页会列出每项下载内容与体积；模型在 `~/.podwave/models`，运行时在 `~/.podwave/runtime`。
+- 首次安装完成后，设置页会列出每项下载内容与体积；模型默认在项目里的 `models/`，运行时在 `~/.podwave/runtime`。
 
 ## 小宇宙
 

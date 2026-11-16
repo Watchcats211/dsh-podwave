@@ -636,13 +636,13 @@ export default function SettingsPage() {
       <section className="settings-card">
         <h2>模型</h2>
         <p className="settings-hint">
-          模型默认放在 {storage?.defaultDir || '~/.podwave/models'}，可以改成任意目录（比如项目文件夹或外置硬盘），改完会把已有模型一起搬过去。
+          模型默认下载到项目文件夹 {storage?.projectDir || 'dsh-podwave/models'}，可以改成任意目录（比如外置硬盘），改完会把已有模型一起搬过去。
         </p>
         {storage ? (
           <>
             <div className="model-path">
               <code className="model-path-text" title={storage.dir}>{storage.dir}</code>
-              <span className="model-path-size">{storage.custom ? '自定义位置' : '默认位置'} · 共 {fmtBytes(storage.totalBytes)}</span>
+              <span className="model-path-size">{storage.custom ? '自定义位置' : storage.dir === storage.projectDir ? '项目文件夹' : '默认位置'} · 共 {fmtBytes(storage.totalBytes)}</span>
             </div>
             <div className="settings-fields">
               <label className="field-row">
@@ -660,6 +660,11 @@ export default function SettingsPage() {
                 {moving ? '迁移中…' : '迁移到新位置'}
               </button>
               <button className="settings-btn ghost" onClick={openModelsDir}>在文件管理器中打开</button>
+              {storage.projectDir && storage.dir !== storage.projectDir ? (
+                <button className="settings-btn ghost" disabled={moving} onClick={() => changeModelsDir(storage.projectDir, true)}>
+                  用项目文件夹
+                </button>
+              ) : null}
               {storage.custom ? (
                 <button className="settings-btn ghost" disabled={moving} onClick={() => changeModelsDir('', true)}>
                   恢复默认位置

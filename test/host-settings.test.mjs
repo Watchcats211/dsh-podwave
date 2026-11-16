@@ -11,6 +11,7 @@ import path from 'node:path'
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'podwave-host-settings-'))
 process.env.HOME = home
 process.env.PODWAVE_DATA_DIR = path.join(home, '.podwave')
+process.env.PODWAVE_MODELS_NO_PROJECT = '1'
 process.env.PODWAVE_UPDATE_REGISTRY = 'http://127.0.0.1:9'
 
 const ENDPOINTS = [

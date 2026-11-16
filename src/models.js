@@ -6,11 +6,102 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { DATA_DIR } from './state.js'
 import { getSection, updateSection } from './config.js'
 import { CATALOG } from './catalog.js'
 
-export const DEFAULT_MODELS_DIR = path.join(DATA_DIR, 'models')
+// 老位置（家目录）——新装用户不再默认用它，但仍然作为「历史目录」参与解析，
+// 保证已经下过模型的人不会被悄悄搬家。
+export const LEGACY_MODELS_DIR = path.join(DATA_DIR, 'models')
+export const DEFAULT_MODELS_DIR = LEGACY_MODELS_DIR
+
+// 插件包根目录（这个文件在 src/ 下）。
+function pluginRoot() {
+  try {
+    return path.dirname(path.dirname(fileURLToPath(import.meta.url)))
+  } catch {
+    return ''
+  }
+}
+
+// 往上找第一个含 .git 的目录：说明这份代码是「开发用的工作树」。
+// npm 装进 node_modules 的是拷贝，没有 .git，因此不会被误判。
+export function projectRoot(start = pluginRoot()) {
+  let dir = start
+  for (let i = 0; i < 40 && dir; i += 1) {
+    try {
+      if (fs.existsSync(path.join(dir, '.git'))) return dir
+    } catch {
+      /* 读不到就当没有 */
+    }
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  return ''
+}
+
+// 项目里的模型目录：模型跟着项目走，又不会在 npm 升级时被 node_modules 覆盖掉。
+export function projectModelsDir(start) {
+  const root = projectRoot(start)
+  return root ? path.join(root, 'models') : ''
+}
+
+// 从本地路径安装（profile 里写的是 file:/path/to/dsh-podwave）时，
+// 那个路径就是用户的项目文件夹——模型默认放进去，符合「装在项目里」的预期。
+function declaredInstallRoot(start = pluginRoot()) {
+  let dir = start
+  for (let i = 0; i < 4 && dir; i += 1) {
+    const parent = path.dirname(dir)
+    if (parent === dir) break
+    dir = parent
+    const pkgPath = path.join(dir, 'package.json')
+    let pkg
+    try {
+      pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+    } catch {
+      continue
+    }
+    const spec = pkg?.dependencies?.['dsh-podwave'] || pkg?.devDependencies?.['dsh-podwave'] || ''
+    if (!String(spec).startsWith('file:')) continue
+    const target = String(spec).slice('file:'.length)
+    const resolved = path.isAbsolute(target) ? target : path.resolve(dir, target)
+    try {
+      if (fs.existsSync(resolved)) return projectRoot(resolved) || resolved
+    } catch {
+      /* 路径失效就当没配置 */
+    }
+  }
+  return ''
+}
+
+export function installModelsDir(start) {
+  const root = declaredInstallRoot(start)
+  return root ? path.join(root, 'models') : ''
+}
+
+function hasModels(dir) {
+  try {
+    return fs.readdirSync(dir, { withFileTypes: true }).some((entry) => entry.isDirectory())
+  } catch {
+    return false
+  }
+}
+
+// 默认下载位置：
+// 1. 开发工作树里 → 项目下的 models/（用户要的「装在项目文件夹」）
+// 2. 但家目录里已经存过模型 → 继续沿用，不搬家（避免升级后突然要重下 5 GB）
+// 3. 其余情况（npm 安装）→ 家目录
+export function defaultModelsDir(start) {
+  // 测试/便携场景可以关掉「项目内默认」，让默认位置稳定落到数据目录。
+  const project =
+    process.env.PODWAVE_MODELS_NO_PROJECT === '1' ? '' : projectModelsDir(start) || installModelsDir(start)
+  if (!project) return LEGACY_MODELS_DIR
+  if (hasModels(project)) return project
+  if (hasModels(LEGACY_MODELS_DIR)) return LEGACY_MODELS_DIR
+  return project
+}
 
 // 把 ~ / ~/x / %VAR% 解析成绝对路径；空串返回 ''。只接受绝对路径或 ~ 开头。
 export function expandPath(input) {
@@ -42,7 +133,7 @@ export function modelsDir() {
   } catch {
     /* 配置里写了非法路径时退回默认，不能让整个插件起不来 */
   }
-  return DEFAULT_MODELS_DIR
+  return defaultModelsDir()
 }
 
 export function modelDir(name) {
@@ -136,7 +227,17 @@ export function listModels() {
 export function modelsSummary() {
   const items = listModels()
   const totalBytes = items.reduce((sum, item) => sum + item.bytes, 0)
-  return { dir: modelsDir(), defaultDir: DEFAULT_MODELS_DIR, custom: modelsDir() !== DEFAULT_MODELS_DIR, totalBytes, items }
+  const fallback = defaultModelsDir()
+  // 项目文件夹里的模型目录：设置页用它做「用项目文件夹」的一键入口。
+  const project = process.env.PODWAVE_MODELS_NO_PROJECT === '1' ? '' : projectModelsDir() || installModelsDir()
+  return {
+    dir: modelsDir(),
+    defaultDir: fallback,
+    projectDir: project,
+    custom: modelsDir() !== fallback,
+    totalBytes,
+    items,
+  }
 }
 
 export function removeModel(name) {
@@ -190,7 +291,7 @@ function moveOne(from, to, onBytes) {
 // 改模型目录。move=true 时把已有模型搬过去（同卷 rename 秒完成，跨卷复制）。
 export function setModelsDir(input, { move = true } = {}) {
   const raw = String(input || '').trim()
-  const next = raw ? expandPath(raw) : DEFAULT_MODELS_DIR
+  const next = raw ? expandPath(raw) : defaultModelsDir()
   const current = modelsDir()
   if (next === current) return { ...modelsSummary(), moved: [], skipped: [] }
 
@@ -249,6 +350,6 @@ export function setModelsDir(input, { move = true } = {}) {
   }
   moveState = null
 
-  updateSection('models', { dir: next === DEFAULT_MODELS_DIR ? '' : next })
+  updateSection('models', { dir: next === defaultModelsDir() ? '' : next })
   return { ...modelsSummary(), moved, skipped }
 }
