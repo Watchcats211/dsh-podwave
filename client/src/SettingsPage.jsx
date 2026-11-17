@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { useTheme } from './lib/theme.js'
 import css from './styles.prefixed.css'
+import { CLIENT_VERSION } from './lib/version.js'
 
 const API = '/podwave/api'
 
@@ -198,15 +199,12 @@ export default function SettingsPage() {
   }
 
   // 历史记录卡片默认收起，展开状态记在 ui 设置里，下次进来还是上次那样。
-  const toggleHistory = async () => {
+  // 存到服务端只是「记住」，存不上（比如插件升级后宿主进程还没重启、老接口不认这个字段）
+  // 也不能让界面点不动 —— 先按本地状态切，写失败就静默放弃。
+  const toggleHistory = () => {
     const next = !historyOpen
     setHistoryOpen(next)
-    try {
-      await sendJSON(`${API}/ui-settings`, 'PUT', { historyOpen: next })
-    } catch (err) {
-      setHistoryOpen(!next)
-      setError(err.message)
-    }
+    sendJSON(`${API}/ui-settings`, 'PUT', { historyOpen: next }).catch(() => {})
   }
 
   // 本地模型是「按需装」：只有用户主动切到本地、或点这个按钮，才去下 python 运行时和 2.4 GB 模型。
@@ -453,6 +451,9 @@ export default function SettingsPage() {
   }
 
   const modelOptions = allModels
+  // 磁盘上的插件版本 vs 正在跑的宿主版本：不一致就是「改了文件但没重启」，
+  // 表现是某些新按钮点了没反应，先在这里说清楚。
+  const staleHost = Boolean(CLIENT_VERSION && setup?.version && setup.version !== CLIENT_VERSION)
 
   return (
     <div className="podwave-root" data-pw-theme={theme} style={{ height: 'auto', overflow: 'visible', background: 'transparent', color: 'inherit' }}>
@@ -464,6 +465,12 @@ export default function SettingsPage() {
         <p>本地播放、转写、双语字幕与翻译。数据都在 ~/.podwave。</p>
       </header>
 
+      {staleHost ? (
+        <div className="settings-stale">
+          插件已经更新到 {CLIENT_VERSION}，但正在运行的宿主还是 {setup.version}。
+          <strong>重启 DSH</strong> 之后新功能才会全部生效（现在能看到的界面是新的，后台接口还是旧的）。
+        </div>
+      ) : null}
       {error ? <div className="banner error" onClick={() => setError('')}>{error}</div> : null}
       {message ? <div className="settings-message">{message}</div> : null}
 

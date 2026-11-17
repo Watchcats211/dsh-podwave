@@ -1015,6 +1015,18 @@ select:focus-visible {
 .podwave-settings { height: auto; overflow: visible; padding: 4px 0 24px; color: inherit; font-size: 14px; }
 .podwave-settings .settings-head h1 { margin: 0 0 4px; font-size: 15px; font-weight: 600; color: inherit; }
 .podwave-settings .settings-head p { margin: 0; font-size: 13px; color: color-mix(in srgb, currentColor 58%, transparent); }
+.podwave-settings .settings-stale {
+  margin: 12px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.podwave-settings .settings-stale strong { font-weight: 600; }
 .podwave-settings .settings-message { margin-top: 10px; font-size: 13px; color: color-mix(in srgb, currentColor 75%, transparent); }
 .podwave-settings .settings-card { margin-top: 0; padding: 18px 0 4px; border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
 .podwave-settings .settings-card:first-of-type { margin-top: 16px; }

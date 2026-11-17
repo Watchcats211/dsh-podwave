@@ -6,6 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.dirname(fileURLToPath(import.meta.url))
+const pkg = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'))
 
 const scopePlugin = {
   postcssPlugin: 'podwave-scope',
@@ -35,6 +36,7 @@ const result = await build({
   jsx: 'transform',
   external: ['react'],
   loader: { '.css': 'text' },
+  define: { __PODWAVE_VERSION__: JSON.stringify(pkg.version) },
   minify: true,
   legalComments: 'none',
   logLevel: 'warning',
