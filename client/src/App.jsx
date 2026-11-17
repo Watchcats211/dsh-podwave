@@ -716,10 +716,12 @@ export default function App() {
     }
   }, [])
 
-  // 字幕对象换了（加载完成、改行、翻译完成）就同步一次撤销历史。
+  // 字幕结构变了（加载完成、改行、翻译完成）就同步一次撤销历史。
+  // 只看 id / 行数 / 译文来源，不跟着每 2 秒的轮询刷新重复请求。
+  const undoKey = `${transcript?.id || ''}:${transcript?.lines?.length || 0}:${Object.keys(transcript?.providers || {}).length}`
   useEffect(() => {
     refreshUndo(transcript?.id)
-  }, [transcript, refreshUndo])
+  }, [undoKey, refreshUndo])
 
   // 显式动作：只有用户点「翻译 / 续翻 / 重新翻译」才会发起（可能计费的）请求。
   // force = true 时连已有译文一起重翻（整篇重翻）。
