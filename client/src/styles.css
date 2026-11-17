@@ -965,7 +965,7 @@ select:focus-visible {
 .seg-row:hover { background: var(--hover); }
 .seg-row.active { background: var(--accent-soft); }
 .seg-time { flex: none; width: 56px; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; padding-top: 2px; }
-.seg-text { font-size: 13px; line-height: 1.55; color: var(--text); }
+.seg-text { font-size: var(--sub-size, 15px); line-height: 1.55; color: var(--text); }
 .seg-row.active .seg-text { color: var(--text); }
 .transcript-status { padding: 16px; font-size: 13px; color: var(--muted); line-height: 1.6; }
 .transcript-status .err { color: var(--danger); white-space: pre-wrap; }
@@ -981,7 +981,7 @@ select:focus-visible {
   font-size: 12px;
   padding: 0 4px;
 }
-.seg-trans { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.seg-trans { display: block; margin-top: 2px; color: var(--muted); font-size: calc(var(--sub-size, 15px) * 0.84); line-height: 1.5; }
 .tr-running { padding: 8px 12px; color: var(--accent); font-size: 12px; }
 .tr-running.err { color: var(--danger); white-space: pre-wrap; }
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; font-size: 12px; color: var(--muted); }
@@ -1462,3 +1462,97 @@ select:focus-visible {
 .sleep-menu button { text-align: left; background: none; border: 0; color: var(--text); padding: 7px 10px; border-radius: 7px; cursor: pointer; font-size: 12.5px; }
 .sleep-menu button:hover { background: var(--hover); }
 .sleep-menu button.is-on { color: var(--accent); }
+
+/* 字幕字号拖动条 + 悬浮字幕 */
+.sub-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.sub-size input[type="range"] {
+  width: 92px;
+  height: 4px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.sub-size.compact input[type="range"] { width: 64px; }
+.sub-size-value {
+  min-width: 18px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.sub-size.compact .sub-size-label { display: none; }
+
+.caption-overlay {
+  position: fixed;
+  right: 24px;
+  bottom: 132px;
+  width: min(560px, calc(100vw - 48px));
+  display: flex;
+  flex-direction: column;
+  background: var(--elev);
+  background: color-mix(in srgb, var(--elev) 94%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, .55);
+  z-index: 60;
+  overflow: hidden;
+  backdrop-filter: blur(6px);
+}
+.caption-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.caption-head:active { cursor: grabbing; }
+.caption-title { color: var(--text); }
+.caption-head .sub-size { margin-left: auto; }
+.caption-close {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.caption-close:hover { color: var(--text); }
+.caption-body {
+  padding: 10px 14px 12px;
+  cursor: pointer;
+  outline: none;
+}
+.caption-body.empty { cursor: default; }
+.caption-speaker {
+  display: inline-block;
+  margin-bottom: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+}
+.caption-text {
+  font-size: calc(var(--sub-size, 15px) + 3px);
+  line-height: 1.5;
+  color: var(--text);
+}
+.caption-trans {
+  margin-top: 4px;
+  font-size: var(--sub-size, 15px);
+  line-height: 1.5;
+  color: var(--muted);
+}
+.caption-hint { font-size: 13px; color: var(--muted); }

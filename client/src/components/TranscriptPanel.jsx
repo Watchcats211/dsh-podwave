@@ -1,9 +1,10 @@
 const API = '/podwave/api'
 import React, { useEffect, useRef } from 'react'
 import Icon from './Icon.jsx'
+import SubtitleSize from './SubtitleSize.jsx'
 import { fmtTime } from '../lib/format.js'
 
-export default function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onTranslate, onOpenSettings, inline = false, editingId = null, draft = '', onDraftChange, onEditLine, onSaveLine, onCancelEdit, onSplitLine, onMergeLine, onUndo, onValidate, onResegment, issues = [] }) {
+export default function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onTranslate, onOpenSettings, inline = false, editingId = null, draft = '', onDraftChange, onEditLine, onSaveLine, onCancelEdit, onSplitLine, onMergeLine, onUndo, onValidate, onResegment, issues = [], fontSize = 15, onFontSize = null }) {
   const bodyRef = useRef(null)
   const editRef = useRef(null)
   const activeIndex = transcript?.lines?.findIndex((line) => position >= line.start && position < line.end) ?? -1
@@ -17,7 +18,7 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
   const running = status === 'queued' || status === 'running'
 
   return (
-    <section className={`transcript-panel ${inline ? 'inline' : ''}`}>
+    <section className={`transcript-panel ${inline ? 'inline' : ''}`} style={{ '--sub-size': `${fontSize}px` }}>
       <header className="transcript-head">
         <h3>字幕</h3>
         {transcript ? (
@@ -32,6 +33,7 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
             <option value="zh">中文对照</option>
             <option value="en">English</option>
           </select>
+          {onFontSize ? <SubtitleSize value={fontSize} onChange={onFontSize} /> : null}
           <button className="mini-link" onClick={onOpenSettings}>设置</button>
           {transcript ? (
             <>

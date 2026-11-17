@@ -30,7 +30,16 @@ function cachedDefaultModels() {
 
 export const CONFIG_DEFAULTS = {
   schemaVersion: 1,
-  ui: { showSidebarPanel: true, sidebarCollapsed: false },
+  ui: {
+    showSidebarPanel: true,
+    sidebarCollapsed: false,
+    // 字幕字号（px）：字幕面板和悬浮字幕共用这一个设置，用拖动条调。
+    subtitleSize: 15,
+    // 悬浮字幕：是否开启、停留在屏幕上的位置（null = 用默认的右下角）。
+    captionOpen: false,
+    captionX: null,
+    captionY: null,
+  },
   // DeepSeek API 的地址 / 密钥 / 对话模型：转写和翻译共用这一份，用户只填一次。
   // 老版本把这三项存在 translate 段里，读到时由 migrateApiSection() 挪过来。
   api: {

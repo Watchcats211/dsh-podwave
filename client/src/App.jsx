@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Icon from './components/Icon.jsx'
 import Cover from './components/Cover.jsx'
 import TranscriptPanel from './components/TranscriptPanel.jsx'
+import CaptionOverlay from './components/CaptionOverlay.jsx'
 import XyzPanel from './components/XyzPanel.jsx'
 import { fmtTime, fmtDuration, fmtDate, initialOf, shortPath } from './lib/format.js'
 import { childDirs as buildChildDirs, crumbsFor } from './lib/tree.js'
@@ -206,6 +207,10 @@ export default function App() {
   const [txStatus, setTxStatus] = useState('none')
   const [txSettings, setTxSettings] = useState(null)
   const realtimeTried = useRef(new Set())
+  // 字幕字号（面板 + 悬浮字幕共用）与悬浮字幕的开关/位置，都存在 ui 设置里。
+  const [subtitleSize, setSubtitleSize] = useState(15)
+  const [captionOpen, setCaptionOpen] = useState(false)
+  const [captionPos, setCaptionPos] = useState({ x: null, y: null })
   const [txElapsed, setTxElapsed] = useState(0)
   const [txError, setTxError] = useState('')
   const [subsOpen, setSubsOpen] = useState(false)
@@ -255,13 +260,60 @@ export default function App() {
     ;(async () => {
       try {
         const cfg = await getJSON(`${API}/ui-settings`)
-        if (!cancelled && cfg) setNavCollapsed(Boolean(cfg.sidebarCollapsed))
+        if (!cancelled && cfg) {
+          setNavCollapsed(Boolean(cfg.sidebarCollapsed))
+          if (Number.isFinite(Number(cfg.subtitleSize))) setSubtitleSize(Number(cfg.subtitleSize))
+          if (typeof cfg.captionOpen === 'boolean') setCaptionOpen(cfg.captionOpen)
+          setCaptionPos({ x: Number.isFinite(Number(cfg.captionX)) ? Number(cfg.captionX) : null, y: Number.isFinite(Number(cfg.captionY)) ? Number(cfg.captionY) : null })
+        }
       } catch {
         /* 旧版本没有这个接口时保持默认展开 */
       }
     })()
     return () => { cancelled = true }
   }, [])
+
+  const saveUi = useCallback((patch) => {
+    fetch(`${API}/ui-settings`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch),
+    }).catch(() => {})
+  }, [])
+
+  const changeSubtitleSize = useCallback((value) => {
+    const next = Math.max(12, Math.min(42, Math.round(Number(value) || 15)))
+    setSubtitleSize(next)
+    saveUi({ subtitleSize: next })
+  }, [saveUi])
+
+  const moveCaption = useCallback((x, y, commit) => {
+    setCaptionPos({ x, y })
+    if (commit) saveUi({ captionX: x, captionY: y })
+  }, [saveUi])
+
+  const toggleCaption = useCallback(() => {
+    setCaptionOpen((prev) => {
+      const next = !prev
+      saveUi({ captionOpen: next })
+      return next
+    })
+  }, [saveUi])
+
+  const closeCaption = useCallback(() => {
+    setCaptionOpen(false)
+    saveUi({ captionOpen: false })
+  }, [saveUi])
+
+  const captionLine = useMemo(() => {
+    const lines = transcript?.lines
+    if (!lines?.length) return null
+    return lines.find((line) => position >= line.start && position < line.end) || null
+  }, [transcript, position])
+
+  const captionSpeaker = captionLine && captionLine.speaker != null
+    ? (transcript?.speakers?.[captionLine.speaker]?.label || `说话人 ${captionLine.speaker + 1}`)
+    : ''
 
   const toggleNav = useCallback(() => {
     setNavCollapsed((prev) => {
@@ -1406,6 +1458,8 @@ export default function App() {
                   onCancel={cancelTranscript}
                   error={txError}
                   position={position}
+                  fontSize={subtitleSize}
+                  onFontSize={changeSubtitleSize}
                   onSeek={seekTo}
                   onClose={() => setDetailId(null)}
                   onStart={startTranscript}
@@ -1604,6 +1658,8 @@ export default function App() {
           onCancel={cancelTranscript}
           error={txError}
           position={position}
+          fontSize={subtitleSize}
+          onFontSize={changeSubtitleSize}
           onSeek={seekTo}
           onClose={() => setSubsOpen(false)}
           onStart={startTranscript}
@@ -1709,6 +1765,14 @@ export default function App() {
               <Icon name="wave" size={15} />
               <span>{transcript ? '字幕' : txStatus === 'queued' || txStatus === 'running' ? '转写中' : '转写'}</span>
             </button>
+            <button
+              className={`subs-btn ${captionOpen ? 'active' : ''}`}
+              onClick={toggleCaption}
+              disabled={!current}
+              title="悬浮字幕：跟着播放在屏幕上显示当前这句"
+            >
+              <span>悬浮字幕</span>
+            </button>
             <span className="time">{fmtTime(position)} / {fmtTime(duration)}</span>
             <span className="rate-wrap">
               <button
@@ -1789,6 +1853,22 @@ export default function App() {
         />
       ) : null}
       {toast ? <div className="toast">{toast}</div> : null}
+
+      {captionOpen ? (
+        <CaptionOverlay
+          line={captionLine}
+          speakerLabel={captionSpeaker}
+          target={trTarget}
+          status={txStatus}
+          fontSize={subtitleSize}
+          onFontSize={changeSubtitleSize}
+          x={captionPos.x}
+          y={captionPos.y}
+          onMove={moveCaption}
+          onClose={closeCaption}
+          onSeek={seekTo}
+        />
+      ) : null}
 
       <audio
         ref={audioRef}

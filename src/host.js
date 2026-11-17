@@ -1206,6 +1206,16 @@ async function route(ctx, req, res) {
       const patch = {}
       if (typeof body?.showSidebarPanel === 'boolean') patch.showSidebarPanel = body.showSidebarPanel
       if (typeof body?.sidebarCollapsed === 'boolean') patch.sidebarCollapsed = body.sidebarCollapsed
+      if (Number.isFinite(Number(body?.subtitleSize))) patch.subtitleSize = Math.max(12, Math.min(42, Math.round(Number(body.subtitleSize))))
+      if (typeof body?.captionOpen === 'boolean') patch.captionOpen = body.captionOpen
+      // 悬浮字幕的位置：传 null / 空串表示回到默认位置（注意 Number(null) 是 0，不能直接判有限）。
+      const coordinate = (value) => {
+        if (value === null || value === undefined || value === '') return null
+        const number = Number(value)
+        return Number.isFinite(number) ? Math.round(number) : null
+      }
+      if (body && 'captionX' in body) patch.captionX = coordinate(body.captionX)
+      if (body && 'captionY' in body) patch.captionY = coordinate(body.captionY)
       if (!Object.keys(patch).length) return json(res, 400, { error: '没有可保存的设置' })
       return json(res, 200, saveUiSettings(patch))
     }
