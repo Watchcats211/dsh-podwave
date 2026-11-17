@@ -1,12 +1,14 @@
 const API = '/podwave/api'
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import Icon from './Icon.jsx'
+import PopMenu, { MenuAction, MenuDownload } from './PopMenu.jsx'
 import SubtitleSize from './SubtitleSize.jsx'
 import { fmtTime } from '../lib/format.js'
 
 export default function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onTranslate, onOpenSettings, inline = false, editingId = null, draft = '', onDraftChange, onEditLine, onSaveLine, onCancelEdit, onSplitLine, onMergeLine, onUndo, onValidate, onResegment, issues = [], fontSize = 15, onFontSize = null }) {
   const bodyRef = useRef(null)
   const editRef = useRef(null)
+  const [copied, setCopied] = useState(false)
   const activeIndex = transcript?.lines?.findIndex((line) => position >= line.start && position < line.end) ?? -1
 
   useEffect(() => {
@@ -16,6 +18,36 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
   }, [activeIndex])
 
   const running = status === 'queued' || status === 'running'
+
+  // 复制整份字幕：每行「时间 原文」，有译文就缩进一行放下面，粘到笔记里能直接看。
+  const copyAll = async () => {
+    const lines = transcript?.lines || []
+    const text = lines
+      .map((line) => {
+        const stamp = fmtTime(line.start)
+        const translated = target ? line.translations?.[target] : ''
+        return translated ? `${stamp} ${line.text}\n${' '.repeat(stamp.length + 1)}${translated}` : `${stamp} ${line.text}`
+      })
+      .join('\n')
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+      } else {
+        const box = document.createElement('textarea')
+        box.value = text
+        box.style.position = 'fixed'
+        box.style.opacity = '0'
+        document.body.appendChild(box)
+        box.select()
+        document.execCommand('copy')
+        document.body.removeChild(box)
+      }
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1600)
+    } catch {
+      setCopied(false)
+    }
+  }
 
   return (
     <section className={`transcript-panel ${inline ? 'inline' : ''}`} style={{ '--sub-size': `${fontSize}px` }}>
@@ -33,16 +65,45 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
             <option value="zh">中文对照</option>
             <option value="en">English</option>
           </select>
-          {onFontSize ? <SubtitleSize value={fontSize} onChange={onFontSize} /> : null}
-          <button className="mini-link" onClick={onOpenSettings}>设置</button>
+          {onFontSize ? (
+            <PopMenu className="tr-fs" trigger="Aa" title={`字幕字号 ${fontSize}px`} align="end">
+              {() => (
+                <span className="pop-fs">
+                  <SubtitleSize value={fontSize} onChange={onFontSize} />
+                </span>
+              )}
+            </PopMenu>
+          ) : null}
           {transcript ? (
-            <>
-              <button className="mini-link" onClick={onUndo} title="撤销上一步编辑">撤销</button>
-              <button className="mini-link" onClick={onValidate} title="导出前检查字幕">校验</button>
-              {onResegment ? <button className="mini-link" onClick={onResegment} title="把碎片行按标点重新拼成整句，方便翻译">整理断句</button> : null}
-              <a className="mini-link" href={`${API}/episodes/${transcript.id}/transcript/export?format=srt`} download>SRT</a>
-              <a className="mini-link" href={`${API}/episodes/${transcript.id}/transcript/export?format=md`} download>Markdown</a>
-            </>
+            <button className="mini-link" onClick={onUndo} title="撤销上一步编辑">撤销</button>
+          ) : null}
+          <PopMenu className="tr-more" trigger="⋯" title="更多">
+            {({ close }) => (
+              <>
+                {transcript ? (
+                  <MenuAction hint="查空行与时间轴" onSelect={() => { close(); onValidate() }}>校验字幕</MenuAction>
+                ) : null}
+                {transcript && onResegment ? (
+                  <MenuAction hint="碎片行拼回整句" onSelect={() => { close(); onResegment() }}>整理断句</MenuAction>
+                ) : null}
+                <MenuAction hint="转写与翻译" onSelect={() => { close(); onOpenSettings() }}>设置</MenuAction>
+              </>
+            )}
+          </PopMenu>
+          {transcript ? (
+            <PopMenu className="tr-export" trigger="导出" title="导出字幕">
+              {({ close }) => (
+                <>
+                  <MenuDownload hint="带时间轴，剪辑软件用" href={`${API}/episodes/${transcript.id}/transcript/export?format=srt`} onSelect={close}>
+                    字幕文件 .srt
+                  </MenuDownload>
+                  <MenuDownload hint="带时间戳的文稿" href={`${API}/episodes/${transcript.id}/transcript/export?format=md`} onSelect={close}>
+                    文稿 .md
+                  </MenuDownload>
+                  <MenuAction hint="纯文本，连译文一起" onSelect={copyAll}>{copied ? '已复制' : '复制全文'}</MenuAction>
+                </>
+              )}
+            </PopMenu>
           ) : null}
           {inline ? null : <button className="transcript-close" onClick={onClose} title="收起">×</button>}
         </div>
