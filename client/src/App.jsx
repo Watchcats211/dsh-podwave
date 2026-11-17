@@ -664,7 +664,7 @@ export default function App() {
   const undoTranscript = useCallback(async () => {
     if (!transcript) return
     const data = await transcriptMutate(`/episodes/${transcript.id}/transcript/undo`, 'POST', {})
-    if (data) flash('已撤销上一步')
+    if (data) flash(data.remaining > 0 ? `已撤销上一步，还能再撤销 ${data.remaining} 步` : '已撤销上一步（没有更早的记录了）')
   }, [transcript, transcriptMutate, flash])
 
   const resegmentTx = useCallback(async () => {

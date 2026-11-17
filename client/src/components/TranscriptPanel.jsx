@@ -94,7 +94,13 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
             ) : null
           ) : null}
           {transcript ? (
-            <button className="mini-link" onClick={onUndo} title="撤销上一步编辑">撤销</button>
+            <button
+              className="mini-link"
+              onClick={onUndo}
+              title="撤销上一步编辑（改行、拆分、合并、整理断句都能撤；最多 20 步，关掉插件后清零）"
+            >
+              撤销
+            </button>
           ) : null}
           <PopMenu className="tr-more" trigger="⋯" title="更多">
             {({ close }) => (

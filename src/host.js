@@ -514,7 +514,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.36',
+      version: '0.11.37',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -544,7 +544,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.36', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.37', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -1057,7 +1057,8 @@ async function route(ctx, req, res) {
     transcript.lines = stack.pop()
     transcript.text = transcript.lines.map((line) => line.text).join(' ')
     await saveTranscript(transcript)
-    return json(res, 200, { transcript })
+    // 把还剩几步一起回给前端：用户点了才发现「没了」不如直接说清楚。
+    return json(res, 200, { transcript, remaining: stack.length })
   }
 
   const validateMatch = /^api\/episodes\/([^/]+)\/transcript\/validate$/.exec(routePath)
