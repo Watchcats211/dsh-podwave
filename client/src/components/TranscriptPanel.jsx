@@ -12,7 +12,7 @@ function clockOf(ms) {
   return `${pad(at.getHours())}:${pad(at.getMinutes())}`
 }
 
-export default function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onTranslate, onRetranslate = null, onRetranslateLine = null, onOpenSettings, inline = false, editingId = null, draft = '', onDraftChange, onEditLine, onSaveLine, onCancelEdit, onSplitLine, onMergeLine, onUndo, undoSteps = [], onValidate, onResegment, issues = [], fontSize = 15, onFontSize = null }) {
+export default function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onTranslate, onRetranslate = null, onRetranslateLine = null, onOpenSettings, inline = false, editingId = null, draft = '', onDraftChange, onEditLine, onSaveLine, onCancelEdit, onSplitLine, onMergeLine, onUndo, undoSteps = [], undoStale = false, onValidate, onResegment, issues = [], fontSize = 15, onFontSize = null }) {
   const bodyRef = useRef(null)
   const editRef = useRef(null)
   const [copied, setCopied] = useState(false)
@@ -110,18 +110,27 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
               {({ close }) => (
                 <>
                   {undoSteps.length ? (
-                    undoSteps.map((step) => (
+                    <>
                       <MenuAction
-                        key={step.id}
-                        hint={`${clockOf(step.at)} · ${step.lineCount} 行`}
-                        onSelect={() => { close(); onUndo(step.id) }}
+                        hint="退回到最近一次改动之前"
+                        onSelect={() => { close(); onUndo(undoSteps[0].id) }}
                       >
-                        撤销「{step.action}」
+                        撤销「{undoSteps[0].action}」
                       </MenuAction>
-                    ))
+                      {undoSteps.length > 1 ? undoSteps.slice(1).map((step) => (
+                        <MenuAction
+                          key={step.id}
+                          hint="一次退到这一步之前"
+                          onSelect={() => { close(); onUndo(step.id) }}
+                        >
+                          退回到「{step.action}」之前
+                        </MenuAction>
+                      )) : null}
+                      <span className="pop-hint">按时间倒序，最上面是最新的</span>
+                    </>
                   ) : (
-                    <MenuAction disabled hint="改行、拆分、合并、整理断句、翻译都会记一步">
-                      还没有可以撤销的操作
+                    <MenuAction disabled hint={undoStale ? '宿主还是旧版本，重启 DSH 后这里会显示历史' : '改行、拆分、合并、整理断句、翻译都会记一步'}>
+                      {undoStale ? '需要重启 DSH 才能看历史' : '还没有可以撤销的操作'}
                     </MenuAction>
                   )}
                 </>

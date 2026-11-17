@@ -207,6 +207,8 @@ export default function App() {
   const [transcript, setTranscript] = useState(null)
   // 撤销历史：落盘在宿主侧，这里只存「能撤哪几步」给下拉菜单用。
   const [undoSteps, setUndoSteps] = useState([])
+  // 宿主进程还是旧版时，撤销历史接口会 404 —— 这时候退回「只退一步」的老办法。
+  const [undoStale, setUndoStale] = useState(false)
   const [txStatus, setTxStatus] = useState('none')
   const [txSettings, setTxSettings] = useState(null)
   const realtimeTried = useRef(new Set())
@@ -706,13 +708,16 @@ export default function App() {
   const refreshUndo = useCallback(async (id) => {
     if (!id) {
       setUndoSteps([])
+      setUndoStale(false)
       return
     }
     try {
       const data = await getJSON(`${API}/episodes/${id}/transcript/undo`)
       setUndoSteps(Array.isArray(data?.steps) ? data.steps : [])
+      setUndoStale(false)
     } catch {
       setUndoSteps([])
+      setUndoStale(true)
     }
   }, [])
 
@@ -1549,6 +1554,7 @@ export default function App() {
                   onMergeLine={mergeLine}
                   onUndo={undoTranscript}
                   undoSteps={undoSteps}
+                  undoStale={undoStale}
                   onValidate={validateTx}
                   onResegment={resegmentTx}
                   issues={txIssues}
@@ -1752,6 +1758,7 @@ export default function App() {
           onMergeLine={mergeLine}
           onUndo={undoTranscript}
           undoSteps={undoSteps}
+          undoStale={undoStale}
           onValidate={validateTx}
           onResegment={resegmentTx}
           issues={txIssues}
