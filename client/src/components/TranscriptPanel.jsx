@@ -128,9 +128,19 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
                       )) : null}
                       <span className="pop-hint">按时间倒序，最上面是最新的</span>
                     </>
+                  ) : undoStale ? (
+                    <>
+                      {/* 宿主还是旧版：拿不到历史列表，但「退一步」这个动作旧版也支持，别把用户卡住。 */}
+                      <MenuAction hint="旧版宿主只能一步一步退" onSelect={() => { close(); onUndo() }}>
+                        撤销上一步
+                      </MenuAction>
+                      <MenuAction disabled hint="重启 DSH 之后这里会列出每一步做过什么">
+                        历史列表要重启后才有
+                      </MenuAction>
+                    </>
                   ) : (
-                    <MenuAction disabled hint={undoStale ? '宿主还是旧版本，重启 DSH 后这里会显示历史' : '改行、拆分、合并、整理断句、翻译都会记一步'}>
-                      {undoStale ? '需要重启 DSH 才能看历史' : '还没有可以撤销的操作'}
+                    <MenuAction disabled hint="改行、拆分、合并、整理断句、翻译都会记一步">
+                      还没有可以撤销的操作
                     </MenuAction>
                   )}
                 </>
