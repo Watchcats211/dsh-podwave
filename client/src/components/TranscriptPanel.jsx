@@ -18,6 +18,12 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
   }, [activeIndex])
 
   const running = status === 'queued' || status === 'running'
+  // 翻译按钮放进工具栏：字幕几百行，谁都不想滚回顶部去找「开始翻译」。
+  const translating = job?.status === 'running' || job?.status === 'queued'
+  const missingLines = job?.missing ?? 0
+  const translateLabel = translating
+    ? `翻译中${job?.progress?.total ? ` ${job.progress.done || 0}/${job.progress.total}` : ''}`
+    : job?.status === 'partial' ? '续翻' : job?.status === 'error' ? '重试翻译' : '翻译'
 
   // 复制整份字幕：每行「时间 原文」，有译文就缩进一行放下面，粘到笔记里能直接看。
   const copyAll = async () => {
@@ -73,6 +79,19 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
                 </span>
               )}
             </PopMenu>
+          ) : null}
+          {transcript && target && onTranslate ? (
+            translating ? (
+              <span className="mini-link tr-translate is-busy" title="正在翻译字幕">{translateLabel}</span>
+            ) : missingLines > 0 ? (
+              <button
+                className="mini-link tr-translate is-primary"
+                onClick={onTranslate}
+                title={`还有 ${missingLines} 行没有译文，点这里翻译`}
+              >
+                {translateLabel}
+              </button>
+            ) : null
           ) : null}
           {transcript ? (
             <button className="mini-link" onClick={onUndo} title="撤销上一步编辑">撤销</button>
@@ -134,20 +153,17 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
         {job?.status === 'error' ? (
           <div className="tr-running err">
             {job.error}
-            待翻 {job.missing ?? 0} 行
-            {onTranslate ? <button className="seg-tool" onClick={onTranslate}>重试</button> : null}
+            待翻 {job.missing ?? 0} 行，点工具栏的「重试翻译」再试一次
           </div>
         ) : null}
         {job?.status === 'partial' ? (
           <div className="tr-running">
-            已翻 {job.translated ?? 0}/{job.total ?? 0} 行，还缺 {job.missing ?? 0} 行
-            {onTranslate ? <button className="seg-tool" onClick={onTranslate}>补翻缺失部分</button> : null}
+            已翻 {job.translated ?? 0}/{job.total ?? 0} 行，还缺 {job.missing ?? 0} 行 —— 点工具栏的「续翻」接着翻
           </div>
         ) : null}
         {job?.status === 'none' && target && transcript && (job.missing ?? 0) > 0 ? (
           <div className="tr-running">
-            还没有译文（共 {job.missing} 行待翻）
-            {onTranslate ? <button className="seg-tool" onClick={onTranslate}>开始翻译</button> : null}
+            还没有译文（共 {job.missing} 行待翻）—— 点工具栏的「翻译」开始
           </div>
         ) : null}
         {transcript ? (

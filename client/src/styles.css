@@ -1235,6 +1235,10 @@ select:focus-visible {
 .jobs-foot { display: flex; gap: 10px; padding: 12px 14px; border-top: 1px solid var(--line); flex-wrap: wrap; }
 .mini-link { border: 0; background: none; padding: 2px 4px; color: var(--muted); font-size: 12px; cursor: pointer; }
 .mini-link:hover { color: var(--accent); }
+/* 工具栏里的翻译按钮：有活要干时用主色提醒，跑起来就变成状态文字 */
+.mini-link.is-primary { color: var(--accent); font-weight: 600; }
+.mini-link.is-busy { cursor: default; opacity: .66; }
+.mini-link.is-busy:hover { color: var(--muted); }
 
 /* 弹出菜单：工具栏上的「⋯」「导出」「Aa」共用一个壳，省得一排按钮铺满一行。 */
 .pop-wrap { position: relative; display: inline-flex; }
