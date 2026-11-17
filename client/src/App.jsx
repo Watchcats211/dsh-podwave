@@ -3,6 +3,7 @@ import Icon from './components/Icon.jsx'
 import Cover from './components/Cover.jsx'
 import TranscriptPanel from './components/TranscriptPanel.jsx'
 import CaptionOverlay from './components/CaptionOverlay.jsx'
+import PopMenu, { MenuAction } from './components/PopMenu.jsx'
 import XyzPanel from './components/XyzPanel.jsx'
 import { fmtTime, fmtDuration, fmtDate, initialOf, shortPath } from './lib/format.js'
 import { childDirs as buildChildDirs, crumbsFor } from './lib/tree.js'
@@ -1382,10 +1383,33 @@ export default function App() {
           <div className="batch-bar">
             <span>已选 {selected.length} 集</span>
             <button className="btn ghost" onClick={() => setSelected(visible.map((item) => item.id))}>全选当前</button>
-            <button className="btn ghost" disabled={!unTranscribed.length} onClick={() => submitBatch(unTranscribed.map((item) => item.id))}>
-              转写未转写的 {unTranscribed.length} 集
-            </button>
-            <button className="btn primary" disabled={!selected.length} onClick={() => submitBatch(selected)}>转写选中</button>
+            <PopMenu
+              className="batch-transcribe"
+              buttonClassName="btn primary"
+              title="批量转写"
+              placement="down"
+              disabled={!unTranscribed.length && !selected.length}
+              trigger="转写"
+            >
+              {({ close }) => (
+                <>
+                  <MenuAction
+                    hint={`${unTranscribed.length} 集`}
+                    disabled={!unTranscribed.length}
+                    onSelect={() => { close(); submitBatch(unTranscribed.map((item) => item.id)) }}
+                  >
+                    转写未转写的
+                  </MenuAction>
+                  <MenuAction
+                    hint={`${selected.length} 集`}
+                    disabled={!selected.length}
+                    onSelect={() => { close(); submitBatch(selected) }}
+                  >
+                    转写选中的
+                  </MenuAction>
+                </>
+              )}
+            </PopMenu>
             <button className="btn ghost danger" disabled={!selected.length} onClick={() => removeEpisodes(selected)}>移除选中</button>
             <button className="btn ghost" onClick={() => { setSelected([]); setBatchMode(false) }}>取消</button>
           </div>
@@ -1427,10 +1451,22 @@ export default function App() {
                       {detailItem.source === 'xyz' ? (transcript ? '重新下载并转写' : '下载并转写') : transcript ? '重新转写' : '转写字幕'}
                     </button>
                   )}
-                  {detailItem.source === 'xyz' ? (
-                    <button className="btn ghost" onClick={openEpisodeWeb}>在浏览器打开</button>
-                  ) : null}
-                  <button className="btn ghost danger" onClick={() => removeEpisodes([detailItem.id])}>从播放器移除</button>
+                  <PopMenu
+                    className="detail-more"
+                    buttonClassName="btn ghost"
+                    title="更多操作"
+                    placement="down"
+                    trigger="更多"
+                  >
+                    {({ close }) => (
+                      <>
+                        {detailItem.source === 'xyz' ? (
+                          <MenuAction onSelect={() => { close(); openEpisodeWeb() }}>在浏览器打开</MenuAction>
+                        ) : null}
+                        <MenuAction danger onSelect={() => { close(); removeEpisodes([detailItem.id]) }}>从播放器移除</MenuAction>
+                      </>
+                    )}
+                  </PopMenu>
                 </div>
               </div>
               <div className="episode-right">
@@ -1756,23 +1792,38 @@ export default function App() {
           </div>
 
           <div className="player-right">
-            <button
-              className={`subs-btn ${subsOpen ? 'active' : ''}`}
-              onClick={toggleSubs}
+            <PopMenu
+              className={`player-subs ${subsOpen || captionOpen ? 'is-active' : ''}`}
+              buttonClassName={`subs-btn ${subsOpen || captionOpen ? 'active' : ''}`}
+              placement="up"
               disabled={!current}
-              title="字幕与转写"
+              title="字幕"
+              trigger={(
+                <>
+                  <Icon name="wave" size={15} />
+                  <span>{transcript ? '字幕' : txStatus === 'queued' || txStatus === 'running' ? '转写中' : '转写'}</span>
+                </>
+              )}
             >
-              <Icon name="wave" size={15} />
-              <span>{transcript ? '字幕' : txStatus === 'queued' || txStatus === 'running' ? '转写中' : '转写'}</span>
-            </button>
-            <button
-              className={`subs-btn ${captionOpen ? 'active' : ''}`}
-              onClick={toggleCaption}
-              disabled={!current}
-              title="悬浮字幕：跟着播放在屏幕上显示当前这句"
-            >
-              <span>悬浮字幕</span>
-            </button>
+              {({ close }) => (
+                <>
+                  <MenuAction
+                    checked={subsOpen}
+                    hint={transcript ? `${transcript.lines.length} 行` : '还没转写'}
+                    onSelect={() => { close(); toggleSubs() }}
+                  >
+                    字幕面板
+                  </MenuAction>
+                  <MenuAction
+                    checked={captionOpen}
+                    hint="浮在屏幕上"
+                    onSelect={() => { close(); toggleCaption() }}
+                  >
+                    悬浮字幕窗
+                  </MenuAction>
+                </>
+              )}
+            </PopMenu>
             <span className="time">{fmtTime(position)} / {fmtTime(duration)}</span>
             <span className="rate-wrap">
               <button
