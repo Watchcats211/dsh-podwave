@@ -47,6 +47,8 @@ test('host: ui 设置里能存字幕字号和悬浮字幕的位置', async () =>
     assert.equal(initial.captionOpen, false, '悬浮字幕默认关')
     assert.equal(initial.captionX, null)
     assert.equal(initial.captionY, null)
+    assert.equal(initial.captionW, null, '悬浮字幕默认宽度自适应')
+    assert.equal(initial.captionH, null, '悬浮字幕默认高度自适应')
     assert.equal(initial.historyOpen, false, '历史记录默认收起')
 
     assert.equal((await put({ subtitleSize: 22 })).status, 200)
@@ -78,6 +80,27 @@ test('host: ui 设置里能存字幕字号和悬浮字幕的位置', async () =>
     assert.equal(body.captionX, null)
     assert.equal(body.captionY, null)
     assert.equal(body.captionOpen, true, '位置回默认不该顺手关掉悬浮字幕')
+
+    // 悬浮字幕的宽高：拖右下角改，松手写盘；超范围夹住，传 null 回到自适应
+    await put({ captionW: 900, captionH: 360 })
+    body = await (await fetch(`${base}/podwave/api/ui-settings`)).json()
+    assert.equal(body.captionW, 900)
+    assert.equal(body.captionH, 360)
+    await put({ captionW: 9999 })
+    body = await (await fetch(`${base}/podwave/api/ui-settings`)).json()
+    assert.equal(body.captionW, 1600, '宽度上限 1600')
+    assert.equal(body.captionH, 360, '只改宽度不该动高度')
+    await put({ captionW: 10, captionH: 5 })
+    body = await (await fetch(`${base}/podwave/api/ui-settings`)).json()
+    assert.equal(body.captionW, 240, '宽度下限 240')
+    assert.equal(body.captionH, 92, '高度下限 92')
+    await put({ captionW: 777.6 })
+    body = await (await fetch(`${base}/podwave/api/ui-settings`)).json()
+    assert.equal(body.captionW, 778, '小数四舍五入')
+    await put({ captionW: null, captionH: null })
+    body = await (await fetch(`${base}/podwave/api/ui-settings`)).json()
+    assert.equal(body.captionW, null, '清空宽度回到自适应')
+    assert.equal(body.captionH, null, '清空高度回到自适应')
 
     // 设置页「历史记录」卡片的展开状态也要能存、能读回来
     await put({ historyOpen: true })

@@ -1577,7 +1577,7 @@ select:focus-visible {
   position: fixed;
   right: 24px;
   bottom: 132px;
-  width: min(560px, calc(100vw - 48px));
+  width: min(620px, calc(100vw - 48px));
   display: flex;
   flex-direction: column;
   background: var(--elev);
@@ -1589,6 +1589,27 @@ select:focus-visible {
   overflow: hidden;
   backdrop-filter: blur(6px);
 }
+/* 定高之后正文自己滚，标题栏和把手不跟着动 */
+.caption-overlay.is-sized .caption-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.caption-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  touch-action: none;
+  opacity: .55;
+  background:
+    linear-gradient(135deg, transparent 46%, var(--muted) 46%, var(--muted) 54%, transparent 54%) no-repeat,
+    linear-gradient(135deg, transparent 68%, var(--muted) 68%, var(--muted) 74%, transparent 74%) no-repeat;
+  background-size: 100% 100%;
+}
+.caption-resize:hover { opacity: 1; }
 .caption-head {
   display: flex;
   align-items: center;

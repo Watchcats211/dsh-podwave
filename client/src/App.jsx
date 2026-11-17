@@ -212,6 +212,7 @@ export default function App() {
   const [subtitleSize, setSubtitleSize] = useState(15)
   const [captionOpen, setCaptionOpen] = useState(false)
   const [captionPos, setCaptionPos] = useState({ x: null, y: null })
+  const [captionSize, setCaptionSize] = useState({ width: null, height: null })
   const [txElapsed, setTxElapsed] = useState(0)
   const [txError, setTxError] = useState('')
   const [subsOpen, setSubsOpen] = useState(false)
@@ -266,6 +267,10 @@ export default function App() {
           if (Number.isFinite(Number(cfg.subtitleSize))) setSubtitleSize(Number(cfg.subtitleSize))
           if (typeof cfg.captionOpen === 'boolean') setCaptionOpen(cfg.captionOpen)
           setCaptionPos({ x: Number.isFinite(Number(cfg.captionX)) ? Number(cfg.captionX) : null, y: Number.isFinite(Number(cfg.captionY)) ? Number(cfg.captionY) : null })
+          setCaptionSize({
+            width: Number.isFinite(Number(cfg.captionW)) && cfg.captionW !== null ? Number(cfg.captionW) : null,
+            height: Number.isFinite(Number(cfg.captionH)) && cfg.captionH !== null ? Number(cfg.captionH) : null,
+          })
         }
       } catch {
         /* 旧版本没有这个接口时保持默认展开 */
@@ -291,6 +296,13 @@ export default function App() {
   const moveCaption = useCallback((x, y, commit) => {
     setCaptionPos({ x, y })
     if (commit) saveUi({ captionX: x, captionY: y })
+  }, [saveUi])
+
+  // 拖右下角改大小：null = 回到自适应；松手时才写盘。
+  const resizeCaption = useCallback((width, height, commit) => {
+    const next = { width: width ?? null, height: height ?? null }
+    setCaptionSize(next)
+    if (commit) saveUi({ captionW: next.width, captionH: next.height })
   }, [saveUi])
 
   const toggleCaption = useCallback(() => {
@@ -1915,7 +1927,10 @@ export default function App() {
           onFontSize={changeSubtitleSize}
           x={captionPos.x}
           y={captionPos.y}
+          width={captionSize.width}
+          height={captionSize.height}
           onMove={moveCaption}
+          onResize={resizeCaption}
           onClose={closeCaption}
           onSeek={seekTo}
         />

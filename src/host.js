@@ -514,7 +514,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.33',
+      version: '0.11.34',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -544,7 +544,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.33', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.34', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -1217,6 +1217,15 @@ async function route(ctx, req, res) {
       }
       if (body && 'captionX' in body) patch.captionX = coordinate(body.captionX)
       if (body && 'captionY' in body) patch.captionY = coordinate(body.captionY)
+      // 悬浮字幕的宽高：null 表示回到自适应，数字则夹到可用范围内。
+      const dimension = (value, min, max) => {
+        if (value === null || value === undefined || value === '') return null
+        const number = Number(value)
+        if (!Number.isFinite(number)) return null
+        return Math.min(max, Math.max(min, Math.round(number)))
+      }
+      if (body && 'captionW' in body) patch.captionW = dimension(body.captionW, 240, 1600)
+      if (body && 'captionH' in body) patch.captionH = dimension(body.captionH, 92, 1000)
       if (!Object.keys(patch).length) return json(res, 400, { error: '没有可保存的设置' })
       return json(res, 200, saveUiSettings(patch))
     }

@@ -39,6 +39,9 @@ export const CONFIG_DEFAULTS = {
     captionOpen: false,
     captionX: null,
     captionY: null,
+    // 悬浮字幕的宽高（px，null = 跟随内容自适应）。大屏上默认那点宽太小，可以拖着右下角改。
+    captionW: null,
+    captionH: null,
     // 设置页「历史记录」卡片是否展开：默认收起，点标题栏展开。
     historyOpen: false,
   },
