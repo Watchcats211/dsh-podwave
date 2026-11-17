@@ -205,6 +205,8 @@ export default function App() {
   const [error, setError] = useState('')
   const [toast, setToast] = useState('')
   const [transcript, setTranscript] = useState(null)
+  // 撤销历史：落盘在宿主侧，这里只存「能撤哪几步」给下拉菜单用。
+  const [undoSteps, setUndoSteps] = useState([])
   const [txStatus, setTxStatus] = useState('none')
   const [txSettings, setTxSettings] = useState(null)
   const realtimeTried = useRef(new Set())
@@ -661,10 +663,14 @@ export default function App() {
     if (data) flash('已与下一行合并')
   }, [transcript, transcriptMutate, flash])
 
-  const undoTranscript = useCallback(async () => {
+  const undoTranscript = useCallback(async (stepId) => {
     if (!transcript) return
-    const data = await transcriptMutate(`/episodes/${transcript.id}/transcript/undo`, 'POST', {})
-    if (data) flash(data.remaining > 0 ? `已撤销上一步，还能再撤销 ${data.remaining} 步` : '已撤销上一步（没有更早的记录了）')
+    const data = await transcriptMutate(`/episodes/${transcript.id}/transcript/undo`, 'POST', stepId ? { stepId } : {})
+    if (!data) return
+    setUndoSteps(Array.isArray(data.steps) ? data.steps : [])
+    const action = data.action ? `「${data.action}」` : ''
+    const rest = data.remaining > 0 ? `，还能再撤销 ${data.remaining} 步` : ''
+    flash(action ? `已撤销${action}之前的修改${rest}` : `已撤销${rest || '（没有更早的记录了）'}`)
   }, [transcript, transcriptMutate, flash])
 
   const resegmentTx = useCallback(async () => {
@@ -696,6 +702,24 @@ export default function App() {
     const fresh = await getJSON(`${API}/episodes/${id}/transcript`)
     if (fresh.transcript) setTranscript(fresh.transcript)
   }, [])
+
+  const refreshUndo = useCallback(async (id) => {
+    if (!id) {
+      setUndoSteps([])
+      return
+    }
+    try {
+      const data = await getJSON(`${API}/episodes/${id}/transcript/undo`)
+      setUndoSteps(Array.isArray(data?.steps) ? data.steps : [])
+    } catch {
+      setUndoSteps([])
+    }
+  }, [])
+
+  // 字幕对象换了（加载完成、改行、翻译完成）就同步一次撤销历史。
+  useEffect(() => {
+    refreshUndo(transcript?.id)
+  }, [transcript, refreshUndo])
 
   // 显式动作：只有用户点「翻译 / 续翻 / 重新翻译」才会发起（可能计费的）请求。
   // force = true 时连已有译文一起重翻（整篇重翻）。
@@ -1522,6 +1546,7 @@ export default function App() {
                   onSplitLine={splitLine}
                   onMergeLine={mergeLine}
                   onUndo={undoTranscript}
+                  undoSteps={undoSteps}
                   onValidate={validateTx}
                   onResegment={resegmentTx}
                   issues={txIssues}
@@ -1724,6 +1749,7 @@ export default function App() {
           onSplitLine={splitLine}
           onMergeLine={mergeLine}
           onUndo={undoTranscript}
+          undoSteps={undoSteps}
           onValidate={validateTx}
           onResegment={resegmentTx}
           issues={txIssues}

@@ -5,7 +5,14 @@ import PopMenu, { MenuAction, MenuDownload } from './PopMenu.jsx'
 import SubtitleSize from './SubtitleSize.jsx'
 import { fmtTime } from '../lib/format.js'
 
-export default function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onTranslate, onRetranslate = null, onRetranslateLine = null, onOpenSettings, inline = false, editingId = null, draft = '', onDraftChange, onEditLine, onSaveLine, onCancelEdit, onSplitLine, onMergeLine, onUndo, onValidate, onResegment, issues = [], fontSize = 15, onFontSize = null }) {
+// 撤销菜单里显示「几点几分做的这一步」。
+function clockOf(ms) {
+  const at = new Date(Number(ms) || Date.now())
+  const pad = (value) => String(value).padStart(2, '0')
+  return `${pad(at.getHours())}:${pad(at.getMinutes())}`
+}
+
+export default function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onTranslate, onRetranslate = null, onRetranslateLine = null, onOpenSettings, inline = false, editingId = null, draft = '', onDraftChange, onEditLine, onSaveLine, onCancelEdit, onSplitLine, onMergeLine, onUndo, undoSteps = [], onValidate, onResegment, issues = [], fontSize = 15, onFontSize = null }) {
   const bodyRef = useRef(null)
   const editRef = useRef(null)
   const [copied, setCopied] = useState(false)
@@ -94,13 +101,33 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
             ) : null
           ) : null}
           {transcript ? (
-            <button
-              className="mini-link"
-              onClick={onUndo}
-              title="撤销上一步编辑（改行、拆分、合并、整理断句都能撤；最多 20 步，关掉插件后清零）"
+            <PopMenu
+              className="tr-undo"
+              trigger="撤销"
+              title={undoSteps.length ? `还能撤销 ${undoSteps.length} 步` : '没有可撤销的修改'}
+              align="end"
+              disabled={!undoSteps.length}
             >
-              撤销
-            </button>
+              {({ close }) => (
+                <>
+                  {undoSteps.length ? (
+                    undoSteps.map((step) => (
+                      <MenuAction
+                        key={step.id}
+                        hint={`${clockOf(step.at)} · ${step.lineCount} 行`}
+                        onSelect={() => { close(); onUndo(step.id) }}
+                      >
+                        撤销「{step.action}」
+                      </MenuAction>
+                    ))
+                  ) : (
+                    <MenuAction disabled hint="改行、拆分、合并、整理断句、翻译都会记一步">
+                      还没有可以撤销的操作
+                    </MenuAction>
+                  )}
+                </>
+              )}
+            </PopMenu>
           ) : null}
           <PopMenu className="tr-more" trigger="⋯" title="更多">
             {({ close }) => (
