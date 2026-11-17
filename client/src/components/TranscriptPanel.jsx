@@ -103,10 +103,9 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
           {transcript ? (
             <PopMenu
               className="tr-undo"
-              trigger="撤销"
-              title={undoSteps.length ? `还能撤销 ${undoSteps.length} 步` : '没有可撤销的修改'}
+              trigger={undoSteps.length ? `撤销 ${undoSteps.length}` : '撤销'}
+              title={undoSteps.length ? `还能撤销 ${undoSteps.length} 步` : '还没有可以撤销的操作（改行、翻译、整理断句都会记一步）'}
               align="end"
-              disabled={!undoSteps.length}
             >
               {({ close }) => (
                 <>
