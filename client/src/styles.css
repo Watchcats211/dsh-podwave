@@ -1019,6 +1019,26 @@ select:focus-visible {
 .podwave-settings .settings-card { margin-top: 0; padding: 18px 0 4px; border-top: 1px solid color-mix(in srgb, currentColor 12%, transparent); }
 .podwave-settings .settings-card:first-of-type { margin-top: 16px; }
 .podwave-settings .settings-card h2 { margin: 0 0 4px; font-size: 14px; font-weight: 600; color: inherit; }
+/* 可收起的卡片（目前只有「历史记录」）：标题整行可点，右边挂条数和箭头 */
+.podwave-settings .card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.podwave-settings .card-head h2 { margin: 0; }
+.podwave-settings .card-head:hover h2 { color: var(--accent); }
+.podwave-settings .card-badge { margin-left: auto; color: color-mix(in srgb, currentColor 55%, transparent); font-size: 12px; }
+.podwave-settings .card-caret { color: color-mix(in srgb, currentColor 55%, transparent); font-size: 11px; line-height: 1; transition: transform .15s ease; }
+.podwave-settings .history-card.is-open .card-caret { transform: rotate(180deg); }
+.podwave-settings .history-card:not(.is-open) { padding-bottom: 6px; }
 .podwave-settings .settings-hint { margin: 0 0 12px; font-size: 13px; color: color-mix(in srgb, currentColor 55%, transparent); }
 /* 可选组件被跳过这类「装好了但有缺口」的提示，用警告色，不能和普通说明混在一起 */
 .podwave-settings .setup-warning { color: var(--accent); font-size: 13px; }

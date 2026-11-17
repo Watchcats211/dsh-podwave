@@ -47,6 +47,7 @@ test('host: ui 设置里能存字幕字号和悬浮字幕的位置', async () =>
     assert.equal(initial.captionOpen, false, '悬浮字幕默认关')
     assert.equal(initial.captionX, null)
     assert.equal(initial.captionY, null)
+    assert.equal(initial.historyOpen, false, '历史记录默认收起')
 
     assert.equal((await put({ subtitleSize: 22 })).status, 200)
     let body = await (await fetch(`${base}/podwave/api/ui-settings`)).json()
@@ -77,6 +78,15 @@ test('host: ui 设置里能存字幕字号和悬浮字幕的位置', async () =>
     assert.equal(body.captionX, null)
     assert.equal(body.captionY, null)
     assert.equal(body.captionOpen, true, '位置回默认不该顺手关掉悬浮字幕')
+
+    // 设置页「历史记录」卡片的展开状态也要能存、能读回来
+    await put({ historyOpen: true })
+    body = await (await fetch(`${base}/podwave/api/ui-settings`)).json()
+    assert.equal(body.historyOpen, true)
+    assert.equal(body.subtitleSize, 18, '展开历史记录不该影响字号')
+    await put({ historyOpen: false })
+    body = await (await fetch(`${base}/podwave/api/ui-settings`)).json()
+    assert.equal(body.historyOpen, false)
 
     // 空 patch 要报错，而不是静默成功
     assert.equal((await put({})).status, 400)

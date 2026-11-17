@@ -39,6 +39,8 @@ export const CONFIG_DEFAULTS = {
     captionOpen: false,
     captionX: null,
     captionY: null,
+    // 设置页「历史记录」卡片是否展开：默认收起，点标题栏展开。
+    historyOpen: false,
   },
   // DeepSeek API 的地址 / 密钥 / 对话模型：转写和翻译共用这一份，用户只填一次。
   // 老版本把这三项存在 translate 段里，读到时由 migrateApiSection() 挪过来。

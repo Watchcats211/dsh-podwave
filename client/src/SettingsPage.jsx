@@ -72,6 +72,7 @@ export default function SettingsPage() {
   const [history, setHistory] = useState([])
   const [historyDir, setHistoryDir] = useState('')
   const [historyBytes, setHistoryBytes] = useState(0)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [models, setModels] = useState([])
   const [storage, setStorage] = useState(null)
   const [dirDraft, setDirDraft] = useState('')
@@ -133,6 +134,7 @@ export default function SettingsPage() {
       setHistory(historyData.items || [])
       setHistoryDir(historyData.dir || '')
       setHistoryBytes(Number(historyData.bytes) || 0)
+      setHistoryOpen(uiData?.historyOpen === true)
       setModels(modelsData.models || [])
       setStorage(modelsData.storage || null)
       setDirDraft(modelsData.storage?.dir || '')
@@ -191,6 +193,18 @@ export default function SettingsPage() {
       flash('开始安装')
     } catch (err) {
       setSetupBusy(false)
+      setError(err.message)
+    }
+  }
+
+  // 历史记录卡片默认收起，展开状态记在 ui 设置里，下次进来还是上次那样。
+  const toggleHistory = async () => {
+    const next = !historyOpen
+    setHistoryOpen(next)
+    try {
+      await sendJSON(`${API}/ui-settings`, 'PUT', { historyOpen: next })
+    } catch (err) {
+      setHistoryOpen(!next)
       setError(err.message)
     }
   }
@@ -555,8 +569,22 @@ export default function SettingsPage() {
         )}
       </section>
 
-      <section className="settings-card">
-        <h2>历史记录</h2>
+      <section className={`settings-card history-card ${historyOpen ? 'is-open' : ''}`}>
+        <button
+          type="button"
+          className="card-head"
+          onClick={() => toggleHistory()}
+          aria-expanded={historyOpen}
+          title={historyOpen ? '收起' : '展开'}
+        >
+          <h2>历史记录</h2>
+          <span className="card-badge">
+            共 {history.length} 条{historyBytes ? ` · ${fmtBytes(historyBytes)}` : ''}
+          </span>
+          <span className="card-caret" aria-hidden="true">▾</span>
+        </button>
+        {historyOpen ? (
+        <>
         <p className="settings-hint">
           已经完成转写的单集，共 {history.length} 条。字幕和译文都存在本机，关掉插件、重装插件都还在。
         </p>
@@ -588,6 +616,8 @@ export default function SettingsPage() {
             {historyDir ? `${historyDir}${historyBytes ? ` · ${fmtBytes(historyBytes)}` : ''}` : ''}
           </span>
         </div>
+        </>
+        ) : null}
       </section>
 
       <section className="settings-card">
