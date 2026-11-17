@@ -5,7 +5,7 @@ import PopMenu, { MenuAction, MenuDownload } from './PopMenu.jsx'
 import SubtitleSize from './SubtitleSize.jsx'
 import { fmtTime } from '../lib/format.js'
 
-export default function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onTranslate, onOpenSettings, inline = false, editingId = null, draft = '', onDraftChange, onEditLine, onSaveLine, onCancelEdit, onSplitLine, onMergeLine, onUndo, onValidate, onResegment, issues = [], fontSize = 15, onFontSize = null }) {
+export default function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onTranslate, onRetranslate = null, onRetranslateLine = null, onOpenSettings, inline = false, editingId = null, draft = '', onDraftChange, onEditLine, onSaveLine, onCancelEdit, onSplitLine, onMergeLine, onUndo, onValidate, onResegment, issues = [], fontSize = 15, onFontSize = null }) {
   const bodyRef = useRef(null)
   const editRef = useRef(null)
   const [copied, setCopied] = useState(false)
@@ -105,6 +105,9 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
                 {transcript && onResegment ? (
                   <MenuAction hint="碎片行拼回整句" onSelect={() => { close(); onResegment() }}>整理断句</MenuAction>
                 ) : null}
+                {transcript && target && onRetranslate ? (
+                  <MenuAction hint="整篇覆盖重翻，会问一句" onSelect={() => { close(); onRetranslate() }}>重新翻译</MenuAction>
+                ) : null}
                 <MenuAction hint="转写与翻译" onSelect={() => { close(); onOpenSettings() }}>设置</MenuAction>
               </>
             )}
@@ -199,6 +202,9 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
                   <span className="seg-edit-actions">
                     <button className="seg-tool" onClick={() => onSaveLine(line.id)}>保存</button>
                     <button className="seg-tool" onClick={() => onSplitLine(line.id, editRef.current?.selectionStart ?? Math.floor(draft.length / 2))}>拆分</button>
+                    {target && onRetranslateLine ? (
+                      <button className="seg-tool" title="只重翻这一行的译文" onClick={() => onRetranslateLine(line)}>重翻</button>
+                    ) : null}
                     <button className="seg-tool" onClick={onCancelEdit}>取消</button>
                   </span>
                 </span>

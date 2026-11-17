@@ -80,7 +80,7 @@ import { listJobs, removeJob, upsertJob, getJob } from './jobs.js'
 import { scan as scanSetup, plan as planSetup, install as installSetup, cancelSetup, setupJob, llamaBinary, verify as verifySetup } from './setup.js'
 import { getSection, updateSection } from './config.js'
 import { diarizeInfo } from './diarize.js'
-import { getTranslationState, publicConfig, saveConfig, startTranslation } from './translate.js'
+import { getTranslationState, publicConfig, saveConfig, startTranslation, translateLine } from './translate.js'
 import { listModels, loadModelConfig, modelsDir, modelsMoveState, modelsSummary, removeModel, saveModelConfig, setModelsDir, setWorkspaceRoots, getWorkspaceRoot } from './models.js'
 import { findEpisode, getProviderById, listAllEpisodes } from './providers.js'
 // 设置页每次打开都会拉 /api/update；漏了这个 import 会让整页 500（v0.11.10 起就漏了）。
@@ -514,7 +514,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.35',
+      version: '0.11.36',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -544,7 +544,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.35', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.36', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -1246,6 +1246,21 @@ async function route(ctx, req, res) {
     }
   }
 
+  const translateLineMatch = /^api\/episodes\/([^/]+)\/translate\/line$/.exec(routePath)
+  if (translateLineMatch) {
+    const id = decodeURIComponent(translateLineMatch[1])
+    if (!findEpisode(id) && !isXyzId(id)) return json(res, 404, { error: '单集不存在' })
+    if (method !== 'POST') return json(res, 405, { error: '方法不允许' })
+    const body = await readJson(req)
+    const target = body?.target === 'en' ? 'en' : 'zh'
+    if (!body?.lineId) return json(res, 400, { error: '缺少行号' })
+    try {
+      return json(res, 200, await translateLine(id, String(body.lineId), { target }))
+    } catch (error) {
+      return json(res, error.status || 500, { error: String(error.message || error) })
+    }
+  }
+
   const translateMatch = /^api\/episodes\/([^/]+)\/translate$/.exec(routePath)
   if (translateMatch) {
     const id = decodeURIComponent(translateMatch[1])
@@ -1258,7 +1273,8 @@ async function route(ctx, req, res) {
       const body = await readJson(req)
       const target = body?.target === 'en' ? 'en' : 'zh'
       const provider = body?.provider === 'local' ? 'local' : body?.provider === 'api' ? 'api' : undefined
-      return json(res, 200, await startTranslation(id, { target, provider }))
+      // force: 连已有的译文一起重翻（整篇重翻用），默认只补缺的。
+      return json(res, 200, await startTranslation(id, { target, provider, force: body?.force === true }))
     }
   }
 

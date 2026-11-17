@@ -10,7 +10,7 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'podwave-translate-'))
 process.env.PODWAVE_DATA_DIR = dataDir
 process.env.HOME = dataDir
 
-const { translateWithApi, startTranslation, getTranslationState } = await import('../src/translate.js')
+const { translateWithApi, startTranslation, getTranslationState, pendingTranslationLines } = await import('../src/translate.js')
 const { saveTranscript, readTranscript } = await import('../src/transcribe.js')
 const { updateSection } = await import('../src/config.js')
 
@@ -256,4 +256,18 @@ test('startTranslation 在全部翻完后标记 done 且不重复开任务', asy
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+// 整篇重翻（force）靠这个函数挑行：默认只挑没译文的，force 时连已有译文一起挑。
+test('pendingTranslationLines：默认只补缺的，force 时整篇重翻', () => {
+  const lines = [
+    { id: 'a', text: 'Hello there.', translations: {} },
+    { id: 'b', text: 'How are you.', translations: { zh: '你好吗。' } },
+    { id: 'c', text: '我本来就是中文。', translations: {} },
+    { id: 'd', text: 'Fine thanks.', translations: { zh: '' } },
+  ]
+  assert.deepEqual(pendingTranslationLines(lines, 'zh').map((line) => line.id), ['a', 'd'], '已有译文和已是中文的行都跳过')
+  assert.deepEqual(pendingTranslationLines(lines, 'zh', { force: true }).map((line) => line.id), ['a', 'b', 'd'], 'force 时把有译文的也挑出来，但中文行还是不动')
+  assert.deepEqual(pendingTranslationLines([], 'zh'), [], '没有字幕时返回空数组')
+  assert.deepEqual(pendingTranslationLines(null, 'en', { force: true }), [], '字幕为空也不炸')
 })

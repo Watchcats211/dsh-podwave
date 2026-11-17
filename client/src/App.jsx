@@ -697,25 +697,47 @@ export default function App() {
     if (fresh.transcript) setTranscript(fresh.transcript)
   }, [])
 
-  // 显式动作：只有用户点「开始翻译 / 补翻缺失」才会发起（可能计费的）请求。
-  const startTranslate = useCallback(async () => {
+  // 显式动作：只有用户点「翻译 / 续翻 / 重新翻译」才会发起（可能计费的）请求。
+  // force = true 时连已有译文一起重翻（整篇重翻）。
+  const runTranslate = useCallback(async (force = false) => {
     const id = currentRef.current?.id
     const target = trTarget
     if (!id || !target) return
     if (trJob.status === 'running' || trJob.status === 'queued') return
     setTrJob({ status: 'running' })
     try {
-      const res = await sendJSON(`${API}/episodes/${id}/translate`, 'POST', { target })
+      const res = await sendJSON(`${API}/episodes/${id}/translate`, 'POST', { target, force })
       setTrJob(res)
       if (res.status === 'done') {
         await refreshTranscript()
-        flash('翻译完成')
+        flash(force ? '重新翻译完成' : '翻译完成')
       }
     } catch (err) {
       // 保留上一次的行数统计，别让「没有 API key」这类错误把待翻行数抹成 0。
       setTrJob((prev) => ({ ...prev, status: 'error', error: err.message }))
     }
   }, [trTarget, trJob.status, refreshTranscript, flash])
+  const startTranslate = useCallback(() => runTranslate(false), [runTranslate])
+
+  // 整篇重翻：会覆盖现有译文，先问一句（可能计费）。
+  const retranslateAll = useCallback(() => {
+    const label = trTarget === 'en' ? 'English' : '中文'
+    if (!window.confirm(`重新翻译整篇？\n\n现有的 ${label} 译文会被全部覆盖重翻一遍，按整篇计费。\n（只想改某一行，就点那一行的 ✎，里面有「重翻」。）`)) return
+    runTranslate(true)
+  }, [runTranslate, trTarget])
+
+  // 单行重翻：只重翻这一行，成本可以忽略。
+  const retranslateLine = useCallback(async (line) => {
+    const id = currentRef.current?.id
+    if (!id || !trTarget || !line?.id) return
+    try {
+      await sendJSON(`${API}/episodes/${id}/translate/line`, 'POST', { lineId: line.id, target: trTarget })
+      await refreshTranscript()
+      flash('这一行已重翻')
+    } catch (err) {
+      flash(err.message || '重翻失败')
+    }
+  }, [trTarget, refreshTranscript, flash])
 
   // 切换对照语言只换显示目标并读取后端持久状态，绝不自动触发翻译。
   const changeTarget = useCallback((value) => {
@@ -1515,6 +1537,8 @@ export default function App() {
                   job={trJob}
                   onChangeTarget={changeTarget}
                   onTranslate={startTranslate}
+                  onRetranslate={retranslateAll}
+                  onRetranslateLine={retranslateLine}
                   onOpenSettings={() => setTrSettingsOpen(true)}
                 />
               </div>
@@ -1715,6 +1739,8 @@ export default function App() {
           job={trJob}
           onChangeTarget={changeTarget}
           onTranslate={startTranslate}
+          onRetranslate={retranslateAll}
+          onRetranslateLine={retranslateLine}
           onOpenSettings={() => setTrSettingsOpen(true)}
         />
       ) : null}

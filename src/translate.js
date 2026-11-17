@@ -315,7 +315,12 @@ function translationKey(episodeId, target) {
   return jobKey({ type: 'translate', episodeId, target })
 }
 
-export async function startTranslation(episodeId, { target = 'zh', provider } = {}) {
+// 哪些行需要翻译：默认只挑还没有译文的；force 时把已有的也一起挑出来重翻。
+export function pendingTranslationLines(lines, target, { force = false } = {}) {
+  return (lines || []).filter((line) => needsTranslation(line, target) && (force || !line.translations?.[target]))
+}
+
+export async function startTranslation(episodeId, { target = 'zh', provider, force = false } = {}) {
   const config = loadConfig()
   const useProvider = provider || config.provider
   const transcript = await readTranscript(episodeId)
@@ -332,7 +337,7 @@ export async function startTranslation(episodeId, { target = 'zh', provider } = 
     return getTranslationState(episodeId, target)
   }
 
-  const pending = transcript.lines.filter((line) => needsTranslation(line, target) && !line.translations?.[target])
+  const pending = pendingTranslationLines(transcript.lines, target, { force })
   const eligible = transcript.lines.filter((line) => needsTranslation(line, target)).length
   if (!pending.length) {
     const existing = transcript.lines.filter((line) => line.translations?.[target]).length
@@ -385,6 +390,32 @@ export async function startTranslation(episodeId, { target = 'zh', provider } = 
   })()
 
   return getTranslationState(episodeId, target)
+}
+
+// 单行重翻：某一行翻得不对时，只重翻这一行（一次调用，成本可忽略），不动别的行。
+export async function translateLine(episodeId, lineId, { target = 'zh', provider } = {}) {
+  const config = loadConfig()
+  const useProvider = provider || config.provider
+  const transcript = await readTranscript(episodeId)
+  if (!transcript) throw Object.assign(new Error('先转写这一集'), { status: 409 })
+  const line = transcript.lines.find((item) => item.id === lineId)
+  if (!line) throw Object.assign(new Error('找不到这一行'), { status: 404 })
+  if (useProvider === 'api' && !config.apiKey) throw Object.assign(new Error('还没有填 DeepSeek API key'), { status: 400 })
+  if (useProvider === 'local' && !currentLocalModel().ready) {
+    throw Object.assign(new Error('本地翻译模型还没下载好'), { status: 503 })
+  }
+  const items = [{ id: line.id, text: line.text }]
+  const mapping = useProvider === 'api' ? await translateWithApi(items, target, config) : await translateWithLocal(items, target)
+  const text = mapping?.get?.(line.id)
+  if (!text) throw Object.assign(new Error('这一行没有拿到译文，可以稍后再试'), { status: 502 })
+  // 重新读一遍再写，避免把翻译期间用户手动编辑的内容盖掉。
+  const fresh = await readTranscript(episodeId)
+  const target2 = fresh?.lines?.find((item) => item.id === lineId)
+  if (!target2) throw Object.assign(new Error('这一行已经不在字幕里了'), { status: 409 })
+  target2.translations = { ...(target2.translations || {}), [target]: text }
+  fresh.providers = { ...(fresh.providers || {}), [target]: useProvider }
+  await saveTranscript(fresh)
+  return { line: target2, translation: text, provider: useProvider }
 }
 
 // 后端以 transcript 为准统计「已翻/待翻」，并保留持久 job 的错误与进度。
