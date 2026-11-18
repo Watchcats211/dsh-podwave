@@ -941,7 +941,36 @@ select:focus-visible {
 .transcript-meta { color: var(--muted); font-size: 12px; }
 .transcript-actions { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .transcript-close { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; }
-.transcript-body { overflow-y: auto; padding: 6px 0; border-radius: 0 0 12px 12px; }
+/* 右下角区域拖不动（面板锚在右下），所以把手放左下角：向左变宽、向上变高。 */
+.transcript-resize {
+  position: absolute;
+  left: 3px;
+  bottom: 3px;
+  width: 16px;
+  height: 16px;
+  border: 0;
+  padding: 0;
+  border-bottom-left-radius: 12px;
+  background: linear-gradient(135deg, transparent 52%, var(--line-strong) 52%);
+  opacity: .5;
+  cursor: nesw-resize;
+  touch-action: none;
+}
+.transcript-resize:hover { opacity: 1; }
+/* 内嵌面板宽度由详情页那一栏决定，只给一条底边把手改高度。 */
+.transcript-resize.is-inline {
+  left: 50%;
+  bottom: 2px;
+  width: 44px;
+  height: 8px;
+  transform: translateX(-50%);
+  border-radius: 999px;
+  background: var(--line-strong);
+  opacity: .35;
+  cursor: ns-resize;
+}
+.transcript-resize.is-inline:hover { opacity: .8; }
+.transcript-body { overflow-y: auto; padding: 6px 0; border-radius: 0 0 12px 12px; flex: 1 1 auto; min-height: 0; }
 .seg-row {
   display: flex;
   gap: 10px;
@@ -1002,7 +1031,7 @@ select:focus-visible {
 .episode-stats { margin: 0; color: #8a8a96; font-size: 12px; }
 .episode-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .episode-right { flex: 1; min-width: 0; }
-.transcript-panel.inline { position: static; width: auto; max-height: none; height: min(560px, calc(100vh - 300px)); min-height: 340px; box-shadow: none; }
+.transcript-panel.inline { position: relative; width: auto; max-height: none; height: min(560px, calc(100vh - 300px)); min-height: 340px; box-shadow: none; }
 @media (max-width: 1024px) {
   .episode-view { flex-direction: column; align-items: stretch; }
   .episode-left { flex: auto; width: 100%; }

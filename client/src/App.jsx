@@ -205,10 +205,6 @@ export default function App() {
   const [error, setError] = useState('')
   const [toast, setToast] = useState('')
   const [transcript, setTranscript] = useState(null)
-  // 撤销历史：落盘在宿主侧，这里只存「能撤哪几步」给下拉菜单用。
-  const [undoSteps, setUndoSteps] = useState([])
-  // 宿主进程还是旧版时，撤销历史接口会 404 —— 这时候退回「只退一步」的老办法。
-  const [undoStale, setUndoStale] = useState(false)
   const [txStatus, setTxStatus] = useState('none')
   const [txSettings, setTxSettings] = useState(null)
   const realtimeTried = useRef(new Set())
@@ -217,6 +213,8 @@ export default function App() {
   const [captionOpen, setCaptionOpen] = useState(false)
   const [captionPos, setCaptionPos] = useState({ x: null, y: null })
   const [captionSize, setCaptionSize] = useState({ width: null, height: null })
+  // 字幕面板自己的大小（null = 用样式里的默认值）。
+  const [panelSize, setPanelSize] = useState({ width: null, height: null })
   const [txElapsed, setTxElapsed] = useState(0)
   const [txError, setTxError] = useState('')
   const [subsOpen, setSubsOpen] = useState(false)
@@ -275,6 +273,10 @@ export default function App() {
             width: Number.isFinite(Number(cfg.captionW)) && cfg.captionW !== null ? Number(cfg.captionW) : null,
             height: Number.isFinite(Number(cfg.captionH)) && cfg.captionH !== null ? Number(cfg.captionH) : null,
           })
+          setPanelSize({
+            width: Number.isFinite(Number(cfg.transcriptW)) && cfg.transcriptW !== null ? Number(cfg.transcriptW) : null,
+            height: Number.isFinite(Number(cfg.transcriptH)) && cfg.transcriptH !== null ? Number(cfg.transcriptH) : null,
+          })
         }
       } catch {
         /* 旧版本没有这个接口时保持默认展开 */
@@ -307,6 +309,13 @@ export default function App() {
     const next = { width: width ?? null, height: height ?? null }
     setCaptionSize(next)
     if (commit) saveUi({ captionW: next.width, captionH: next.height })
+  }, [saveUi])
+
+  // 拖字幕面板改大小：null = 回到默认；松手时才写盘。
+  const resizeTranscript = useCallback((width, height, commit) => {
+    const next = { width: width ?? null, height: height ?? null }
+    setPanelSize(next)
+    if (commit) saveUi({ transcriptW: next.width, transcriptH: next.height })
   }, [saveUi])
 
   const toggleCaption = useCallback(() => {
@@ -665,16 +674,6 @@ export default function App() {
     if (data) flash('已与下一行合并')
   }, [transcript, transcriptMutate, flash])
 
-  const undoTranscript = useCallback(async (stepId) => {
-    if (!transcript) return
-    const data = await transcriptMutate(`/episodes/${transcript.id}/transcript/undo`, 'POST', stepId ? { stepId } : {})
-    if (!data) return
-    setUndoSteps(Array.isArray(data.steps) ? data.steps : [])
-    const action = data.action ? `「${data.action}」` : ''
-    const rest = data.remaining > 0 ? `，还能再撤销 ${data.remaining} 步` : ''
-    flash(action ? `已撤销${action}之前的修改${rest}` : `已撤销${rest || '（没有更早的记录了）'}`)
-  }, [transcript, transcriptMutate, flash])
-
   const resegmentTx = useCallback(async () => {
     if (!transcript) return
     const data = await transcriptMutate(`/episodes/${transcript.id}/transcript/resegment`, 'POST', {})
@@ -704,29 +703,6 @@ export default function App() {
     const fresh = await getJSON(`${API}/episodes/${id}/transcript`)
     if (fresh.transcript) setTranscript(fresh.transcript)
   }, [])
-
-  const refreshUndo = useCallback(async (id) => {
-    if (!id) {
-      setUndoSteps([])
-      setUndoStale(false)
-      return
-    }
-    try {
-      const data = await getJSON(`${API}/episodes/${id}/transcript/undo`)
-      setUndoSteps(Array.isArray(data?.steps) ? data.steps : [])
-      setUndoStale(false)
-    } catch {
-      setUndoSteps([])
-      setUndoStale(true)
-    }
-  }, [])
-
-  // 字幕结构变了（加载完成、改行、翻译完成）就同步一次撤销历史。
-  // 只看 id / 行数 / 译文来源，不跟着每 2 秒的轮询刷新重复请求。
-  const undoKey = `${transcript?.id || ''}:${transcript?.lines?.length || 0}:${Object.keys(transcript?.providers || {}).length}`
-  useEffect(() => {
-    refreshUndo(transcript?.id)
-  }, [undoKey, refreshUndo])
 
   // 显式动作：只有用户点「翻译 / 续翻 / 重新翻译」才会发起（可能计费的）请求。
   // force = true 时连已有译文一起重翻（整篇重翻）。
@@ -1552,9 +1528,6 @@ export default function App() {
                   onCancelEdit={() => setEditingLineId(null)}
                   onSplitLine={splitLine}
                   onMergeLine={mergeLine}
-                  onUndo={undoTranscript}
-                  undoSteps={undoSteps}
-                  undoStale={undoStale}
                   onValidate={validateTx}
                   onResegment={resegmentTx}
                   issues={txIssues}
@@ -1563,6 +1536,9 @@ export default function App() {
                   position={position}
                   fontSize={subtitleSize}
                   onFontSize={changeSubtitleSize}
+                  width={panelSize.width}
+                  height={panelSize.height}
+                  onResize={resizeTranscript}
                   onSeek={seekTo}
                   onClose={() => setDetailId(null)}
                   onStart={startTranscript}
@@ -1756,9 +1732,6 @@ export default function App() {
           onCancelEdit={() => setEditingLineId(null)}
           onSplitLine={splitLine}
           onMergeLine={mergeLine}
-          onUndo={undoTranscript}
-          undoSteps={undoSteps}
-          undoStale={undoStale}
           onValidate={validateTx}
           onResegment={resegmentTx}
           issues={txIssues}
@@ -1767,6 +1740,9 @@ export default function App() {
           position={position}
           fontSize={subtitleSize}
           onFontSize={changeSubtitleSize}
+          width={panelSize.width}
+          height={panelSize.height}
+          onResize={resizeTranscript}
           onSeek={seekTo}
           onClose={() => setSubsOpen(false)}
           onStart={startTranscript}

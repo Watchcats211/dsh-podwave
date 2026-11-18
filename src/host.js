@@ -74,7 +74,6 @@ import {
   splitTranscriptLine,
   validateTranscript,
 } from './transcribe.js'
-import { clearUndo, listUndo, pruneUndo, pushUndo, takeUndo } from './undo.js'
 import { closeLiveSpeakers } from './live-speaker.js'
 import { isLinux, isMac, isWindows } from './platform.js'
 import { listJobs, removeJob, upsertJob, getJob } from './jobs.js'
@@ -124,9 +123,6 @@ function importOrphans() {
   }
   return { batches, bytes }
 }
-
-// 撤销栈：拍快照存磁盘（src/undo.js），关掉插件也还在。
-
 
 function loadUiSettings() {
   return getSection('ui')
@@ -253,8 +249,7 @@ function boot() {
       await initState()
       loadXyz()
       await sweepWorkDirs().catch(() => {})
-    await pruneUndo().catch(() => {})
-    await migrateAllTranscripts().catch((error) => console.error('[dsh-podwave] transcript migration failed:', error.message))
+      await migrateAllTranscripts().catch((error) => console.error('[dsh-podwave] transcript migration failed:', error.message))
       if (getState().folders.length) {
         scanLibrary()
           .then(() => refreshWatchers())
@@ -508,7 +503,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.42',
+      version: '0.11.43',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -538,7 +533,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.42', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.43', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -903,7 +898,6 @@ async function route(ctx, req, res) {
     }
     if (method === 'DELETE') {
       const ok = await deleteTranscript(id)
-      if (ok) await clearUndo(id)
       return ok ? json(res, 200, { ok: true }) : json(res, 409, { error: '正在转写，完成后再试' })
     }
   }
@@ -924,10 +918,6 @@ async function route(ctx, req, res) {
     const body = await readJson(req)
     const force = Boolean(body?.force)
     const realtime = Boolean(body?.realtime)
-    if (force && !realtime) {
-      const existing = await readTranscript(episode.id)
-      if (existing && !existing.partial) pushUndo(episode.id, existing, '重新转写')
-    }
     const result = await startTranscription(episode, { force, resume: Boolean(body?.resume), realtime })
     return json(res, 200, result)
   }
@@ -993,7 +983,6 @@ async function route(ctx, req, res) {
     if (!before) return json(res, 404, { error: '还没有转写' })
     const body = await readJson(req)
     try {
-      pushUndo(id, before, '改行')
       const transcript = await editTranscriptLine(id, decodeURIComponent(lineMatch[2]), body || {})
       return json(res, 200, { transcript })
     } catch (error) {
@@ -1009,7 +998,6 @@ async function route(ctx, req, res) {
     if (!before) return json(res, 404, { error: '还没有转写' })
     const body = await readJson(req)
     try {
-      pushUndo(id, before, '拆分')
       const transcript = await splitTranscriptLine(id, decodeURIComponent(splitMatch[2]), Number(body?.offset))
       return json(res, 200, { transcript })
     } catch (error) {
@@ -1024,7 +1012,6 @@ async function route(ctx, req, res) {
     const before = await readTranscript(id)
     if (!before) return json(res, 404, { error: '还没有转写' })
     try {
-      pushUndo(id, before, '合并')
       const transcript = await mergeTranscriptLine(id, decodeURIComponent(mergeMatch[2]))
       return json(res, 200, { transcript })
     } catch (error) {
@@ -1039,36 +1026,10 @@ async function route(ctx, req, res) {
     const before = await readTranscript(id)
     if (!before) return json(res, 404, { error: '还没有转写' })
     try {
-      pushUndo(id, before, '整理断句')
       const result = await resegmentTranscript(id)
       return json(res, 200, result)
     } catch (error) {
       return json(res, 400, { error: error.message })
-    }
-  }
-
-  const undoMatch = /^api\/episodes\/([^/]+)\/transcript\/undo$/.exec(routePath)
-  if (undoMatch) {
-    const id = decodeURIComponent(undoMatch[1])
-    if (!findEpisode(id) && !isXyzId(id)) return json(res, 404, { error: '单集不存在' })
-    // GET：列出还能撤销的每一步，让按钮变成看得见的历史。
-    if (method === 'GET') return json(res, 200, { steps: listUndo(id) })
-    if (method === 'POST') {
-      const transcript = await readTranscript(id)
-      if (!transcript) return json(res, 404, { error: '还没有转写' })
-      const body = await readJson(req)
-      const step = takeUndo(id, typeof body?.stepId === 'string' ? body.stepId : '')
-      if (!step) return json(res, 409, { error: '没有可以撤销的修改' })
-      transcript.lines = step.lines
-      transcript.providers = step.providers || {}
-      transcript.text = transcript.lines.map((line) => line.text).join(' ')
-      await saveTranscript(transcript)
-      return json(res, 200, {
-        transcript,
-        action: step.action,
-        remaining: step.remaining,
-        steps: listUndo(id),
-      })
     }
   }
 
@@ -1238,6 +1199,9 @@ async function route(ctx, req, res) {
       }
       if (body && 'captionW' in body) patch.captionW = dimension(body.captionW, 240, 1600)
       if (body && 'captionH' in body) patch.captionH = dimension(body.captionH, 92, 1000)
+      // 字幕面板的宽高，null = 回到默认。
+      if (body && 'transcriptW' in body) patch.transcriptW = dimension(body.transcriptW, 320, 1600)
+      if (body && 'transcriptH' in body) patch.transcriptH = dimension(body.transcriptH, 200, 1000)
       if (!Object.keys(patch).length) return json(res, 400, { error: '没有可保存的设置' })
       return json(res, 200, saveUiSettings(patch))
     }
@@ -1266,8 +1230,6 @@ async function route(ctx, req, res) {
     const body = await readJson(req)
     const target = body?.target === 'en' ? 'en' : 'zh'
     if (!body?.lineId) return json(res, 400, { error: '缺少行号' })
-    const beforeLine = await readTranscript(id)
-    if (beforeLine) pushUndo(id, beforeLine, '重翻一行')
     try {
       return json(res, 200, await translateLine(id, String(body.lineId), { target }))
     } catch (error) {
@@ -1288,8 +1250,6 @@ async function route(ctx, req, res) {
       const target = body?.target === 'en' ? 'en' : 'zh'
       const provider = body?.provider === 'local' ? 'local' : body?.provider === 'api' ? 'api' : undefined
       const force = body?.force === true
-      const beforeTranslate = await readTranscript(id)
-      if (beforeTranslate) pushUndo(id, beforeTranslate, force ? '重新翻译' : '翻译')
       // force: 连已有的译文一起重翻（整篇重翻用），默认只补缺的。
       return json(res, 200, await startTranslation(id, { target, provider, force }))
     }

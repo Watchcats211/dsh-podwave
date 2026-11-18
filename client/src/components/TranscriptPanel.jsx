@@ -5,16 +5,11 @@ import PopMenu, { MenuAction, MenuDownload } from './PopMenu.jsx'
 import SubtitleSize from './SubtitleSize.jsx'
 import { fmtTime } from '../lib/format.js'
 
-// 撤销菜单里显示「几点几分做的这一步」。
-function clockOf(ms) {
-  const at = new Date(Number(ms) || Date.now())
-  const pad = (value) => String(value).padStart(2, '0')
-  return `${pad(at.getHours())}:${pad(at.getMinutes())}`
-}
-
-export default function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onTranslate, onRetranslate = null, onRetranslateLine = null, onOpenSettings, inline = false, editingId = null, draft = '', onDraftChange, onEditLine, onSaveLine, onCancelEdit, onSplitLine, onMergeLine, onUndo, undoSteps = [], undoStale = false, onValidate, onResegment, issues = [], fontSize = 15, onFontSize = null }) {
+export default function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onTranslate, onRetranslate = null, onRetranslateLine = null, onOpenSettings, inline = false, editingId = null, draft = '', onDraftChange, onEditLine, onSaveLine, onCancelEdit, onSplitLine, onMergeLine, onValidate, onResegment, issues = [], fontSize = 15, onFontSize = null, width = null, height = null, onResize = null }) {
   const bodyRef = useRef(null)
   const editRef = useRef(null)
+  const panelRef = useRef(null)
+  const resizeRef = useRef(null)
   const [copied, setCopied] = useState(false)
   const activeIndex = transcript?.lines?.findIndex((line) => position >= line.start && position < line.end) ?? -1
 
@@ -23,6 +18,45 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
     const row = bodyRef.current.querySelector(`[data-seg="${activeIndex}"]`)
     row?.scrollIntoView({ block: 'nearest' })
   }, [activeIndex])
+
+  // 拖动改大小：浮动面板拖左下角（向左变宽、向上变高），内嵌面板拖底边（只改高）。
+  const sizeAt = (event) => {
+    const start = resizeRef.current
+    if (!start) return null
+    const dx = event.clientX - start.startX
+    const dy = event.clientY - start.startY
+    const maxW = Math.max(320, window.innerWidth - 60)
+    const maxH = Math.max(220, window.innerHeight - (inline ? 160 : 140))
+    if (inline) return { width: null, height: Math.round(Math.min(maxH, Math.max(240, start.height + dy))) }
+    return {
+      width: Math.round(Math.min(maxW, Math.max(320, start.width - dx))),
+      height: Math.round(Math.min(maxH, Math.max(200, start.height - dy))),
+    }
+  }
+
+  const onResizeDown = (event) => {
+    if (event.button !== undefined && event.button !== 0) return
+    const box = panelRef.current
+    if (!box || !onResize) return
+    event.preventDefault()
+    const rect = box.getBoundingClientRect()
+    resizeRef.current = { startX: event.clientX, startY: event.clientY, width: rect.width, height: rect.height }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  const onResizeMove = (event) => {
+    if (!resizeRef.current) return
+    const next = sizeAt(event)
+    if (next) onResize(next.width, next.height, false)
+  }
+
+  const onResizeUp = (event) => {
+    if (!resizeRef.current) return
+    const next = sizeAt(event)
+    resizeRef.current = null
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+    if (next) onResize(next.width, next.height, true)
+  }
 
   const running = status === 'queued' || status === 'running'
   // 翻译按钮放进工具栏：字幕几百行，谁都不想滚回顶部去找「开始翻译」。
@@ -63,7 +97,16 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
   }
 
   return (
-    <section className={`transcript-panel ${inline ? 'inline' : ''}`} style={{ '--sub-size': `${fontSize}px` }}>
+    <section
+      ref={panelRef}
+      className={`transcript-panel ${inline ? 'inline' : ''} ${height ? 'is-sized' : ''}`}
+      style={{
+        '--sub-size': `${fontSize}px`,
+        width: !inline && width ? `${width}px` : undefined,
+        height: height ? `${height}px` : undefined,
+        maxHeight: height ? 'none' : undefined,
+      }}
+    >
       <header className="transcript-head">
         <h3>字幕</h3>
         {transcript ? (
@@ -99,53 +142,6 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
                 {translateLabel}
               </button>
             ) : null
-          ) : null}
-          {transcript ? (
-            <PopMenu
-              className="tr-undo"
-              trigger={undoSteps.length ? `撤销 ${undoSteps.length}` : '撤销'}
-              title={undoSteps.length ? `还能撤销 ${undoSteps.length} 步` : '还没有可以撤销的操作（改行、翻译、整理断句都会记一步）'}
-              align="end"
-            >
-              {({ close }) => (
-                <>
-                  {undoSteps.length ? (
-                    <>
-                      <MenuAction
-                        hint="退回到最近一次改动之前"
-                        onSelect={() => { close(); onUndo(undoSteps[0].id) }}
-                      >
-                        撤销「{undoSteps[0].action}」
-                      </MenuAction>
-                      {undoSteps.length > 1 ? undoSteps.slice(1).map((step) => (
-                        <MenuAction
-                          key={step.id}
-                          hint="一次退到这一步之前"
-                          onSelect={() => { close(); onUndo(step.id) }}
-                        >
-                          退回到「{step.action}」之前
-                        </MenuAction>
-                      )) : null}
-                      <span className="pop-hint">按时间倒序，最上面是最新的</span>
-                    </>
-                  ) : undoStale ? (
-                    <>
-                      {/* 宿主还是旧版：拿不到历史列表，但「退一步」这个动作旧版也支持，别把用户卡住。 */}
-                      <MenuAction hint="旧版宿主只能一步一步退" onSelect={() => { close(); onUndo() }}>
-                        撤销上一步
-                      </MenuAction>
-                      <MenuAction disabled hint="重启 DSH 之后这里会列出每一步做过什么">
-                        历史列表要重启后才有
-                      </MenuAction>
-                    </>
-                  ) : (
-                    <MenuAction disabled hint="改行、拆分、合并、整理断句、翻译都会记一步">
-                      还没有可以撤销的操作
-                    </MenuAction>
-                  )}
-                </>
-              )}
-            </PopMenu>
           ) : null}
           <PopMenu className="tr-more" trigger="⋯" title="更多">
             {({ close }) => (
@@ -304,6 +300,17 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
           </div>
         )}
       </div>
+      {onResize ? (
+        <span
+          className={`transcript-resize ${inline ? 'is-inline' : ''}`}
+          onPointerDown={onResizeDown}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeUp}
+          onPointerCancel={onResizeUp}
+          onDoubleClick={() => onResize(null, null, true)}
+          title={inline ? '拖动调整高度（双击恢复默认）' : '拖动调整大小（双击恢复默认）'}
+        />
+      ) : null}
     </section>
   )
 }
