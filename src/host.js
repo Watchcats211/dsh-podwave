@@ -503,7 +503,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.44',
+      version: '0.11.45',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -533,7 +533,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.44', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.45', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -1202,6 +1202,8 @@ async function route(ctx, req, res) {
       // 字幕面板的宽高，null = 回到默认。
       if (body && 'transcriptW' in body) patch.transcriptW = dimension(body.transcriptW, 320, 1600)
       if (body && 'transcriptH' in body) patch.transcriptH = dimension(body.transcriptH, 200, 1000)
+      // 详情页左栏宽度：太窄封面就没了，太宽字幕没地方放。
+      if (body && 'episodeLeftW' in body) patch.episodeLeftW = dimension(body.episodeLeftW, 140, 460)
       if (!Object.keys(patch).length) return json(res, 400, { error: '没有可保存的设置' })
       return json(res, 200, saveUiSettings(patch))
     }

@@ -1040,7 +1040,42 @@ select:focus-visible {
 .back-link:hover { color: var(--text); }
 .detail-count { color: var(--muted); font-size: 12px; }
 .episode-view { display: flex; gap: 26px; align-items: flex-start; }
-.episode-left { flex: 0 0 240px; width: 240px; display: flex; flex-direction: column; gap: 8px; }
+.episode-left {
+  position: relative;
+  flex: 0 0 var(--episode-left-w, 240px);
+  width: var(--episode-left-w, 240px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* 中间那条分隔线：往左右拖能改左栏宽度，封面跟着缩放。 */
+.episode-split {
+  position: absolute;
+  /* 竖线高度跟封面一致（封面是 1:1），拖它就是在改封面大小。 */
+  top: 6px;
+  left: calc(100% + 9px);
+  height: calc(var(--episode-left-w, 240px) - 12px);
+  z-index: 2;
+  width: 8px;
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.episode-split::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--line-strong);
+  opacity: .55;
+  transition: background .15s, opacity .15s;
+}
+.episode-split:hover::after { background: var(--accent); opacity: .9; }
 .episode-cover { width: 100%; aspect-ratio: 1 / 1; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: var(--hover); }
 .episode-cover .cover { width: 100% !important; height: 100% !important; object-fit: cover; border-radius: 0; }
 .episode-title { margin: 8px 0 0; font-size: 19px; line-height: 1.35; color: var(--text); }
@@ -1195,6 +1230,7 @@ select:focus-visible {
     width: 100%;
     max-width: 360px;
   }
+  .episode-split { display: none; }
   .episode-right {
     flex: none;
     width: 100%;

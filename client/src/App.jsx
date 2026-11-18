@@ -215,6 +215,8 @@ export default function App() {
   const [captionSize, setCaptionSize] = useState({ width: null, height: null })
   // 字幕面板自己的大小（null = 用样式里的默认值）。
   const [panelSize, setPanelSize] = useState({ width: null, height: null })
+  // 详情页左栏宽度（封面 + 简介那一栏），null = 默认 240px。
+  const [leftWidth, setLeftWidth] = useState(null)
   const [txElapsed, setTxElapsed] = useState(0)
   const [txError, setTxError] = useState('')
   const [subsOpen, setSubsOpen] = useState(false)
@@ -277,6 +279,7 @@ export default function App() {
             width: Number.isFinite(Number(cfg.transcriptW)) && cfg.transcriptW !== null ? Number(cfg.transcriptW) : null,
             height: Number.isFinite(Number(cfg.transcriptH)) && cfg.transcriptH !== null ? Number(cfg.transcriptH) : null,
           })
+          if (Number.isFinite(Number(cfg.episodeLeftW)) && cfg.episodeLeftW !== null) setLeftWidth(Number(cfg.episodeLeftW))
         }
       } catch {
         /* 旧版本没有这个接口时保持默认展开 */
@@ -317,6 +320,40 @@ export default function App() {
     setPanelSize(next)
     if (commit) saveUi({ transcriptW: next.width, transcriptH: next.height })
   }, [saveUi])
+
+  // 拖详情页中间那条分隔线：改左栏宽度（封面跟着缩），松手才写盘。
+  const splitRef = useRef(null)
+  const widthAtSplit = (event) => {
+    const start = splitRef.current
+    if (!start) return null
+    return Math.round(Math.min(460, Math.max(140, start.width + (event.clientX - start.startX))))
+  }
+  const onSplitDown = (event) => {
+    if (event.button !== undefined && event.button !== 0) return
+    const holder = event.currentTarget.parentElement
+    if (!holder) return
+    event.preventDefault()
+    splitRef.current = { startX: event.clientX, width: holder.getBoundingClientRect().width }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+  const onSplitMove = (event) => {
+    const next = widthAtSplit(event)
+    if (next == null) return
+    setLeftWidth(next)
+  }
+  const onSplitUp = (event) => {
+    if (!splitRef.current) return
+    const next = widthAtSplit(event)
+    splitRef.current = null
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+    if (next == null) return
+    setLeftWidth(next)
+    saveUi({ episodeLeftW: next })
+  }
+  const resetSplit = () => {
+    setLeftWidth(null)
+    saveUi({ episodeLeftW: null })
+  }
 
   const toggleCaption = useCallback(() => {
     setCaptionOpen((prev) => {
@@ -1469,7 +1506,16 @@ export default function App() {
               <span className="detail-count">{detailItem.artist}{detailItem.album ? ` · ${detailItem.album}` : ''}</span>
             </div>
             <div className="episode-view">
-              <div className="episode-left">
+              <div className="episode-left" style={leftWidth ? { '--episode-left-w': `${leftWidth}px` } : undefined}>
+                <span
+                  className="episode-split"
+                  onPointerDown={onSplitDown}
+                  onPointerMove={onSplitMove}
+                  onPointerUp={onSplitUp}
+                  onPointerCancel={onSplitUp}
+                  onDoubleClick={resetSplit}
+                  title="左右拖动调整封面栏宽度（双击恢复默认）"
+                />
                 <div className="episode-cover"><Cover item={detailItem} size={288} /></div>
                 <h2 className="episode-title">{detailItem.title}</h2>
                 <p className="episode-sub">{detailItem.artist}{detailItem.album ? ` · ${detailItem.album}` : ''}</p>

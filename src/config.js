@@ -45,6 +45,8 @@ export const CONFIG_DEFAULTS = {
     // 字幕面板的宽高（px，null = 用默认的宽度/高度）。拖左下角改大小，双击把手恢复默认。
     transcriptW: null,
     transcriptH: null,
+    // 详情页左边那条（封面 + 简介）的宽度，null = 默认 240px。拖中间的分隔线改，封面跟着缩放。
+    episodeLeftW: null,
     // 设置页「历史记录」卡片是否展开：默认收起，点标题栏展开。
     historyOpen: false,
   },
