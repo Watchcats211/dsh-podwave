@@ -118,7 +118,7 @@ library.js（媒体库）  state.js（播放进度/文件夹）
 | POST | `/transcribe/batch` | 批量转写（{ids}） |
 | GET/PUT | `/transcribe/settings` | 热词、分块时长、是否自动识别说话人 |
 | POST | `/episodes/:id/diarize` | 对已有字幕补跑说话人分离 |
-| PUT/POST | `/episodes/:id/transcript/lines/:lineId` 及 `/split` `/merge` `/undo` `/validate` | 字幕行编辑 |
+| PUT/POST | `/episodes/:id/transcript/lines/:lineId` 及 `/split` `/merge` `/validate` | 字幕行编辑 |
 | GET/DELETE/POST/GET | `/episodes/:id/translate` · `/translate/settings` | 翻译与配置 |
 | GET | `/episodes/:id/transcript/export?format=srt\|md` | 导出字幕 |
 | GET/PUT | `/models` | 模型列表 / 选择 |
