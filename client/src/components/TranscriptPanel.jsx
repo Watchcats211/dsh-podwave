@@ -301,15 +301,38 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
         )}
       </div>
       {onResize ? (
-        <span
-          className={`transcript-resize ${inline ? 'is-inline' : ''}`}
-          onPointerDown={onResizeDown}
-          onPointerMove={onResizeMove}
-          onPointerUp={onResizeUp}
-          onPointerCancel={onResizeUp}
-          onDoubleClick={() => onResize(null, null, true)}
-          title={inline ? '拖动调整高度（双击恢复默认）' : '拖动调整大小（双击恢复默认）'}
-        />
+        <>
+          {inline ? null : (
+            <>
+              {/* 边缘也能拖：鼠标放上去才出现高亮线，靠猜把手的人也能发现。 */}
+              <span
+                className="transcript-grip is-left"
+                onPointerDown={onResizeDown}
+                onPointerMove={onResizeMove}
+                onPointerUp={onResizeUp}
+                onPointerCancel={onResizeUp}
+                title="拖动调整宽度"
+              />
+              <span
+                className="transcript-grip is-top"
+                onPointerDown={onResizeDown}
+                onPointerMove={onResizeMove}
+                onPointerUp={onResizeUp}
+                onPointerCancel={onResizeUp}
+                title="拖动调整高度"
+              />
+            </>
+          )}
+          <span
+            className={`transcript-resize ${inline ? 'is-inline' : ''}`}
+            onPointerDown={onResizeDown}
+            onPointerMove={onResizeMove}
+            onPointerUp={onResizeUp}
+            onPointerCancel={onResizeUp}
+            onDoubleClick={() => onResize(null, null, true)}
+            title={inline ? '拖动调整高度（双击恢复默认）' : '拖动调整大小（双击恢复默认）'}
+          />
+        </>
       ) : null}
     </section>
   )

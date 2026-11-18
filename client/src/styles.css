@@ -941,35 +941,53 @@ select:focus-visible {
 .transcript-meta { color: var(--muted); font-size: 12px; }
 .transcript-actions { margin-left: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .transcript-close { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; }
-/* 右下角区域拖不动（面板锚在右下），所以把手放左下角：向左变宽、向上变高。 */
+/* 边缘热区：鼠标移到左/上边缘才出现一条高亮线，拖它就能改大小。 */
+.transcript-grip { position: absolute; z-index: 2; }
+.transcript-grip.is-left { left: 0; top: 16px; bottom: 16px; width: 7px; cursor: ew-resize; }
+.transcript-grip.is-top { top: 0; left: 16px; right: 16px; height: 7px; cursor: ns-resize; }
+.transcript-grip.is-left:hover { background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 55%, transparent), transparent); }
+.transcript-grip.is-top:hover { background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 55%, transparent), transparent); }
+
+/* 右下角区域拖不动（面板锚在右下），所以把手放左下角：向左变宽、向上变高。
+   做得明显一点——透明的把手等于没有把手，用户根本不会去猜那儿能拖。 */
 .transcript-resize {
   position: absolute;
-  left: 3px;
-  bottom: 3px;
-  width: 16px;
-  height: 16px;
+  left: 2px;
+  bottom: 2px;
+  z-index: 2;
+  width: 22px;
+  height: 22px;
   border: 0;
   padding: 0;
   border-bottom-left-radius: 12px;
-  background: linear-gradient(135deg, transparent 52%, var(--line-strong) 52%);
-  opacity: .5;
+  opacity: 1;
   cursor: nesw-resize;
   touch-action: none;
+  background-image: repeating-linear-gradient(135deg, var(--muted) 0 1.5px, transparent 1.5px 5px);
+  -webkit-mask-image: linear-gradient(135deg, transparent 40%, #000 40%);
+  mask-image: linear-gradient(135deg, transparent 40%, #000 40%);
 }
-.transcript-resize:hover { opacity: 1; }
+.transcript-resize:hover {
+  background-image: repeating-linear-gradient(135deg, var(--accent) 0 1.5px, transparent 1.5px 5px);
+}
 /* 内嵌面板宽度由详情页那一栏决定，只给一条底边把手改高度。 */
 .transcript-resize.is-inline {
   left: 50%;
-  bottom: 2px;
-  width: 44px;
-  height: 8px;
+  bottom: 3px;
+  z-index: 2;
+  width: 56px;
+  height: 5px;
   transform: translateX(-50%);
   border-radius: 999px;
-  background: var(--line-strong);
-  opacity: .35;
+  background-image: none;
+  background-color: var(--muted);
+  opacity: .55;
   cursor: ns-resize;
 }
-.transcript-resize.is-inline:hover { opacity: .8; }
+.transcript-resize.is-inline:hover {
+  background-color: var(--accent);
+  opacity: 1;
+}
 .transcript-body { overflow-y: auto; padding: 6px 0; border-radius: 0 0 12px 12px; flex: 1 1 auto; min-height: 0; }
 .seg-row {
   display: flex;
