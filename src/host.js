@@ -3,7 +3,7 @@
 import fs from 'node:fs'
 import http from 'node:http'
 import crypto from 'node:crypto'
-import { copyFile, mkdir, readdir, realpath, rm, stat } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { execFile } from 'node:child_process'
@@ -44,6 +44,7 @@ import {
 import {
   addFolder,
   expandHome,
+  forgetEpisode,
   forgetEpisodesUnder,
   getCoverPath,
   getEpisode,
@@ -51,6 +52,7 @@ import {
   getEpisodes,
   getScanState,
   scanLibrary,
+  setEpisodeCover,
 } from './library.js'
 import {
   deleteTranscript,
@@ -287,6 +289,27 @@ async function readJson(req) {
   }
 }
 
+// 封面这类二进制上传不走 JSON，直接收原始字节。
+async function readBinary(req, limit) {
+  const chunks = []
+  let size = 0
+  for await (const chunk of req) {
+    size += chunk.length
+    if (size > limit) throw Object.assign(new Error('图片太大（最大 8 MB）'), { status: 413 })
+    chunks.push(chunk)
+  }
+  return Buffer.concat(chunks)
+}
+
+// 不看 content-type，只看文件头：前端偶尔会拿错 MIME，字节是不会骗人的。
+function imageExtension(buffer) {
+  if (!buffer || buffer.length < 12) return ''
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'jpg'
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return 'png'
+  if (buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') return 'webp'
+  return ''
+}
+
 function requestRejection(ctx, req) {
   const connection = ctx.get('connection')
   if (typeof connection?.requestRejection !== 'function') return 403
@@ -503,7 +526,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.48',
+      version: '0.11.49',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -533,7 +556,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.48', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.49', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -857,6 +880,12 @@ async function route(ctx, req, res) {
   const coverMatch = /^api\/episodes\/([^/]+)\/cover$/.exec(routePath)
   if (coverMatch && (method === 'GET' || method === 'HEAD')) {
     const coverId = decodeURIComponent(coverMatch[1])
+    // 自己换过的封面优先：在线单集也能被本地图盖掉。
+    const local = getCoverPath(coverId)
+    if (local) {
+      res.setHeader('cache-control', 'public, max-age=86400')
+      return sendFile(req, res, local, 'public, max-age=86400')
+    }
     const provider = getProviderById(coverId)
     if (provider.id === 'xyz') return provider.streamCover(coverId, req, res)
     const episode = findEpisode(coverId)
@@ -864,6 +893,42 @@ async function route(ctx, req, res) {
     if (!cover) return json(res, 404, { error: '没有封面' })
     res.setHeader('cache-control', 'public, max-age=86400')
     return sendFile(req, res, cover, 'public, max-age=86400')
+  }
+
+  if (coverMatch && (method === 'POST' || method === 'PUT')) {
+    const coverId = decodeURIComponent(coverMatch[1])
+    if (!findEpisode(coverId) && !isXyzId(coverId)) return json(res, 404, { error: '单集不存在' })
+    const raw = await readBinary(req, 8 * 1024 * 1024)
+    const ext = imageExtension(raw)
+    if (!ext) return json(res, 400, { error: '只支持 JPG / PNG / WebP 图片' })
+    await mkdir(COVERS_DIR, { recursive: true })
+    // 同一集只留一张：换了格式就把旧的删掉。
+    for (const other of ['jpg', 'png', 'webp']) {
+      if (other === ext) continue
+      await rm(path.join(COVERS_DIR, `${coverId}.${other}`), { force: true }).catch(() => {})
+    }
+    const file = path.join(COVERS_DIR, `${coverId}.${ext}`)
+    await writeFile(file, raw)
+    forgetEpisode(coverId)
+    const info = await stat(file)
+    setEpisodeCover(coverId, { hasCover: true, coverAt: info.mtimeMs })
+    return json(res, 200, { ok: true, ext, hasCover: true, coverAt: info.mtimeMs })
+  }
+
+  if (coverMatch && method === 'DELETE') {
+    const coverId = decodeURIComponent(coverMatch[1])
+    const removed = []
+    for (const ext of ['jpg', 'png', 'webp']) {
+      const file = path.join(COVERS_DIR, `${coverId}.${ext}`)
+      if (!fs.existsSync(file)) continue
+      await rm(file, { force: true }).catch(() => {})
+      removed.push(ext)
+    }
+    forgetEpisode(coverId)
+    setEpisodeCover(coverId, { hasCover: false, coverAt: 0 })
+    // 删掉自定义封面后重新扫一遍：音频里内嵌的图会被重新导出 —— 那才是「默认封面」。
+    scanLibrary().catch((error) => console.error('[dsh-podwave] rescan after cover reset failed:', error.message))
+    return json(res, 200, { ok: true, removed })
   }
 
   const audioMatch = /^api\/episodes\/([^/]+)\/audio$/.exec(routePath)

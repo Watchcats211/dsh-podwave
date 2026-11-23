@@ -35,6 +35,27 @@ async function sendJSON(url, method, body) {
   return res.json()
 }
 
+// 用户选中一张图之后先在浏览器里压到 1200px 的 JPEG：
+// 手机拍的原图动辄 5 MB，传上去当封面没必要，解码一次也要等。
+async function coverBlob(file, longest = 1200) {
+  const bitmap = await createImageBitmap(file)
+  const scale = Math.min(1, longest / Math.max(bitmap.width, bitmap.height))
+  const width = Math.max(1, Math.round(bitmap.width * scale))
+  const height = Math.max(1, Math.round(bitmap.height * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d')
+  // 透明 PNG 直接转 JPEG 会变黑，先铺一层面板底色。
+  context.fillStyle = '#16161a'
+  context.fillRect(0, 0, width, height)
+  context.drawImage(bitmap, 0, 0, width, height)
+  if (typeof bitmap.close === 'function') bitmap.close()
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9))
+  if (!blob) throw new Error('这张图读不出来，换一张试试')
+  return blob
+}
+
 
 function AddFolderDialog({ onSubmit, onPick, onClose }) {
   const [value, setValue] = useState('')
@@ -217,6 +238,8 @@ export default function App() {
   const [panelSize, setPanelSize] = useState({ width: null, height: null })
   // 详情页左栏宽度（封面 + 简介那一栏），null = 默认 240px。
   const [leftWidth, setLeftWidth] = useState(null)
+  const coverInputRef = useRef(null)
+  const [coverBusy, setCoverBusy] = useState(false)
   const [txElapsed, setTxElapsed] = useState(0)
   const [txError, setTxError] = useState('')
   const [subsOpen, setSubsOpen] = useState(false)
@@ -354,6 +377,51 @@ export default function App() {
   const resetSplit = () => {
     setLeftWidth(null)
     saveUi({ episodeLeftW: null })
+  }
+
+  // —— 封面 ——
+  const pickCover = () => coverInputRef.current?.click()
+
+  const changeCover = async (file) => {
+    if (!file || !detailId) return
+    setCoverBusy(true)
+    try {
+      const blob = await coverBlob(file)
+      const res = await fetch(`${API}/episodes/${encodeURIComponent(detailId)}/cover`, {
+        method: 'POST',
+        headers: { 'content-type': 'image/jpeg' },
+        body: blob,
+      })
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}))
+        throw new Error(payload.error || '换封面失败')
+      }
+      // 重新拉一遍媒体库：hasCover / coverAt 变了，列表和播放条也要跟着换。
+      await loadLibrary()
+      flash('封面已更新')
+    } catch (error) {
+      flash(String(error.message || error))
+    } finally {
+      setCoverBusy(false)
+    }
+  }
+
+  const resetCover = async () => {
+    if (!detailId) return
+    setCoverBusy(true)
+    try {
+      const res = await fetch(`${API}/episodes/${encodeURIComponent(detailId)}/cover`, { method: 'DELETE' })
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}))
+        throw new Error(payload.error || '恢复默认封面失败')
+      }
+      await loadLibrary()
+      flash('已恢复默认封面')
+    } catch (error) {
+      flash(String(error.message || error))
+    } finally {
+      setCoverBusy(false)
+    }
   }
 
   const toggleCaption = useCallback(() => {
@@ -1508,7 +1576,29 @@ export default function App() {
             </div>
             <div className="episode-view" style={leftWidth ? { '--episode-left-w': `${leftWidth}px` } : undefined}>
               <div className="episode-left" ref={leftRef}>
-                <div className="episode-cover"><Cover item={detailItem} size={288} /></div>
+                <div className="episode-cover">
+                  <button
+                    className="cover-swap"
+                    onClick={pickCover}
+                    disabled={coverBusy}
+                    title="点击更换封面"
+                    aria-label="更换封面"
+                  >
+                    <Cover item={detailItem} size={288} />
+                    <span className="cover-swap-hint">{coverBusy ? '上传中…' : '换封面'}</span>
+                  </button>
+                  <input
+                    ref={coverInputRef}
+                    type="file"
+                    accept="image/*"
+                    hidden
+                    onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      event.target.value = ''
+                      changeCover(file)
+                    }}
+                  />
+                </div>
                 <h2 className="episode-title">{detailItem.title}</h2>
                 <p className="episode-sub">{detailItem.artist}{detailItem.album ? ` · ${detailItem.album}` : ''}</p>
                 <p className="episode-path" title={detailItem.file}>{detailItem.location || detailItem.file}</p>
@@ -1541,6 +1631,9 @@ export default function App() {
                       <>
                         {detailItem.source === 'xyz' ? (
                           <MenuAction onSelect={() => { close(); openEpisodeWeb() }}>在浏览器打开</MenuAction>
+                        ) : null}
+                        {detailItem.hasCover ? (
+                          <MenuAction hint="换回音频自带的图" onSelect={() => { close(); resetCover() }}>恢复默认封面</MenuAction>
                         ) : null}
                         <MenuAction danger onSelect={() => { close(); removeEpisodes([detailItem.id]) }}>从播放器移除</MenuAction>
                       </>

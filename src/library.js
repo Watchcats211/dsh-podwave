@@ -100,6 +100,18 @@ async function readEpisode(file, root, realRoot = root) {
     // Damaged or unsupported tags: fall back to the file name.
   }
 
+  // covers 目录里已经有图（用户自己换的）也算数，不然列表会一直显示首字母占位。
+  let coverAt = 0
+  const coverFile = getCoverPath(id)
+  if (coverFile) {
+    hasCover = true
+    try {
+      coverAt = fs.statSync(coverFile).mtimeMs
+    } catch {
+      coverAt = 0
+    }
+  }
+
   const data = {
     id,
     title,
@@ -107,6 +119,8 @@ async function readEpisode(file, root, realRoot = root) {
     album,
     duration,
     hasCover,
+    // 封面文件的修改时间，前端拼在 URL 上，换过封面就不会被浏览器缓存挡住。
+    coverAt,
     folder: path.dirname(file),
     root,
     // 相对根文件夹的路径（'' 表示就在根目录里），前端靠它逐层浏览目录树。
@@ -219,6 +233,26 @@ export function getCoverPath(id) {
     if (fs.existsSync(candidate)) return candidate
   }
   return null
+}
+
+// 换过封面之后要让下一次扫描重新读这个单集的元数据，否则列表里还是旧的 hasCover/coverAt。
+export function forgetEpisode(id) {
+  metaCache.delete(id)
+}
+
+// 换封面是即时操作：先把还在内存里的那一条改掉，接口返回后界面就能立刻看到新图，
+// 不用等下一次整库扫描。
+export function setEpisodeCover(id, { hasCover, coverAt = 0 } = {}) {
+  const entry = byId.get(id)
+  if (!entry) return null
+  entry.hasCover = Boolean(hasCover)
+  entry.coverAt = Number(coverAt) || 0
+  const cached = metaCache.get(id)
+  if (cached && cached.data) {
+    cached.data.hasCover = entry.hasCover
+    cached.data.coverAt = entry.coverAt
+  }
+  return entry
 }
 
 export async function addFolder(rawPath) {

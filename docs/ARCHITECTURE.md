@@ -111,7 +111,9 @@ library.js（媒体库）  state.js（播放进度/文件夹）
 | POST | `/import/upload` | 拖拽上传音频 |
 | POST | `/import/paths` | 按路径导入（拖拽可得路径时） |
 | GET | `/episodes/:id/audio` | Range 音频流 |
-| GET | `/episodes/:id/cover` | 封面 |
+| GET | `/episodes/:id/cover` | 封面（自己换过的优先，其次音频内嵌/远程） |
+| POST | `/episodes/:id/cover` | 换封面（原始字节，JPG/PNG/WebP，≤8 MB） |
+| DELETE | `/episodes/:id/cover` | 恢复默认封面 |
 | PUT | `/progress/:id` · PATCH `/settings` | 播放进度 / 播放器设置 |
 | GET/DELETE/POST | `/episodes/:id/transcript` · `/transcribe` | 读取/删除/开始转写 |
 | POST | `/episodes/:id/transcribe/cancel` | 取消正在进行的转写 |
