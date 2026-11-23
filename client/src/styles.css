@@ -1087,7 +1087,21 @@ select:focus-visible {
 .episode-stats { margin: 0; color: #8a8a96; font-size: 12px; }
 .episode-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .episode-right { position: relative; flex: 1; min-width: 0; }
-.transcript-panel.inline { position: relative; width: auto; max-height: none; height: min(560px, calc(100vh - 300px)); min-height: 340px; box-shadow: none; }
+.transcript-panel.inline {
+  /* 浮动版靠 right/bottom 贴右下角；内嵌时必须把这四个偏移清掉，
+     否则 position: relative 会按 right/bottom 把整块面板位移出去
+     （历史上它一直被顶上去 104px、往左 18px，正好压住封面那栏）。 */
+  position: relative;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  left: auto;
+  width: auto;
+  max-height: none;
+  height: min(560px, calc(100vh - 300px));
+  min-height: 340px;
+  box-shadow: none;
+}
 @media (max-width: 1024px) {
   .episode-view { flex-direction: column; align-items: stretch; }
   .episode-left { flex: auto; width: 100%; }
