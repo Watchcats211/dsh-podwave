@@ -1548,17 +1548,17 @@ export default function App() {
                   </PopMenu>
                 </div>
               </div>
-              {/* 分隔条放在两栏中间，高度铺满整行——字幕面板比封面高，拽在下面也能拖动。 */}
-              <span
-                className="episode-split"
-                onPointerDown={onSplitDown}
-                onPointerMove={onSplitMove}
-                onPointerUp={onSplitUp}
-                onPointerCancel={onSplitUp}
-                onDoubleClick={resetSplit}
-                title="左右拖动调整封面栏宽度（双击恢复默认）"
-              />
               <div className="episode-right">
+                {/* 分隔条挂在字幕这一栏里：高度跟面板走，不会在面板下面多出一截悬空的线。 */}
+                <span
+                  className="episode-split"
+                  onPointerDown={onSplitDown}
+                  onPointerMove={onSplitMove}
+                  onPointerUp={onSplitUp}
+                  onPointerCancel={onSplitUp}
+                  onDoubleClick={resetSplit}
+                  title="左右拖动调整封面栏宽度（双击恢复默认）"
+                />
                 <TranscriptPanel
                   inline
                   transcript={transcript}
