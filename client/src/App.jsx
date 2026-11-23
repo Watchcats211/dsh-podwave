@@ -323,6 +323,7 @@ export default function App() {
 
   // 拖详情页中间那条分隔线：改左栏宽度（封面跟着缩），松手才写盘。
   const splitRef = useRef(null)
+  const leftRef = useRef(null)
   const widthAtSplit = (event) => {
     const start = splitRef.current
     if (!start) return null
@@ -330,7 +331,7 @@ export default function App() {
   }
   const onSplitDown = (event) => {
     if (event.button !== undefined && event.button !== 0) return
-    const holder = event.currentTarget.parentElement
+    const holder = leftRef.current
     if (!holder) return
     event.preventDefault()
     splitRef.current = { startX: event.clientX, width: holder.getBoundingClientRect().width }
@@ -1505,17 +1506,8 @@ export default function App() {
               <button className="back-link" onClick={() => setDetailId(null)}>← 全部单集</button>
               <span className="detail-count">{detailItem.artist}{detailItem.album ? ` · ${detailItem.album}` : ''}</span>
             </div>
-            <div className="episode-view">
-              <div className="episode-left" style={leftWidth ? { '--episode-left-w': `${leftWidth}px` } : undefined}>
-                <span
-                  className="episode-split"
-                  onPointerDown={onSplitDown}
-                  onPointerMove={onSplitMove}
-                  onPointerUp={onSplitUp}
-                  onPointerCancel={onSplitUp}
-                  onDoubleClick={resetSplit}
-                  title="左右拖动调整封面栏宽度（双击恢复默认）"
-                />
+            <div className="episode-view" style={leftWidth ? { '--episode-left-w': `${leftWidth}px` } : undefined}>
+              <div className="episode-left" ref={leftRef}>
                 <div className="episode-cover"><Cover item={detailItem} size={288} /></div>
                 <h2 className="episode-title">{detailItem.title}</h2>
                 <p className="episode-sub">{detailItem.artist}{detailItem.album ? ` · ${detailItem.album}` : ''}</p>
@@ -1556,6 +1548,16 @@ export default function App() {
                   </PopMenu>
                 </div>
               </div>
+              {/* 分隔条放在两栏中间，高度铺满整行——字幕面板比封面高，拽在下面也能拖动。 */}
+              <span
+                className="episode-split"
+                onPointerDown={onSplitDown}
+                onPointerMove={onSplitMove}
+                onPointerUp={onSplitUp}
+                onPointerCancel={onSplitUp}
+                onDoubleClick={resetSplit}
+                title="左右拖动调整封面栏宽度（双击恢复默认）"
+              />
               <div className="episode-right">
                 <TranscriptPanel
                   inline
