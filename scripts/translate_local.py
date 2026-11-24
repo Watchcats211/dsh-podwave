@@ -34,17 +34,16 @@ def parse_numbered(output: str, count: int) -> dict:
 
 def translate_batch(batch: list, model, tokenizer, language: str) -> dict:
     numbered = "\n".join(f"{index + 1}. {item['text']}" for index, item in enumerate(batch))
+    # 混元 Hy-MT 官方模板：一句中文指令 + 原文，且模型没有默认 system prompt。
+    # 编号与顺序的要求并进同一句，比自拟英文 system 消息更接近训练分布。
     messages = [
         {
-            "role": "system",
+            "role": "user",
             "content": (
-                "You are a professional subtitle translator. Translate each numbered line into "
-                f"{language}. Preserve proper names, numbers and terminology. Output only the translated "
-                "numbered lines in the same order, one per line, in the format '1. translation'. "
-                "Do not add explanations."
+                f"将以下 {len(batch)} 条编号字幕逐条翻译为{language}，"
+                f"注意只需要输出翻译后的结果，不要额外解释，保持原有编号与顺序：\n\n{numbered}"
             ),
         },
-        {"role": "user", "content": numbered},
     ]
     prompt = tokenizer.apply_chat_template(
         messages, add_generation_prompt=True, enable_thinking=False, tokenize=False
@@ -68,7 +67,7 @@ def main() -> int:
 
     model, tokenizer = load(config["model_dir"])
     target = config["target"]
-    language = "Simplified Chinese" if target == "zh" else "English"
+    language = "中文" if target == "zh" else "英语"
     items = config["items"]
     results = {}
 

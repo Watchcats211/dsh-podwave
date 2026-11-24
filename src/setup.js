@@ -7,7 +7,7 @@ import { execFile, spawn } from 'node:child_process'
 import { DATA_DIR } from './state.js'
 import { getSection, updateSection } from './config.js'
 import { getJob, upsertJob } from './jobs.js'
-import { CATALOG, FFMPEG_BINARY, LLAMA_BINARY, SOURCE_LABELS, artifactFor, expectedModels, ffmpegAsset, llamaAsset, sourcesFor } from './catalog.js'
+import { CATALOG, FFMPEG_BINARY, LLAMA_BINARY, SOURCE_LABELS, artifactByDir, artifactFor, expectedModels, ffmpegAsset, llamaAsset, platformKey, sourcesFor } from './catalog.js'
 import { modelsDir } from './models.js'
 import { downloadArtifact, extractArchive } from './downloader.js'
 import { detectPlatform, findExecutable, ffmpegPath, ffprobePath, killTree, recommendEngine, venvDir, venvPython, isWindows, isMac } from './platform.js'
@@ -266,12 +266,18 @@ export async function verify() {
   // 用户看到「检查通过」却在转写时报「运行环境未安装」。这里比对本平台应有的模型。
   const config = getSection('models')
   const expected = expectedModels(platform, engine)
+  // 允许用户换成同类的其它模型（比如更好的 Hy-MT3），只要它在当前平台跑得起来。
+  const usable = (dir, kind) => {
+    const artifact = artifactByDir(dir, kind)
+    if (!artifact) return false
+    return artifact.platforms.includes('*') || artifact.platforms.includes(platformKey(platform))
+  }
   const problems = []
-  if (!cloudAsr && config.asrModel !== expected.asrModel) {
+  if (!cloudAsr && !usable(config.asrModel, 'asr')) {
     problems.push(`转写模型应为 ${expected.asrModel}，当前 ${config.asrModel || '未设置'}`)
   }
-  if (!cloudTranslate && config.translateModel !== expected.translateModel) {
-    problems.push(`翻译模型应为 ${expected.translateModel}，当前 ${config.translateModel || '未设置'}`)
+  if (!cloudTranslate && !usable(config.translateModel, 'translate')) {
+    problems.push(`翻译模型应为 ${expected.translateModel}（或本平台其它可用的翻译模型），当前 ${config.translateModel || '未设置'}`)
   }
   checks.push({
     id: 'config',

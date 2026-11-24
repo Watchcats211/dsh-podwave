@@ -88,7 +88,7 @@ tar xjf sherpa-onnx-pyannote-segmentation-3-0.tar.bz2
 curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx
 ```
 
-- 转写模型约 2.3 GB，翻译模型约 1 GB（Hy-MT2-1.8B，974 MB），说话人模型约 34 MB；只做播放、或者只用云端 API，都可以都不装。
+- 转写模型约 2.3 GB，翻译模型约 1 GB（Hy-MT2-1.8B，974 MB），说话人模型约 34 MB；只做播放、或者只用云端 API，都可以都不装。想要更好的译文，可以再装 Hy-MT3-1.8B（约 1.35 GB，设置页模型列表里直接选）。
 - **平台差异**：Apple Silicon 用 MLX（上面的命令）；Windows / Linux / Intel Mac 用 SenseVoice Small（约 240 MB）+ Hy-MT2 GGUF，虚拟环境是 `.venv\Scripts\` 而不是 `bin/`，建议直接用「一键安装」。
 - 翻译可以不用本地模型：字幕面板 →「设置」→ 选 DeepSeek API，填 API key（默认 `api.deepseek.com` / `deepseek-chat`）。
 - 字幕面板 →「设置」里切换引擎；目标语言在字幕面板的「对照」下拉里选。
@@ -153,12 +153,12 @@ dsh plugin --profile podwave-test add file:$PWD
 - 还没有 RSS / 在线流订阅，只播放本地文件。
 - 实时的说话人标签是在线聚类猜出来的，边界处可能串；播完会用整段结果校正。暂不支持手动改名或合并说话人。
 - 实时跟播是「12 秒一小块滚动识别」，不是真流式（接口不支持流式），所以字幕会比声音慢几秒；长停顿、音乐段落的切点偶尔仍会切在句中。
-- 本地翻译是 Hy-MT2-1.8B 4bit（约 1 GB），轻量、快；长句质量仍不如 API，重要内容建议用 DeepSeek API 翻。
+- 本地翻译默认是 Hy-MT2-1.8B 4bit（约 1 GB），轻量、快；换成 Hy-MT3-1.8B（约 1.35 GB）译文更准（官方数据误译比 MT2 少 43%），7B 版更好但更慢。长句质量仍不如 API，重要内容建议用 DeepSeek API 翻。
 
 ## 路线图
 
 - [x] 转写：本地 MLX Qwen3-ASR（中英混合），词级时间戳
-- [x] 双语字幕：本地 Hy-MT2-1.8B / DeepSeek API
+- [x] 双语字幕：本地 Hy-MT2-1.8B（可换 Hy-MT3）/ DeepSeek API
 - [x] 导出 SRT / Markdown
 - [x] 系统文件夹选择器与音频拖拽导入
 - [x] 说话人分离与说话人标签
@@ -186,17 +186,17 @@ CI（GitHub Actions）在每次 push / PR 跑 `npm test` 与 `npm run build`。
 
 | 平台 | 转写 | 翻译 |
 | --- | --- | --- |
-| macOS Apple Silicon | Qwen3-ASR-1.7B-8bit（MLX） | Hy-MT2-1.8B-4bit（MLX） |
-| Windows / Linux / Intel Mac | SenseVoiceSmall int8（sherpa-onnx） | Hy-MT2-1.8B-Q4_K_M（llama.cpp） |
+| macOS Apple Silicon | Qwen3-ASR-1.7B-8bit（MLX） | Hy-MT2-1.8B-4bit（MLX）；可换 Hy-MT3-1.8B-GGUF |
+| Windows / Linux / Intel Mac | SenseVoiceSmall int8（sherpa-onnx） | Hy-MT3-1.8B-Q4_K_M（llama.cpp，24 GB 以上）／Hy-MT2-2bit（内存小） |
 
 - 下载线路可选「自动测速 / 国际（Hugging Face、GitHub）/ 国内（hf-mirror、gh-proxy、ModelScope）」。
 - 「一键安装」会准备 uv 与 Python 虚拟环境、安装 sherpa-onnx（MLX 平台额外装 mlx-qwen3-asr、mlx-lm）、下载 llama.cpp 预编译包和缺失模型，并在完成后列出每项内容与体积。
 - 模型默认保存在项目文件夹的 `models/`（npm 安装为当前工作区的 `models/`，老用户已有 `~/.podwave/models` 会继续沿用），运行时在 `~/.podwave/runtime`；位置可在设置里改，卸载插件不会删除这些文件。
-- 注意：Hy-MT2 1.25bit GGUF 是自定义量化，主线 llama.cpp 加载会报 `failed to read tensor data`，所以非 MLX 平台用 Q4_K_M。
+- 注意：Hy-MT2 1.25bit GGUF 是自定义量化，主线 llama.cpp 加载会报 `failed to read tensor data`，所以非 MLX 平台用 Q4_K_M；Hy-MT3 官方只放了 Q4_K_M 与 Q8_0。
 
 ### Windows 需要准备什么
 
-- 安装中心会自动下载 ffmpeg（约 202 MB）、llama.cpp（约 25 MB）、SenseVoice（约 239 MB）与 Hy-MT2-Q4_K_M（约 1.1 GB），合计约 1.6 GB，建议预留 3 GB 磁盘。
+- 安装中心会自动下载 ffmpeg（约 202 MB）、llama.cpp（约 25 MB）、SenseVoice（约 239 MB）与翻译模型（Hy-MT3-1.8B-Q4_K_M 约 1.35 GB 或 Hy-MT2-2bit 约 572 MB），合计约 1.8 GB，建议预留 3 GB 磁盘。
 - Windows 10 及以上自带 `tar` 与 `powershell`，解压和文件夹选择器无需额外安装。
 - 安装时会校验下载文件的 sha256（GitHub Release 官方 digest / Hugging Face LFS），并拒绝含 `..` 或绝对路径的压缩包；macOS 没有 ffmpeg 时会尝试通过 Homebrew 安装。
 - 首次安装完成后，设置页会列出每项下载内容与体积；模型默认在项目里的 `models/`，运行时在 `~/.podwave/runtime`。

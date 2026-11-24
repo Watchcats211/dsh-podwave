@@ -186,13 +186,13 @@ export function recommendEngine(platform) {
   }
   const mem = platform.memoryGB
   // 1.25bit 是腾讯自定义量化，主线 llama.cpp 无法加载（tensor offset 错误），
-  // 因此 Windows/Linux 最低只用 2bit（572MB）。
-  const translate = mem >= 24 ? 'hy-mt2-1.8b-q4km' : 'hy-mt2-1.8b-2bit'
+  // 因此 Windows/Linux 最低只用 2bit（572MB）。内存够就直接上第三代 Hy-MT3-Q4_K_M。
+  const translate = mem >= 24 ? 'hy-mt3-1.8b-q4km' : 'hy-mt2-1.8b-2bit'
   return {
     id: 'onnx-llama',
     label: `${platform.osLabel || platform.os || '此平台'} · ONNX + llama.cpp`,
     asr: 'sensevoice-int8',
     translate,
-    note: `本机是 ${platform.osLabel}（${platform.arch}）：转写用 SenseVoice Small（int8），翻译用 Hy-MT2-1.8B GGUF；按 ${mem} GB 内存推荐 ${translate}。`,
+    note: `本机是 ${platform.osLabel}（${platform.arch}）：转写用 SenseVoice Small（int8），翻译用 Hy GGUF；按 ${mem} GB 内存推荐 ${translate}。`,
   }
 }

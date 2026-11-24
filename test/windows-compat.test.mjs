@@ -39,7 +39,8 @@ test('Windows 平台推荐 ONNX + llama.cpp，绝不落到 MLX 分支', () => {
   const engine = recommendEngine(winPlatform)
   assert.equal(engine.id, 'onnx-llama')
   assert.equal(engine.asr, 'sensevoice-int8')
-  assert.match(engine.translate, /^hy-mt2-1\.8b-/)
+  assert.match(engine.translate, /^hy-mt[23]-1\.8b-/)
+  assert.ok(CATALOG[engine.translate], '推荐的翻译模型必须在目录里')
   // MLX 组件一个都不能出现在推荐里
   for (const key of [engine.asr, engine.translate]) {
     assert.notEqual(CATALOG[key].engine, 'mlx', `${key} 不该是 MLX 引擎`)

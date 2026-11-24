@@ -122,6 +122,42 @@ export const CATALOG = {
       ms: 'Tencent-Hunyuan/Hy-MT2-1.8B-GGUF',
     },
   },
+  // Hy MT3（2026-11-24 开源）：架构与 MT2 完全一致（hunyuan_v1_dense / 32 层 / vocab 120818），
+  // 所以同一个 llama.cpp 构建就能跑，不需要换运行时。官方只放了 Q4_K_M 与 Q8_0 两种量化。
+  'hy-mt3-1.8b-q4km': {
+    id: 'hy-mt3-1.8b-q4km',
+    label: 'Hy-MT3-1.8B-Q4_K_M（GGUF）',
+    kind: 'translate',
+    engine: 'llama',
+    platforms: ['*'],
+    dir: 'hy-mt3-1.8b-q4km',
+    file: 'Hy-MT3-1.8B-Q4_K_M.gguf',
+    approxBytes: 1_348_432_160,
+    note: '第三代混元翻译，102 种语言，误译比 MT2 少 43%；约 1.35 GB。',
+    source: {
+      type: 'hf-file',
+      repo: 'tencent/Hy-MT3-1.8B-GGUF',
+      file: 'Hy-MT3-1.8B-Q4_K_M.gguf',
+      ms: 'Tencent-Hunyuan/Hy-MT3-1.8B-GGUF',
+    },
+  },
+  'hy-mt3-7b-q4km': {
+    id: 'hy-mt3-7b-q4km',
+    label: 'Hy-MT3-7B-Q4_K_M（GGUF）',
+    kind: 'translate',
+    engine: 'llama',
+    platforms: ['*'],
+    dir: 'hy-mt3-7b-q4km',
+    file: 'Hy-MT3-7B-Q4_K_M.gguf',
+    approxBytes: 5_145_531_232,
+    note: '质量更好的版本，约 5.1 GB；适合 24 GB 以上内存，慢一些。',
+    source: {
+      type: 'hf-file',
+      repo: 'tencent/Hy-MT3-7B-GGUF',
+      file: 'Hy-MT3-7B-Q4_K_M.gguf',
+      ms: 'Tencent-Hunyuan/Hy-MT3-7B-GGUF',
+    },
+  },
   'diarization': {
     id: 'diarization',
     label: '说话人分离模型（pyannote + 3D-Speaker）',

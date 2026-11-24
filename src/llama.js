@@ -10,7 +10,8 @@ import { CATALOG } from './catalog.js'
 import { modelsDir } from './models.js'
 import { detectPlatform, isWindows, killTree } from './platform.js'
 
-const TARGET_NAMES = { zh: 'Simplified Chinese', en: 'English' }
+// 混元官方要求用语言全称（中文写中文名、英文写英文名）。
+const TARGET_NAMES = { zh: '中文', en: '英语' }
 const IDLE_MS = 90_000
 
 let server = null
@@ -107,11 +108,14 @@ const idleTimer = setInterval(() => {
 }, 15_000)
 idleTimer.unref?.()
 
+// 混元 Hy-MT 系列（MT2 / MT3）官方推荐的就是「将以下文本翻译为X，注意只需要输出翻译后的结果，
+// 不要额外解释」这一句中英指令，而且模型没有默认 system prompt。所以这里不发 system 消息，
+// 把编号与顺序的要求并进同一句人话里——官方模板 + 最少改动，实测比自拟的英文 system+user 两段式更稳。
 function buildUserPrompt(items, target) {
   const numbered = items.map((item, index) => `${index + 1}. ${item.text}`).join('\n')
+  const language = TARGET_NAMES[target] || target
   return [
-    `Translate the following numbered subtitle lines into ${TARGET_NAMES[target] || target}.`,
-    'Preserve proper names, numbers and terminology. Output only the translated numbered lines in the same order, one per line, in the format "1. translation". Do not add explanations.',
+    `将以下 ${items.length} 条编号字幕逐条翻译为${language}，注意只需要输出翻译后的结果，不要额外解释，保持原有编号与顺序：`,
     '',
     numbered,
   ].join('\n')
@@ -123,13 +127,7 @@ export async function translateWithLlama(items, target) {
     model: 'local',
     temperature: 0,
     max_tokens: Math.min(2048, items.length * 80 + 200),
-    messages: [
-      {
-        role: 'system',
-        content: 'You are a professional subtitle translator. You output only the translation, keeping the numbering.',
-      },
-      { role: 'user', content: buildUserPrompt(items, target) },
-    ],
+    messages: [{ role: 'user', content: buildUserPrompt(items, target) }],
   }
   const res = await fetch(`http://127.0.0.1:${port}/v1/chat/completions`, {
     method: 'POST',
