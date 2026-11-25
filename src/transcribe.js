@@ -25,6 +25,9 @@ const WORK_DIR = path.join(TRANSCRIPTS_DIR, '.work')
 // 用 venvBin() 拼平台路径，否则 Windows 上永远判定「运行环境未安装」。
 const CLI = venvBin('mlx-qwen3-asr')
 const SHERPA_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'asr_sherpa_batch.py')
+const MOSS_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'moss_server.py')
+// MOSS 单次能吞 90 分钟，但段太长会拖慢首行出字、也更容易 OOM；5 分钟一段（P0 实测最优）。
+const MOSS_CHUNK_SECONDS = 300
 const FFMPEG = process.env.PODWAVE_FFMPEG || ffmpegPath() || 'ffmpeg'
 const FFPROBE = process.env.PODWAVE_FFPROBE || ffprobePath() || 'ffprobe'
 
@@ -58,11 +61,16 @@ export function currentAsrModel() {
   // 就会掉进 MLX 分支，然后去查只有 macOS 才有的 CLI，永远 installed:false。
   // 以 catalog 元数据为准，查不到时再退回正则兜底。
   const artifact = artifactByDir(name, 'asr')
-  const engine = artifact ? (artifact.engine === 'onnx' ? 'sherpa' : 'mlx') : /sensevoice|sherpa/i.test(name) ? 'sherpa' : 'mlx'
+  const engine = artifact
+    ? artifact.engine === 'moss' ? 'moss' : artifact.engine === 'onnx' ? 'sherpa' : 'mlx'
+    : /moss-transcribe/i.test(name) ? 'moss' : /sensevoice|sherpa/i.test(name) ? 'sherpa' : 'mlx'
   const ready =
     engine === 'sherpa'
       ? fs.existsSync(path.join(dir, 'model.int8.onnx'))
-      : fs.existsSync(path.join(dir, 'model.safetensors'))
+      : engine === 'moss'
+        // MOSS 是 transformers 权重 + 远程代码，config.json 在就说明目录下全了。
+        ? fs.existsSync(path.join(dir, 'config.json'))
+        : fs.existsSync(path.join(dir, 'model.safetensors'))
   return { name, dir, ready, engine }
 }
 
@@ -76,7 +84,8 @@ export function transcribeConfig() {
 
 // 云端接口只吃 16 位 PCM WAV；本地 sherpa 也吃 wav，MLX 吃 m4a。
 function wantWav() {
-  return asrProvider() === 'api' || currentAsrModel().engine === 'sherpa'
+  const engine = currentAsrModel().engine
+  return asrProvider() === 'api' || engine === 'sherpa' || engine === 'moss'
 }
 
 export function runtimeInfo() {
@@ -84,10 +93,15 @@ export function runtimeInfo() {
   const config = transcribeConfig()
   const api = asrApiConfig()
   const sherpa = model.engine === 'sherpa'
-  // sherpa 走 venv 里的 python 跑脚本；MLX 走 venv 里的命令行工具。
+  const moss = model.engine === 'moss'
+  // sherpa / moss 走 venv 里的 python 跑脚本；MLX 走 venv 里的命令行工具。
   // 两者都必须在 Windows 的 Scripts\ 下找，否则 installed 永远 false。
-  const cliPath = sherpa ? venvPython() : CLI
-  const installed = sherpa ? fs.existsSync(SHERPA_SCRIPT) && fs.existsSync(cliPath) : fs.existsSync(cliPath)
+  const cliPath = sherpa || moss ? venvPython() : CLI
+  const installed = sherpa
+    ? fs.existsSync(SHERPA_SCRIPT) && fs.existsSync(cliPath)
+    : moss
+      ? fs.existsSync(MOSS_SCRIPT) && fs.existsSync(cliPath)
+      : fs.existsSync(cliPath)
   return {
     provider: config.provider,
     // 当前这条路到底能不能开跑：云端看有没有 key，本地看运行时 + 模型。
@@ -661,6 +675,22 @@ async function readPartOutput(dir) {
   return JSON.parse(await readFile(path.join(dir, names[0]), 'utf8'))
 }
 
+// MOSS 自己就给「句子 + 起止 + 说话人」，别再过 groupWords（那会按 1.2 秒间隙重新切句并丢掉 speaker）。
+function mossLines(segments) {
+  const lines = []
+  for (const seg of Array.isArray(segments) ? segments : []) {
+    const text = String(seg?.text || '').trim()
+    if (!text) continue
+    const start = round2(seg.start)
+    const rawEnd = Number(seg.end)
+    const end = Number.isFinite(rawEnd) && rawEnd > start ? round2(rawEnd) : round2(start + 2)
+    lines.push({ start, end, text, speaker: seg.speaker ? String(seg.speaker) : null })
+  }
+  return lines
+    .sort((a, b) => a.start - b.start)
+    .map((line, index) => ({ id: index + 1, ...line }))
+}
+
 function wordsOf(raw) {
   const list = Array.isArray(raw.segments) ? raw.segments : Array.isArray(raw.tokens) ? raw.tokens : []
   return list
@@ -676,6 +706,18 @@ function wordsOf(raw) {
 function buildBatchArgs(files, outDir) {
   const model = currentAsrModel()
   const { hotwords } = transcribeConfig()
+  if (model.engine === 'moss') {
+    const args = [
+      MOSS_SCRIPT, ...files,
+      '--model', model.dir,
+      '--out-dir', outDir,
+      '--device', 'auto',
+      '--dtype', 'auto',
+      '--threads', '2',
+    ]
+    if (hotwords.length) args.push('--hotwords', hotwords.join('，'))
+    return args
+  }
   if (model.engine === 'sherpa') {
     const args = [SHERPA_SCRIPT, ...files, '--model-dir', model.dir, '--out-dir', outDir, '--threads', '4']
     if (hotwords.length) args.push('--hotwords', hotwords.join(' '))
@@ -732,6 +774,7 @@ function mergedFromResults(plan, resultsDir) {
   const groups = []
   let language = ''
   const texts = []
+  let moss = false
   for (const part of [...plan.parts].sort((a, b) => a.index - b.index)) {
     if (!hasResult(resultsDir, part.index)) continue
     let data
@@ -742,14 +785,17 @@ function mergedFromResults(plan, resultsDir) {
     }
     if (!language && data.language) language = data.language
     if (data.text) texts.push(data.text)
+    if (data.engine === 'moss') moss = true
     const group = []
     for (const line of data.lines || []) {
       const text = String(line.text || '').trim()
       if (!text) continue
+      const speaker = line.speaker ? String(line.speaker) : ''
       group.push({
         start: round2(Number(line.start) + part.start),
         end: round2(Number(line.end) + part.start),
         text,
+        ...(speaker ? { speaker } : {}),
       })
     }
     if (group.length) groups.push(group)
@@ -757,7 +803,8 @@ function mergedFromResults(plan, resultsDir) {
 
   const joined = []
   for (const group of groups) {
-    if (joined.length && group.length) {
+    // MOSS 的句子边界是模型自己给的，跨段拼接会把两句话并成一句、说话人也一起丢。
+    if (!moss && joined.length && group.length) {
       const stitched = stitchAcrossParts(joined[joined.length - 1], group[0])
       if (stitched) {
         joined[joined.length - 1] = { ...joined[joined.length - 1], text: stitched.text, end: stitched.end }
@@ -769,6 +816,18 @@ function mergedFromResults(plan, resultsDir) {
 
   // 识别出来的分段是按模型自己的声学块来的，本地引擎经常两三词一行、句尾还没标点。
   // 先整理成整句再落盘：翻译按行送模型，碎片行会让小模型自己合并、译文整体错位。
+  if (moss) {
+    const lines = joined
+      .filter((line) => line.text && line.end - line.start >= 0.2)
+      .map((line, index) => ({
+        id: index + 1,
+        start: round2(line.start),
+        end: round2(line.end),
+        text: line.text,
+        speaker: line.speaker || null,
+      }))
+    return { lines, language, texts }
+  }
   const lines = resegmentLines(joined)
   return { lines, language, texts }
 }
@@ -857,7 +916,13 @@ async function runJob(item) {
     })
     if (force) await rm(work, { recursive: true, force: true })
     await mkdir(work, { recursive: true })
-    plan = await ensurePlan(episode, work, () => cancelRequested.has(key))
+    plan = await ensurePlan(
+      episode,
+      work,
+      () => cancelRequested.has(key),
+      undefined,
+      currentAsrModel().engine === 'moss' ? MOSS_CHUNK_SECONDS : undefined,
+    )
     const resultsDir = path.join(work, 'results')
     const cliDir = path.join(work, 'cli')
     await mkdir(resultsDir, { recursive: true })
@@ -881,10 +946,18 @@ async function runJob(item) {
         } catch {
           continue
         }
-        const lines = buildSegments(raw, wordsOf(raw))
+        const moss = raw.engine === 'moss'
+        const lines = moss ? mossLines(raw.segments) : buildSegments(raw, wordsOf(raw))
         await writeFile(
           resultPath(resultsDir, part.index),
-          JSON.stringify({ index: part.index, start: part.start, lines, language: raw.language || '', text: raw.text || '' }),
+          JSON.stringify({
+            index: part.index,
+            start: part.start,
+            engine: moss ? 'moss' : undefined,
+            lines,
+            language: raw.language || '',
+            text: raw.text || '',
+          }),
           'utf8',
         )
         fresh += 1
@@ -899,9 +972,14 @@ async function runJob(item) {
     let lastIngestAt = Date.now()
     if (missing.length) {
       const model = currentAsrModel()
-      const command = model.engine === 'sherpa' ? venvPython() : CLI
+      const scripted = model.engine === 'sherpa' || model.engine === 'moss'
+      const command = scripted ? venvPython() : CLI
+      // MOSS 用 transformers 的 load_audio 解码，需要能在 PATH 里找到 ffmpeg；
+      // 插件自带的 ffmpeg 不一定在 PATH 上，这里显式补进第一个位置。
+      const ffmpegDir = path.dirname(FFMPEG)
+      const pathEnv = ffmpegDir && ffmpegDir !== '.' ? `${ffmpegDir}${path.delimiter}${process.env.PATH || ''}` : process.env.PATH
       child = spawn(command, buildBatchArgs(missing.map((part) => part.file), cliDir), {
-        env: { ...process.env, HF_HUB_OFFLINE: '1', TOKENIZERS_PARALLELISM: 'false' },
+        env: { ...process.env, PATH: pathEnv, HF_HUB_OFFLINE: '1', TOKENIZERS_PARALLELISM: 'false' },
         stdio: ['ignore', 'ignore', 'pipe'],
       })
       activeChild = child
@@ -988,7 +1066,11 @@ async function runJob(item) {
     upsertJob({ key, stage: 'merging' })
     const merged = mergedFromResults(plan, resultsDir)
     let speakers = []
-    if (transcribeConfig().diarize && diarizeInfo().modelsReady) {
+    // MOSS 已经在同一遍里给出说话人了，不要再跑一次声纹模型（那是整条链路最慢的一步）。
+    // MOSS 的说话人就在行里，声纹模型那一步直接跳过，把标签汇总到 transcript.speakers 即可。
+    const inlineSpeakers = [...new Set(merged.lines.map((line) => line.speaker).filter(Boolean))]
+    if (inlineSpeakers.length) speakers = inlineSpeakers
+    if (transcribeConfig().diarize && diarizeInfo().modelsReady && !merged.lines.some((line) => line.speaker)) {
       const prevPercent = getJob(key)?.progress?.percent || 0
       upsertJob({ key, stage: 'diarizing', progress: { done: 0, total: 0, percent: Math.max(prevPercent, 96), unit: 'seconds' } })
       try {

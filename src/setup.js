@@ -139,12 +139,12 @@ function run(cmd, args, { cwd, env, onLine } = {}) {
 
 export function runtimeReady(platform) {
   const py = venvPython()
-  const needsMlx = platform.mlxCapable
-  return (
-    fs.existsSync(py) &&
-    pythonModule('sherpa_onnx') &&
-    (!needsMlx || (pythonModule('mlx_qwen3_asr') && pythonModule('mlx_lm')))
-  )
+  if (!fs.existsSync(py)) return false
+  // MOSS 走 transformers + torch，用不到 MLX 的 CLI；反过来 MLX 也不需要 torch。
+  if (recommendEngine(platform).asr === 'moss-transcribe-diarize') {
+    return pythonModule('torch') && pythonModule('transformers') && pythonModule('av') && pythonModule('librosa')
+  }
+  return pythonModule('sherpa_onnx') && (!platform.mlxCapable || (pythonModule('mlx_qwen3_asr') && pythonModule('mlx_lm')))
 }
 
 export function llamaBinary(platform) {
@@ -183,7 +183,15 @@ export function modelState(artifact) {
   }
   const safetensors = path.join(dir, 'model.safetensors')
   const onnx = path.join(dir, 'model.int8.onnx')
-  return { ready: fs.existsSync(safetensors) || fs.existsSync(onnx), dir }
+  if (fs.existsSync(safetensors) || fs.existsSync(onnx)) return { ready: true, dir }
+  // 分片权重（MOSS 的 model-00000-of-00001.safetensors）走这一条。
+  let sharded = false
+  try {
+    sharded = fs.readdirSync(dir).some((file) => file.endsWith('.safetensors'))
+  } catch {
+    sharded = false
+  }
+  return { ready: sharded, dir }
 }
 
 function runCapture(cmd, args, timeout = 15000) {
@@ -229,6 +237,13 @@ export async function verify() {
     if (platform.mlxCapable) {
       const mlx = await runCapture(python, ['-c', 'import mlx_qwen3_asr, mlx_lm; print("mlx ok")'])
       checks.push({ id: 'python-mlx', label: 'MLX 组件可导入', ok: mlx.ok, detail: mlx.detail })
+    }
+    if (recommendEngine(platform).asr === 'moss-transcribe-diarize') {
+      const moss = await runCapture(python, [
+        '-c',
+        'import torch, transformers, av, librosa; print("torch", torch.__version__, "| transformers", transformers.__version__)',
+      ])
+      checks.push({ id: 'python-moss', label: 'MOSS 依赖可导入（torch / transformers）', ok: moss.ok, detail: moss.detail })
     }
   } else {
     checks.push({
@@ -511,15 +526,31 @@ export async function install({ source = 'auto', mode = 'basic' } = {}) {
         await run(uv, ['venv', '--python', '3.12', venv])
       }
       const index = source === 'cn' ? 'https://pypi.tuna.tsinghua.edu.cn/simple' : undefined
+      const moss = engine.asr === 'moss-transcribe-diarize'
       const args = ['pip', 'install', '--python', venvPython(), 'sherpa-onnx', 'numpy']
       if (engine.id === 'mlx') args.push('mlx-qwen3-asr', 'mlx-lm')
+      if (moss) args.push('transformers>=5.6', 'av', 'librosa', 'numba', 'soundfile', 'soxr', 'fastapi', 'uvicorn', 'python-multipart')
       if (index) args.push('--index-url', index)
-      report({ stage: '安装 Python 依赖（sherpa-onnx' + (engine.id === 'mlx' ? '、mlx' : '') + '）' })
+      report({ stage: '安装 Python 依赖（sherpa-onnx' + (engine.id === 'mlx' ? '、mlx' : moss ? '、transformers' : '') + '）' })
       try {
         await run(uv, args)
       } catch (error) {
         if (index) await run(uv, args.filter((part) => part !== '--index-url' && part !== index))
         else throw error
+      }
+      if (moss) {
+        // torch 单独装：CUDA 版只在 pytorch 官方源里，混在清华镜像那一轮会解析失败。
+        const torchArgs = ['pip', 'install', '--python', venvPython(), 'torch', 'torchaudio']
+        const torchIndex = platform.cuda ? 'https://download.pytorch.org/whl/cu128' : index
+        if (torchIndex) torchArgs.push('--index-url', torchIndex)
+        report({ stage: `安装 PyTorch（${platform.cuda ? 'CUDA 版' : 'CPU 版'}）` })
+        try {
+          await run(uv, torchArgs)
+        } catch (error) {
+          if (!torchIndex) throw error
+          // CUDA 源不通就退回普通版：慢一点但能跑。
+          await run(uv, ['pip', 'install', '--python', venvPython(), 'torch', 'torchaudio'])
+        }
       }
       summary.push({ id: 'runtime', label: 'Python 运行时 + 依赖', bytes: 0 })
     }

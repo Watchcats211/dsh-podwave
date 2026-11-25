@@ -226,7 +226,10 @@ export function modelReady(name) {
     if (fs.existsSync(path.join(dir, 'model.int8.onnx'))) return true
     // 说话人分离模型（pyannote + 3D-Speaker）就是裸 onnx 文件，
     // 只认 safetensors/int8/gguf 会让它永远显示「未就绪」。
-    return fs.readdirSync(dir).some((file) => file.endsWith('.gguf') || file.endsWith('.onnx'))
+    // 分片权重（MOSS 是 model-00000-of-00001.safetensors）和裸 onnx 都要认。
+    return fs
+      .readdirSync(dir)
+      .some((file) => file.endsWith('.gguf') || file.endsWith('.onnx') || file.endsWith('.safetensors'))
   } catch {
     return false
   }
@@ -267,6 +270,7 @@ const LOCAL_MODEL_PATTERNS = [
   { re: /^hy-mt[\d.]*-[\d.]+b-(4bit|8bit|mlx|gguf)/i, kind: 'translate', label: (name) => `混元 ${name}` },
   { re: /^qwen3-asr/i, kind: 'asr', label: (name) => `Qwen3-ASR ${name}` },
   { re: /^sensevoice/i, kind: 'asr', label: (name) => `SenseVoice ${name}` },
+  { re: /^moss-transcribe/i, kind: 'asr', label: (name) => `MOSS ${name}` },
 ]
 
 function artifactMeta() {

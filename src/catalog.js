@@ -46,6 +46,24 @@ export const CATALOG = {
       include: ['model.int8.onnx', 'tokens.txt'],
     },
   },
+  // MOSS：一次前向同时给出「文字 + 说话人 + 时间戳」，不用再单独跑声纹模型。
+  // 国内镜像与上游文件一致，remote code 三个 .py 也在仓库里，用 skip 全量拉。
+  'moss-transcribe-diarize': {
+    id: 'moss-transcribe-diarize',
+    label: 'MOSS 转写（0.9B，带说话人）',
+    kind: 'asr',
+    engine: 'moss',
+    platforms: ['*'],
+    dir: 'moss-transcribe-diarize',
+    approxBytes: 1_820_000_000,
+    note: '一次转写同时给出文字、说话人和时间戳，中英双语、50+ 语种，国内开源。约 1.7 GB。',
+    source: {
+      type: 'hf-repo',
+      repo: 'OpenMOSS-Team/MOSS-Transcribe-Diarize',
+      ms: 'openmoss/MOSS-Transcribe-Diarize',
+      skip: skipPatterns,
+    },
+  },
   'hy-mt2-1.8b-4bit-mlx': {
     id: 'hy-mt2-1.8b-4bit-mlx',
     label: 'Hy-MT2-1.8B-4bit（MLX）',

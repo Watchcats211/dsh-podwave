@@ -35,10 +35,10 @@ const winPlatform = {
   cuda: true,
 }
 
-test('Windows 平台推荐 ONNX + llama.cpp，绝不落到 MLX 分支', () => {
+test('有 NVIDIA 的 Windows 推荐 MOSS + llama.cpp，绝不落到 MLX 分支', () => {
   const engine = recommendEngine(winPlatform)
-  assert.equal(engine.id, 'onnx-llama')
-  assert.equal(engine.asr, 'sensevoice-int8')
+  assert.equal(engine.id, 'moss-llama')
+  assert.equal(engine.asr, 'moss-transcribe-diarize')
   assert.match(engine.translate, /^hy-mt[23]-1\.8b-/)
   assert.ok(CATALOG[engine.translate], '推荐的翻译模型必须在目录里')
   // MLX 组件一个都不能出现在推荐里
@@ -51,23 +51,31 @@ test('Windows 平台推荐 ONNX + llama.cpp，绝不落到 MLX 分支', () => {
 test('expectedModels 给出当前平台真正能装的模型目录名', () => {
   const engine = recommendEngine(winPlatform)
   const models = expectedModels(winPlatform, engine)
-  assert.equal(models.asrModel, 'sensevoice-small-int8')
-  assert.equal(models.asrEngine, 'onnx')
+  assert.equal(models.asrModel, 'moss-transcribe-diarize')
+  assert.equal(models.asrEngine, 'moss')
   assert.notEqual(models.asrModel, 'qwen3-asr-1.7b-8bit')
   assert.ok(!models.translateModel.includes('mlx'), '翻译模型不该是 MLX 目录')
 })
 
-test('Apple Silicon 仍然推荐 MLX（回归保护：别把 Mac 也改坏）', () => {
-  const macPlatform = { ...winPlatform, os: 'darwin', osLabel: 'macOS', arch: 'arm64', isMac: true, isWindows: false, appleSilicon: true, mlxCapable: true, gpu: 'metal' }
+test('没有 NVIDIA 的 Windows 退回 SenseVoice，避免 CPU 上 1x 实时', () => {
+  const engine = recommendEngine({ ...winPlatform, gpu: 'none', cuda: false })
+  assert.equal(engine.id, 'onnx-llama')
+  assert.equal(engine.asr, 'sensevoice-int8')
+})
+
+test('Apple Silicon 推荐 MOSS + GGUF 翻译（用户 2026-11-25 拍板：不再走 MLX 翻译）', () => {
+  const macPlatform = { ...winPlatform, os: 'darwin', osLabel: 'macOS', arch: 'arm64', isMac: true, isWindows: false, appleSilicon: true, mlxCapable: true, gpu: 'metal', cuda: false }
   const engine = recommendEngine(macPlatform)
-  assert.equal(engine.id, 'mlx')
-  assert.equal(engine.asr, 'qwen3-asr-1.7b-8bit')
+  assert.equal(engine.id, 'moss-llama')
+  assert.equal(engine.asr, 'moss-transcribe-diarize')
+  assert.equal(engine.translate, 'hy-mt3-1.8b-q4km')
 })
 
 test('artifactByDir 按目录名反查引擎，不靠正则猜', () => {
   assert.equal(artifactByDir('sensevoice-small-int8', 'asr').engine, 'onnx')
   assert.equal(artifactByDir('qwen3-asr-1.7b-8bit', 'asr').engine, 'mlx')
   assert.equal(artifactByDir('hy-mt2-1.8b-q4km', 'translate').engine, 'llama')
+  assert.equal(artifactByDir('moss-transcribe-diarize', 'asr').engine, 'moss')
   // 用 catalog key 也能查到（兼容旧配置里写 id 的情况）
   assert.equal(artifactByDir('sensevoice-int8', 'asr').engine, 'onnx')
   // 未知名字返回 null，调用方才知道该退回兜底逻辑

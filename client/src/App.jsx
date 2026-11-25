@@ -262,6 +262,7 @@ export default function App() {
   const mediaBaseRef = useRef('')
   const seekRef = useRef(null)
   const currentRef = useRef(null)
+  const transcriptRef = useRef(null)
   const durationRef = useRef(0)
   const settingsRef = useRef(settings)
   const pendingSeekRef = useRef(0)
@@ -274,6 +275,7 @@ export default function App() {
   useEffect(() => { setNotesOpen(false) }, [detailId])
   useEffect(() => { settingsRef.current = settings }, [settings])
   useEffect(() => { currentRef.current = current }, [current])
+  useEffect(() => { transcriptRef.current = transcript }, [transcript])
   useEffect(() => { durationRef.current = duration }, [duration])
 
   useEffect(() => {
@@ -674,16 +676,32 @@ export default function App() {
   }, [playing, current, transcript, txStatus, txSettings])
 
   const startTranscript = useCallback(async () => {
-    if (!currentRef.current) return
+    const episode = currentRef.current
+    if (!episode) return
     setTxError('')
     setSubsOpen(true)
+    // 这个按钮在「已经有字幕」时是「重新转写」：必须显式带 force，
+    // 否则后端只会回一句「已完成」，点了像没反应。
+    const existing = transcriptRef.current
+    const redo = Boolean(existing) && !existing.partial
+    if (redo) {
+      const lines = Array.isArray(existing.lines) ? existing.lines.length : 0
+      const cloud = (txSettings?.provider || 'api') === 'api'
+      const ask = [
+        `重新转写这一集？现有字幕（${lines} 行）会被覆盖。`,
+        '',
+        cloud ? '走云端转写，会重新计费一次。' : '走本地模型，不联网、不花钱，但会占 CPU/GPU。',
+      ].join('\n')
+      if (!window.confirm(ask)) return
+    }
     try {
-      const res = await sendJSON(`${API}/episodes/${currentRef.current.id}/transcribe`, 'POST', {})
+      const res = await sendJSON(`${API}/episodes/${episode.id}/transcribe`, 'POST', redo ? { force: true } : {})
       setTxStatus(res.status || 'queued')
+      if (redo) flash('重新转写已开始')
     } catch (err) {
       setTxError(err.message)
     }
-  }, [])
+  }, [flash, txSettings])
 
   const toggleSubs = useCallback(() => {
     if (transcript) {

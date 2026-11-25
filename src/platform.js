@@ -97,6 +97,9 @@ export function ffprobePath() {
 }
 
 export function venvDir() {
+  // 允许换一套运行时（测试用探针环境、或将来把 MOSS 的 torch 单独放一个 venv）。
+  const override = String(process.env.PODWAVE_RUNTIME_VENV || '').trim()
+  if (override) return override
   return path.join(os.homedir(), '.podwave', 'runtime', '.venv')
 }
 
@@ -173,15 +176,20 @@ export function detectPlatform() {
   }
 }
 
-// 推荐组合：Mac Apple Silicon 走 MLX；其它平台走 ONNX ASR + llama.cpp GGUF。
+// 推荐组合：有 GPU（Apple Silicon / NVIDIA）就走 MOSS 转写 + Hy-MT3 GGUF 翻译；
+// 纯 CPU 的机器留给 SenseVoice（MOSS 在 CPU 上只有 1x 实时，看播客会等）。
+// 两个模型都是国内开源，且 GGUF 走同一个 llama.cpp 套件，安装包不会翻倍。
 export function recommendEngine(platform) {
-  if (platform.mlxCapable) {
+  const gpu = platform.mlxCapable || platform.cuda
+  if (gpu) {
     return {
-      id: 'mlx',
-      label: 'MLX（Apple Silicon）',
-      asr: 'qwen3-asr-1.7b-8bit',
-      translate: 'hy-mt2-1.8b-4bit-mlx',
-      note: '本机是 Apple Silicon：转写用 Qwen3-ASR-1.7B-8bit，翻译用 Hy-MT2-1.8B-4bit（MLX）。',
+      id: 'moss-llama',
+      label: platform.mlxCapable ? 'MOSS + llama.cpp（Apple Silicon）' : 'MOSS + llama.cpp（NVIDIA）',
+      asr: 'moss-transcribe-diarize',
+      translate: 'hy-mt3-1.8b-q4km',
+      note: platform.mlxCapable
+        ? '本机是 Apple Silicon：转写用 MOSS（一次给出文字/说话人/时间戳），翻译用 Hy-MT3-1.8B（GGUF）。'
+        : '检测到 NVIDIA 显卡：转写用 MOSS，翻译用 Hy-MT3-1.8B（GGUF），装 CUDA 版 torch。',
     }
   }
   const mem = platform.memoryGB

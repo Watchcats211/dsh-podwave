@@ -2,7 +2,7 @@
 
 DeepSeek Harness 的本地播客播放器插件：在 DSH 侧栏里播放硬盘上的播客，自动记住进度，并且能转写、显示双语字幕、导出 SRT / Markdown。
 
-音频只从本地磁盘读取，不上传、不依赖订阅源。翻译默认直接用 DSH 里正在用的那个模型（不用另填 key）；转写默认走 DeepSeek API，填一次 key 就行，也可以切到本地模型（MLX / sherpa-onnx），离线运行。
+音频只从本地磁盘读取，不上传、不依赖订阅源。翻译默认直接用 DSH 里正在用的那个模型（不用另填 key）；转写默认走 DeepSeek API，填一次 key 就行，也可以切到本地模型（MOSS / SenseVoice），离线运行。
 
 ![单集详情：封面 + 双语字幕](docs/screenshot-detail.png)
 
@@ -69,16 +69,16 @@ dsh plugin --profile desktop add file:/path/to/dsh-podwave
 
 **走云端（默认）**：翻译默认跟随 DSH 的模型，一个 key 都不用配；转写只要 ffmpeg + 一把 DeepSeek key——DSH 设置 →「播客」→「一键安装」装上 ffmpeg，再去「翻译」卡片填一次 API key。按识别时长计费，1 小时播客几毛钱。
 
-**走本地模型（免费、离线、吃算力）**：在设置 →「播客」→「转写」里把「转写方式」切到「本地模型」，点「一键安装本地模型」，会按平台自动选模型（Apple Silicon 用 MLX，Windows / Linux / Intel Mac 用 ONNX + llama.cpp）。下面的手动步骤只在自动安装失败时才需要。
+**走本地模型（免费、离线、吃算力）**：在设置 →「播客」→「转写」里把「转写方式」切到「本地模型」，点「一键安装本地模型」，会按平台自动选模型：有 GPU（Apple Silicon 或 NVIDIA）用 MOSS（一次给出文字、说话人、时间戳）+ Hy-MT3 GGUF，没有显卡的机器用 SenseVoice，保证跑得动。下面的手动步骤只在自动安装失败时才需要。
 
 下面是手动安装（以 Apple Silicon 为例）：
 
 ```bash
 uv venv ~/.podwave/runtime/.venv --python 3.12
-uv pip install --python ~/.podwave/runtime/.venv/bin/python "mlx-qwen3-asr==0.4.4" mlx-lm sherpa-onnx
+uv pip install --python ~/.podwave/runtime/.venv/bin/python torch torchaudio "transformers>=5.6" av librosa numba soundfile soxr
 
 # 默认下载到项目文件夹里的 models/（npm 安装则是当前工作区的 models/，可在设置里改）
-hf download mlx-community/Qwen3-ASR-1.7B-8bit --local-dir models/qwen3-asr-1.7b-8bit
+# 模型走 ModelScope 镜像下载到 models/moss-transcribe-diarize（约 1.7 GB）
 hf download mlx-community/Hy-MT2-1.8B-4bit --local-dir models/hy-mt2-1.8b-4bit
 
 # 说话人分离模型（约 34MB）
@@ -89,7 +89,7 @@ curl -LO https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongi
 ```
 
 - 转写模型约 2.3 GB，翻译模型约 1 GB（Hy-MT2-1.8B，974 MB），说话人模型约 34 MB；只做播放、或者只用云端 API，都可以都不装。想要更好的译文，可以再装 Hy-MT3-1.8B（约 1.35 GB，设置页模型列表里直接选）。
-- **平台差异**：Apple Silicon 用 MLX（上面的命令）；Windows / Linux / Intel Mac 用 SenseVoice Small（约 240 MB）+ Hy-MT2 GGUF，虚拟环境是 `.venv\Scripts\` 而不是 `bin/`，建议直接用「一键安装」。
+- **平台差异**：有 GPU 的机器（Apple Silicon / NVIDIA）用 MOSS（约 1.7 GB）+ Hy-MT3 GGUF；没有显卡的机器用 SenseVoice Small（约 240 MB）。虚拟环境在 Windows 上是 `.venv\Scripts\` 而不是 `bin/`，建议直接用「一键安装」。
 - 翻译可以不用本地模型：设置页「翻译」里选「DSH 当前模型」即可（默认），要换模型去 DSH 自己的模型设置里换。
 - 字幕面板 →「设置」里切换引擎；目标语言在字幕面板的「对照」下拉里选。
 
@@ -187,10 +187,11 @@ CI（GitHub Actions）在每次 push / PR 跑 `npm test` 与 `npm run build`。
 | 平台 | 转写 | 翻译 |
 | --- | --- | --- |
 | macOS Apple Silicon | Qwen3-ASR-1.7B-8bit（MLX） | Hy-MT2-1.8B-4bit（MLX）；可换 Hy-MT3-1.8B-GGUF |
-| Windows / Linux / Intel Mac | SenseVoiceSmall int8（sherpa-onnx） | Hy-MT3-1.8B-Q4_K_M（llama.cpp，24 GB 以上）／Hy-MT2-2bit（内存小） |
+| Apple Silicon / NVIDIA | MOSS-Transcribe-Diarize 0.9B（torch，带说话人） | Hy-MT3-1.8B-Q4_K_M（llama.cpp） |
+| 无显卡（Intel Mac / 普通 Windows） | SenseVoiceSmall int8（sherpa-onnx） | Hy-MT3-1.8B-Q4_K_M（24 GB 以上）／Hy-MT2-2bit（内存小） |
 
 - 下载线路可选「自动测速 / 国际（Hugging Face、GitHub）/ 国内（hf-mirror、gh-proxy、ModelScope）」。
-- 「一键安装」会准备 uv 与 Python 虚拟环境、安装 sherpa-onnx（MLX 平台额外装 mlx-qwen3-asr、mlx-lm）、下载 llama.cpp 预编译包和缺失模型，并在完成后列出每项内容与体积。
+- 「一键安装」会准备 uv 与 Python 虚拟环境、按平台安装依赖（MOSS 装 torch / transformers / av / librosa，NVIDIA 机器装 CUDA 版 torch）、下载 llama.cpp 预编译包和缺失模型，并在完成后列出每项内容与体积。
 - 模型默认保存在项目文件夹的 `models/`（npm 安装为当前工作区的 `models/`，老用户已有 `~/.podwave/models` 会继续沿用），运行时在 `~/.podwave/runtime`；位置可在设置里改，卸载插件不会删除这些文件。
 - 想用 MLX 跑 Hy-MT3（官方还没出 MLX 版，但可以自己转，本机 4bit 约 980 MB）：
   `~/.podwave/runtime/.venv/bin/python -m mlx_lm convert --hf-path tencent/Hy-MT3-1.8B --q-bits 4 -q --mlx-path models/hy-mt3-1.8b-4bit`，
@@ -199,7 +200,7 @@ CI（GitHub Actions）在每次 push / PR 跑 `npm test` 与 `npm run build`。
 
 ### Windows 需要准备什么
 
-- 安装中心会自动下载 ffmpeg（约 202 MB）、llama.cpp（约 25 MB）、SenseVoice（约 239 MB）与翻译模型（Hy-MT3-1.8B-Q4_K_M 约 1.35 GB 或 Hy-MT2-2bit 约 572 MB），合计约 1.8 GB，建议预留 3 GB 磁盘。
+- 安装中心会自动下载 ffmpeg（约 202 MB）、llama.cpp（约 25 MB）、转写模型（MOSS 约 1.7 GB 或 SenseVoice 约 239 MB）与翻译模型（Hy-MT3-1.8B-Q4_K_M 约 1.35 GB 或 Hy-MT2-2bit 约 572 MB），合计约 1.8–3.4 GB，建议预留 4 GB 磁盘。
 - Windows 10 及以上自带 `tar` 与 `powershell`，解压和文件夹选择器无需额外安装。
 - 安装时会校验下载文件的 sha256（GitHub Release 官方 digest / Hugging Face LFS），并拒绝含 `..` 或绝对路径的压缩包；macOS 没有 ffmpeg 时会尝试通过 Homebrew 安装。
 - 首次安装完成后，设置页会列出每项下载内容与体积；模型默认在项目里的 `models/`，运行时在 `~/.podwave/runtime`。
