@@ -3,6 +3,8 @@ import Icon from './components/Icon.jsx'
 import Cover from './components/Cover.jsx'
 import TranscriptPanel from './components/TranscriptPanel.jsx'
 import CaptionOverlay from './components/CaptionOverlay.jsx'
+import LiveCaptionOverlay from './components/LiveCaptionOverlay.jsx'
+import { listInputDevices, pickCaptureDevice, startLiveCapture } from './lib/audioCapture.js'
 import PopMenu, { MenuAction } from './components/PopMenu.jsx'
 import XyzPanel from './components/XyzPanel.jsx'
 import { fmtTime, fmtDuration, fmtDate, initialOf, shortPath } from './lib/format.js'
@@ -257,6 +259,13 @@ export default function App() {
   const [editingLineId, setEditingLineId] = useState(null)
   const [draftText, setDraftText] = useState('')
   const [txIssues, setTxIssues] = useState([])
+  // 实时字幕（听系统声音）：idle → starting → listening → asking（问要不要保存）→ saving
+  const [liveStatus, setLiveStatus] = useState('idle')
+  const [liveLines, setLiveLines] = useState([])
+  const [liveError, setLiveError] = useState('')
+  const [liveDevice, setLiveDevice] = useState('')
+  const [liveStartedAt, setLiveStartedAt] = useState(0)
+  const [liveNow, setLiveNow] = useState(0)
 
   const audioRef = useRef(null)
   const mediaBaseRef = useRef('')
@@ -271,6 +280,12 @@ export default function App() {
   const toastedRef = useRef(0)
   const restoredRef = useRef(false)
   const seekDraggingRef = useRef(false)
+  // 实时字幕的采集句柄、待发队列、会话 id；放 ref 里是因为音频回调里读不到最新 state。
+  const liveCaptureRef = useRef(null)
+  const liveQueueRef = useRef([])
+  const liveSendingRef = useRef(false)
+  const liveSessionRef = useRef('')
+  const liveLinesRef = useRef([])
 
   useEffect(() => { setNotesOpen(false) }, [detailId])
   useEffect(() => { settingsRef.current = settings }, [settings])
@@ -466,6 +481,133 @@ export default function App() {
     window.clearTimeout(toastedRef.current)
     toastedRef.current = window.setTimeout(() => setToast(''), 2600)
   }, [])
+
+  // 计时：Listening 时每秒刷新一次，悬浮窗上显示「听了多久」。
+  useEffect(() => {
+    if (liveStatus !== 'listening' && liveStatus !== 'asking') return undefined
+    setLiveNow(Date.now())
+    const timer = window.setInterval(() => setLiveNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [liveStatus])
+
+  // 一段一段串行发给宿主：乱序到达会让字幕和译文错位，而且识别本身也吃不消并发。
+  const pumpLive = useCallback(async () => {
+    if (liveSendingRef.current) return
+    liveSendingRef.current = true
+    try {
+      while (liveQueueRef.current.length) {
+        const segment = liveQueueRef.current.shift()
+        const session = liveSessionRef.current
+        if (!session) break
+        try {
+          const res = await fetch(
+            `${API}/live/segment?session=${encodeURIComponent(session)}&start=${segment.start}&end=${segment.end}`,
+            { method: 'POST', headers: { 'content-type': 'audio/wav' }, body: segment.wav },
+          )
+          const data = await res.json().catch(() => ({}))
+          if (!res.ok) throw new Error(data.error || res.statusText)
+          if (data.lines?.length) {
+            liveLinesRef.current = [...liveLinesRef.current, ...data.lines]
+            setLiveLines(liveLinesRef.current)
+          }
+          setLiveError(data.lastError || '')
+        } catch (err) {
+          setLiveError(err.message || String(err))
+        }
+      }
+    } finally {
+      liveSendingRef.current = false
+    }
+  }, [])
+
+  const finishLive = useCallback(async (save) => {
+    setLiveStatus('saving')
+    const session = liveSessionRef.current
+    liveSessionRef.current = ''
+    try {
+      const result = await sendJSON(`${API}/live/stop`, 'POST', { session, save: Boolean(save) })
+      if (result.saved) flash(`字幕已保存：${result.files.md}`)
+      else flash('实时字幕已结束')
+    } catch (err) {
+      flash(`结束实时字幕失败：${err.message || err}`)
+    } finally {
+      liveQueueRef.current = []
+      liveLinesRef.current = []
+      setLiveStatus('idle')
+      setLiveLines([])
+      setLiveError('')
+      setLiveDevice('')
+      setLiveStartedAt(0)
+    }
+  }, [flash])
+
+  const stopLive = useCallback(async () => {
+    const capture = liveCaptureRef.current
+    liveCaptureRef.current = null
+    if (capture) await capture.stop().catch(() => {})
+    // capture.stop() 会把最后半句推给队列，等它发完再决定「要不要保存」。
+    const deadline = Date.now() + 5000
+    while ((liveQueueRef.current.length || liveSendingRef.current) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+    }
+    if (liveLinesRef.current.length) setLiveStatus('asking')
+    else await finishLive(false)
+  }, [finishLive])
+
+  const startLive = useCallback(async () => {
+    if (liveStatus === 'starting' || liveStatus === 'listening') return
+    setLiveError('')
+    setLiveLines([])
+    liveLinesRef.current = []
+    setLiveStatus('starting')
+    try {
+      const info = await getJSON(`${API}/live`)
+      if (!info.ready) {
+        throw new Error('还没有填 DeepSeek API key。设置 →「翻译」里填一个，转写和实时字幕都能用')
+      }
+      // 记住的上次设备优先；没有就挑一个最像「系统声音」的（BlackHole / VB-Cable 之类）。
+      let deviceId = info.deviceId || ''
+      let label = info.deviceLabel || ''
+      if (!deviceId) {
+        const devices = await listInputDevices()
+        const picked = pickCaptureDevice(devices)
+        if (picked) {
+          deviceId = picked.deviceId
+          label = picked.label || ''
+        }
+      }
+      const started = await sendJSON(`${API}/live/start`, 'POST', { target: info.target || 'zh' })
+      if (!started?.session?.id) throw new Error('宿主没给出会话 id')
+      liveSessionRef.current = started.session.id
+      const capture = await startLiveCapture({
+        deviceId,
+        onSegment: (segment) => {
+          // 识别跟不上时最多排 9 段（约 40 秒），再多就丢最老的 —— 积压越久字幕越没意义。
+          if (liveQueueRef.current.length > 8) liveQueueRef.current.shift()
+          liveQueueRef.current.push(segment)
+          pumpLive()
+        },
+      })
+      liveCaptureRef.current = capture
+      setLiveDevice(capture.label || label || '系统声音')
+      setLiveStartedAt(Date.now())
+      setLiveStatus('listening')
+      if (deviceId && (deviceId !== info.deviceId || (capture.label || label) !== info.deviceLabel)) {
+        sendJSON(`${API}/live/settings`, 'PUT', { deviceId, deviceLabel: capture.label || label }).catch(() => {})
+      }
+    } catch (err) {
+      // 会话已经建好但采集失败：把宿主那边的空会话收掉，不然它会一直占着「当前会话」。
+      if (liveSessionRef.current) {
+        sendJSON(`${API}/live/stop`, 'POST', { session: liveSessionRef.current, save: false }).catch(() => {})
+      }
+      liveSessionRef.current = ''
+      liveCaptureRef.current = null
+      setLiveStatus('idle')
+      const message = err.message || String(err)
+      setLiveError(message)
+      flash(`实时字幕没起来：${message}`)
+    }
+  }, [flash, liveStatus, pumpLive])
 
   const loadLibrary = useCallback(async () => {
     const data = await getJSON(`${API}/episodes`)
@@ -1524,6 +1666,17 @@ export default function App() {
             <p className="subline">{subline}</p>
           </div>
           <div className="tools">
+            <button
+              className={`tool-btn ${liveStatus !== 'idle' ? 'is-on' : ''}`}
+              onClick={() => {
+                if (liveStatus === 'idle') startLive()
+                else if (liveStatus === 'listening') stopLive()
+              }}
+              title="实时字幕：听系统正在播放的声音（YouTube、直播、会议都能用）"
+            >
+              <Icon name="wave" size={16} />
+              <span>实时字幕</span>
+            </button>
             <button className={`tool-btn ${jobsOpen ? 'is-on' : ''}`} onClick={() => setJobsOpen((value) => !value)} title="转写任务">
               <Icon name="tasks" size={16} />
               <span>任务{activeJobs.length ? ` ${activeJobs.length}` : ''}</span>
@@ -2129,6 +2282,21 @@ export default function App() {
           onResize={resizeCaption}
           onClose={closeCaption}
           onSeek={seekTo}
+        />
+      ) : null}
+
+      {liveStatus !== 'idle' ? (
+        <LiveCaptionOverlay
+          lines={liveLines}
+          status={liveStatus}
+          error={liveError}
+          device={liveDevice}
+          count={liveLines.length}
+          elapsed={liveStartedAt ? Math.max(0, Math.round((liveNow - liveStartedAt) / 1000)) : 0}
+          fontSize={subtitleSize}
+          onStop={stopLive}
+          onSave={finishLive}
+          onClose={() => finishLive(false)}
         />
       ) : null}
 

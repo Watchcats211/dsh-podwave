@@ -97,6 +97,12 @@ export default function Icon({ name, size = 18 }) {
           <path d="m9.5 6 6 6-6 6" />
         </svg>
       )
+    case 'close':
+      return (
+        <svg {...common}>
+          <path d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      )
     default:
       return null
   }

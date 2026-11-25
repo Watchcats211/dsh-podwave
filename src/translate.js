@@ -416,6 +416,26 @@ async function translateWithLocal(items, target) {
   }
 }
 
+/**
+ * 按当前配置把一批 `{ id, text }` 翻成 target，返回 Map<id, 译文>。
+ *
+ * 实时字幕用它：那边是「来一句翻一句」，不需要 episode、不需要任务队列，
+ * 但「走哪条通道」的规则必须和整集翻译完全一致（否则同一个用户在两个地方
+ * 会用到不同的模型）。provider 显式传入时以传入的为准。
+ */
+export async function translateItems(items, target = 'zh', { provider } = {}) {
+  const list = (items || []).filter((item) => item && item.id !== undefined && String(item.text || '').trim())
+  if (!list.length) return new Map()
+  const config = loadConfig()
+  const useProvider = provider || config.provider
+  if (useProvider === 'api') {
+    if (!config.apiKey) throw Object.assign(new Error('还没有填 DeepSeek API key，去设置里填一个'), { status: 400 })
+    return translateWithApi(list, target, config)
+  }
+  if (useProvider === 'local') return translateWithLocal(list, target)
+  return translateWithDsh(list, target)
+}
+
 function translationKey(episodeId, target) {
   return jobKey({ type: 'translate', episodeId, target })
 }

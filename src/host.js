@@ -77,6 +77,16 @@ import {
   validateTranscript,
 } from './transcribe.js'
 import { closeLiveSpeakers } from './live-speaker.js'
+import {
+  getLiveSession,
+  liveReady,
+  openLiveSession,
+  publicLiveSession,
+  queueLiveSegment,
+  resetLiveSessions,
+  startLiveSession,
+  stopLiveSession,
+} from './live-caption.js'
 import { isLinux, isMac, isWindows } from './platform.js'
 import { listJobs, removeJob, upsertJob, getJob } from './jobs.js'
 import { scan as scanSetup, plan as planSetup, install as installSetup, cancelSetup, setupJob, llamaBinary, verify as verifySetup } from './setup.js'
@@ -290,12 +300,12 @@ async function readJson(req) {
 }
 
 // 封面这类二进制上传不走 JSON，直接收原始字节。
-async function readBinary(req, limit) {
+async function readBinary(req, limit, message = '内容太大') {
   const chunks = []
   let size = 0
   for await (const chunk of req) {
     size += chunk.length
-    if (size > limit) throw Object.assign(new Error('图片太大（最大 8 MB）'), { status: 413 })
+    if (size > limit) throw Object.assign(new Error(message), { status: 413 })
     chunks.push(chunk)
   }
   return Buffer.concat(chunks)
@@ -526,7 +536,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.56',
+      version: '0.11.57',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -556,7 +566,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.56', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.57', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -898,7 +908,7 @@ async function route(ctx, req, res) {
   if (coverMatch && (method === 'POST' || method === 'PUT')) {
     const coverId = decodeURIComponent(coverMatch[1])
     if (!findEpisode(coverId) && !isXyzId(coverId)) return json(res, 404, { error: '单集不存在' })
-    const raw = await readBinary(req, 8 * 1024 * 1024)
+    const raw = await readBinary(req, 8 * 1024 * 1024, '图片太大（最大 8 MB）')
     const ext = imageExtension(raw)
     if (!ext) return json(res, 400, { error: '只支持 JPG / PNG / WebP 图片' })
     await mkdir(COVERS_DIR, { recursive: true })
@@ -1358,6 +1368,61 @@ async function route(ctx, req, res) {
     return json(res, 200, { settings: getState().settings })
   }
 
+  // ── 实时字幕（听系统声音）────────────────────────────────────────────
+  // 音频在前端采集与切句，这里只接「一句一段」的 WAV：识别 → 翻译 → 攒成会话。
+  if (routePath === 'api/live' && method === 'GET') {
+    const config = getSection('live') || {}
+    return json(res, 200, {
+      ...liveReady(),
+      session: publicLiveSession(openLiveSession()),
+      deviceId: config.deviceId || '',
+      deviceLabel: config.deviceLabel || '',
+      saveOnStop: config.saveOnStop !== false,
+      target: (getSection('translate') || {}).target || 'zh',
+    })
+  }
+
+  if (routePath === 'api/live/settings' && method === 'PUT') {
+    const body = await readJson(req)
+    const patch = {}
+    if (typeof body?.deviceId === 'string') patch.deviceId = body.deviceId.slice(0, 300)
+    if (typeof body?.deviceLabel === 'string') patch.deviceLabel = body.deviceLabel.slice(0, 300)
+    if (typeof body?.saveOnStop === 'boolean') patch.saveOnStop = body.saveOnStop
+    const next = updateSection('live', patch)
+    return json(res, 200, next || {})
+  }
+
+  if (routePath === 'api/live/start' && method === 'POST') {
+    const ready = liveReady()
+    if (!ready.ready) {
+      return json(res, 400, { error: '还没有填 DeepSeek API key。实时字幕用云端识别，填一个 key 就能用' })
+    }
+    // 同一时刻只跑一路：两路音频抢同一个覆盖层没有意义，直接把现有会话交回去。
+    const existing = publicLiveSession(openLiveSession())
+    if (existing) return json(res, 200, { session: existing })
+    const body = await readJson(req).catch(() => ({}))
+    const target = String(body?.target || (getSection('translate') || {}).target || 'zh')
+    return json(res, 200, { session: publicLiveSession(startLiveSession({ target })) })
+  }
+
+  if (routePath === 'api/live/segment' && method === 'POST') {
+    const session = getLiveSession(url.searchParams.get('session') || '') || openLiveSession()
+    if (!session) return json(res, 409, { error: '实时字幕还没开始' })
+    const wav = await readBinary(req, 12 * 1024 * 1024, '这段音频太大')
+    const start = Number(url.searchParams.get('start')) || 0
+    const end = Number(url.searchParams.get('end')) || 0
+    const result = await queueLiveSegment(session, wav, { start, end })
+    return json(res, 200, { ...result, session: publicLiveSession(session) })
+  }
+
+  if (routePath === 'api/live/stop' && method === 'POST') {
+    const body = await readJson(req).catch(() => ({}))
+    const session = getLiveSession(body?.session || '') || openLiveSession()
+    if (!session) return json(res, 409, { error: '实时字幕还没开始' })
+    const result = await stopLiveSession(session, { save: body?.save === true })
+    return json(res, 200, result)
+  }
+
   return json(res, 404, { error: '接口不存在' })
 }
 
@@ -1430,6 +1495,8 @@ export default {
     ctx.effect(() => () => {
       stopAll()
       closeLiveSpeakers()
+      // 插件重载/禁用：实时字幕的会话是内存里的，直接丢掉，别让新实例接到一个半死的会话。
+      resetLiveSessions()
     }, 'dsh-podwave: stop transcription workers')
   },
 }

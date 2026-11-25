@@ -85,6 +85,14 @@ export const CONFIG_DEFAULTS = {
     realtime: true,
   },
   import: { mode: 'copy' },
+  // 实时字幕（听系统声音，比如 YouTube、直播、会议）。音频在前端采集，这里只记偏好：
+  // deviceId/deviceLabel 是上次用的输入设备（BlackHole 这类虚拟声卡会作为输入设备出现），
+  // saveOnStop 记「结束时要不要留一份字幕」，用户可以随时在悬浮窗里改。
+  live: {
+    deviceId: '',
+    deviceLabel: '',
+    saveOnStop: true,
+  },
 }
 
 const LEGACY_FILES = [

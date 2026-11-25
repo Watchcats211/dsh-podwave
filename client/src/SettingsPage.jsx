@@ -100,6 +100,12 @@ export default function SettingsPage() {
   const [asrProviderUi, setAsrProviderUi] = useState('api')
   const [realtime, setRealtime] = useState(true)
 
+  // 实时字幕（听系统声音）：设备偏好在宿主里存，这里只做选择与检测。
+  const [liveDeviceId, setLiveDeviceId] = useState('')
+  const [liveDevices, setLiveDevices] = useState([])
+  const [liveSaveOnStop, setLiveSaveOnStop] = useState(true)
+  const [liveNote, setLiveNote] = useState('')
+
   const [provider, setProvider] = useState('api')
   const [apiBase, setApiBase] = useState('https://api.deepseek.com')
   const [apiModel, setApiModel] = useState('deepseek-chat')
@@ -119,7 +125,7 @@ export default function SettingsPage() {
 
   const load = useCallback(async () => {
     try {
-      const [historyData, modelsData, trData, uiData, txData, importData, setupData, updateData] = await Promise.all([
+      const [historyData, modelsData, trData, uiData, txData, importData, setupData, updateData, liveData] = await Promise.all([
         getJSON(`${API}/history`),
         getJSON(`${API}/models`),
         getJSON(`${API}/translate/settings`),
@@ -128,6 +134,7 @@ export default function SettingsPage() {
         getJSON(`${API}/import/settings`),
         getJSON(`${API}/setup`),
         getJSON(`${API}/update`),
+        getJSON(`${API}/live`),
       ])
       setSetup(setupData)
       setUpdateInfo(updateData)
@@ -139,6 +146,14 @@ export default function SettingsPage() {
       setDiarize(txData.diarize !== false)
       setAsrProviderUi(txData.provider || 'api')
       setRealtime(txData.realtime !== false)
+      setLiveDeviceId(liveData?.deviceId || '')
+      setLiveSaveOnStop(liveData?.saveOnStop !== false)
+      if (!liveData?.ready) setLiveNote('还没有 DeepSeek API key，实时字幕要先用云端识别')
+      loadLiveDevices().then((inputs) => {
+        if (inputs.length && !inputs.some((device) => device.label)) {
+          setLiveNote('设备名还是空的，点「检测设备」授权一次就能看到名字')
+        }
+      })
       setHistory(historyData.items || [])
       setHistoryDir(historyData.dir || '')
       setHistoryBytes(Number(historyData.bytes) || 0)
@@ -435,6 +450,47 @@ export default function SettingsPage() {
     }
   }
 
+  // 没授权时 enumerateDevices 只给 deviceId，label 是空的；所以要过一次流才能看到设备名。
+  const loadLiveDevices = async () => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const inputs = devices.filter((device) => device.kind === 'audioinput')
+      setLiveDevices(inputs)
+      return inputs
+    } catch {
+      return []
+    }
+  }
+
+  const probeLiveDevices = async () => {
+    setLiveNote('正在要一次音频权限…')
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      for (const track of stream.getTracks()) track.stop()
+    } catch (err) {
+      setLiveNote(`读不到音频设备：${err.message || err}`)
+      return
+    }
+    const inputs = await loadLiveDevices()
+    setLiveNote(inputs.length ? `找到 ${inputs.length} 个音频输入，选虚拟声卡（BlackHole / VB-Cable）` : '没找到音频输入设备')
+  }
+
+  const saveLive = async () => {
+    setSaving('live')
+    setError('')
+    try {
+      const label = liveDevices.find((device) => device.deviceId === liveDeviceId)?.label || ''
+      const data = await sendJSON(`${API}/live/settings`, 'PUT', { deviceId: liveDeviceId, deviceLabel: label, saveOnStop: liveSaveOnStop })
+      setLiveDeviceId(data.deviceId || '')
+      setLiveSaveOnStop(data.saveOnStop !== false)
+      flash('实时字幕设置已保存')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving('')
+    }
+  }
+
   const asrOptions = allModels.filter((model) => /asr|sensevoice|sherpa/i.test(model.name) && model.ready !== false)
   const translateOptions = allModels.filter((model) => !/asr|sensevoice|sherpa|diarization/i.test(model.name) && model.ready !== false)
   const saveUi = async () => {
@@ -651,6 +707,41 @@ export default function SettingsPage() {
         )}
         </>
         ) : null}
+      </section>
+
+      <section className="settings-card">
+        <h2>实时字幕（系统声音）</h2>
+        <p className="settings-hint">
+          听电脑正在播放的声音（YouTube、直播、会议），一句一句滚出中文，跟播客的进度无关。
+          先在系统里建一个「多输出设备」，把声音同时送到扬声器和虚拟声卡：macOS 用 BlackHole，
+          Windows 用 VB-Cable 或「立体声混音」。识别走 DeepSeek 云端，约 ¥0.4/小时。
+        </p>
+        <div className="settings-fields">
+          <label className="field-row">
+            <span>输入设备</span>
+            <select value={liveDeviceId} onChange={(event) => setLiveDeviceId(event.target.value)}>
+              <option value="">自动选（优先虚拟声卡）</option>
+              {liveDevices.map((device, index) => (
+                <option key={device.deviceId || index} value={device.deviceId}>
+                  {device.label || `音频输入 ${index + 1}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="check-row">
+            <input type="checkbox" checked={liveSaveOnStop} onChange={(event) => setLiveSaveOnStop(event.target.checked)} />
+            <span>停止时问我要不要把这次字幕存下来</span>
+          </label>
+        </div>
+        <div className="settings-actions">
+          <button className="settings-btn" onClick={probeLiveDevices}>
+            检测设备
+          </button>
+          <button className="settings-btn primary" onClick={saveLive} disabled={saving === 'live'}>
+            {saving === 'live' ? '保存中…' : '保存'}
+          </button>
+          <span className="settings-status">{liveNote || (liveDevices.length ? `${liveDevices.length} 个音频输入` : '点「检测设备」读取设备名')}</span>
+        </div>
       </section>
 
       <section className={`settings-card history-card ${historyOpen ? 'is-open' : ''}`}>
