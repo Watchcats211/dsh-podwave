@@ -192,6 +192,9 @@ CI（GitHub Actions）在每次 push / PR 跑 `npm test` 与 `npm run build`。
 - 下载线路可选「自动测速 / 国际（Hugging Face、GitHub）/ 国内（hf-mirror、gh-proxy、ModelScope）」。
 - 「一键安装」会准备 uv 与 Python 虚拟环境、安装 sherpa-onnx（MLX 平台额外装 mlx-qwen3-asr、mlx-lm）、下载 llama.cpp 预编译包和缺失模型，并在完成后列出每项内容与体积。
 - 模型默认保存在项目文件夹的 `models/`（npm 安装为当前工作区的 `models/`，老用户已有 `~/.podwave/models` 会继续沿用），运行时在 `~/.podwave/runtime`；位置可在设置里改，卸载插件不会删除这些文件。
+- 想用 MLX 跑 Hy-MT3（官方还没出 MLX 版，但可以自己转，本机 4bit 约 980 MB）：
+  `~/.podwave/runtime/.venv/bin/python -m mlx_lm convert --hf-path tencent/Hy-MT3-1.8B --q-bits 4 -q --mlx-path models/hy-mt3-1.8b-4bit`，
+  转完在设置页的翻译模型里直接选它。
 - 注意：Hy-MT2 1.25bit GGUF 是自定义量化，主线 llama.cpp 加载会报 `failed to read tensor data`，所以非 MLX 平台用 Q4_K_M；Hy-MT3 官方只放了 Q4_K_M 与 Q8_0。
 
 ### Windows 需要准备什么

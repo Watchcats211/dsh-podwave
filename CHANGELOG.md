@@ -1,3 +1,12 @@
+## 0.11.52 — 2026-11-25
+
+自己转出来的模型也能被认成翻译模型。
+
+- 用 `mlx_lm convert` 把 Hy-MT3 转成本机 4bit（或自己放其它 `hy-mt*` 模型）之后，设置页里
+  以前会显示成「其它 · 982 MB」；现在按名字认成「翻译」，标签写「混元 hy-mt3-1.8b-4bit」。
+- `README` 补了自转 MLX 版的一条命令：
+  `python -m mlx_lm convert --hf-path tencent/Hy-MT3-1.8B --q-bits 4 -q --mlx-path models/hy-mt3-1.8b-4bit`。
+
 ## 0.11.51 — 2026-11-25
 
 填 API 翻译时可以直接从列表里挑模型，不用再猜模型名。

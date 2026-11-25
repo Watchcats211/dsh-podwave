@@ -261,12 +261,27 @@ export function dirBytes(dir) {
 }
 
 // 目录名 → { kind, label }，用于在设置页说清「这个是干什么用的」。
+// 自己转出来的模型（比如用 mlx_lm 把 Hy-MT3 转成 4bit）不在 CATALOG 里，
+// 但同样应该被认成「翻译模型」，否则设置页里会显示成「其它」。
+const LOCAL_MODEL_PATTERNS = [
+  { re: /^hy-mt[\d.]*-[\d.]+b-(4bit|8bit|mlx|gguf)/i, kind: 'translate', label: (name) => `混元 ${name}` },
+  { re: /^qwen3-asr/i, kind: 'asr', label: (name) => `Qwen3-ASR ${name}` },
+  { re: /^sensevoice/i, kind: 'asr', label: (name) => `SenseVoice ${name}` },
+]
+
 function artifactMeta() {
   const map = new Map()
   for (const artifact of Object.values(CATALOG)) {
     if (artifact?.dir && !artifact.dir.includes('..')) map.set(artifact.dir, { kind: artifact.kind, label: artifact.label })
   }
   return map
+}
+
+function localModelMeta(name) {
+  for (const pattern of LOCAL_MODEL_PATTERNS) {
+    if (pattern.re.test(name)) return { kind: pattern.kind, label: pattern.label(name) }
+  }
+  return null
 }
 
 const KIND_LABELS = { asr: '转写', translate: '翻译', diarization: '说话人分离' }
@@ -286,7 +301,7 @@ export function listModels() {
   const meta = artifactMeta()
   return names
     .map((name) => {
-      const info = meta.get(name)
+      const info = meta.get(name) || localModelMeta(name)
       const kind = info?.kind || ''
       const inUse = name === config.asrModel || name === config.translateModel || kind === 'diarization'
       return {
