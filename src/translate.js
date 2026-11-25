@@ -8,7 +8,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { DATA_DIR } from './state.js'
 import { readTranscript, saveTranscript } from './transcribe.js'
 import { loadModelConfig, modelDir } from './models.js'
-import { translateWithLlama } from './llama.js'
+import { buildUserPrompt, translateWithLlama } from './llama.js'
 import { getSection, updateSection } from './config.js'
 import { getJob, jobKey, upsertJob } from './jobs.js'
 import { venvPython } from './platform.js'
@@ -59,6 +59,60 @@ export function saveConfig(patch) {
   return loadConfig()
 }
 
+// 默认翻译通道走 DeepSeek Harness 自己的模型：插件不再单独存 API 地址、密钥和模型名，
+// 用户在 DSH 里选的是哪个模型，这里就用哪个（agentDefaultModel）。只留一个模型选择界面。
+let dshContext = null
+
+export function setDshContext(ctx) {
+  dshContext = ctx || null
+}
+
+// DSH 的网关（opencode-go 之类）按会话路由，缺 sessionId 会直接 400，插件自带一个固定会话号。
+const DSH_SESSION = 'dsh-podwave-translate'
+
+export function dshSelection() {
+  try {
+    const selection = dshContext?.get?.('agentDefaultModel')?.currentSelection?.()
+    if (!selection?.provider || !selection?.model) return null
+    return { provider: selection.provider, model: selection.model, label: `${selection.provider} / ${selection.model}` }
+  } catch {
+    return null
+  }
+}
+
+export async function translateWithDsh(items, target) {
+  const llm = dshContext?.get?.('llm')
+  const route = dshSelection()
+  if (!llm || !route) throw Object.assign(new Error('当前没有可用的 DSH 模型，先在 DSH 里选一个模型'), { status: 503 })
+  const call = await llm.prepareCall({
+    provider: route.provider,
+    model: route.model,
+    maxTokens: Math.min(4096, items.length * 80 + 200),
+  })
+  let text = ''
+  for await (const chunk of call.stream({
+    ...call.config,
+    messages: [
+      { role: 'user', content: [{ type: 'text', text: buildUserPrompt(items, target) }], source: { kind: 'dsh-podwave' } },
+    ],
+    sessionId: DSH_SESSION,
+  })) {
+    if (chunk.type === 'text-delta') text += chunk.text
+    else if (chunk.type === 'finish' && (chunk.reason?.kind === 'error' || chunk.reason?.kind === 'aborted')) {
+      throw new Error(chunk.reason.failure?.message || '模型调用失败')
+    }
+  }
+  // 这里的 parseNumbered 返回 Map<编号(从 1 起), 译文>，和本地 llama 那条路径的数组不同。
+  const parsed = parseNumbered(text, items.length)
+  const result = new Map()
+  items.forEach((line, index) => {
+    const value = parsed.get(index + 1)
+    if (value) result.set(line.id, value)
+  })
+  if (!result.size) throw new Error('模型没有返回可解析的译文')
+  return result
+}
+
 export function currentLocalModel() {
   const name = loadModelConfig().translateModel
   const dir = modelDir(name)
@@ -73,9 +127,14 @@ export function currentLocalModel() {
 export function publicConfig() {
   const config = loadConfig()
   const local = currentLocalModel()
+  const dsh = dshSelection()
   return {
     provider: config.provider,
     target: config.target,
+    dshProvider: dsh?.provider || '',
+    dshModel: dsh?.model || '',
+    dshLabel: dsh?.label || '',
+    dshReady: Boolean(dsh),
     apiBase: config.apiBase,
     apiModel: config.apiModel,
     apiKeyMasked: config.apiKey ? `${config.apiKey.slice(0, 3)}****${config.apiKey.slice(-4)}` : '',
@@ -370,6 +429,9 @@ export async function startTranslation(episodeId, { target = 'zh', provider, for
   const transcript = await readTranscript(episodeId)
   if (!transcript) throw Object.assign(new Error('先转写这一集'), { status: 409 })
   if (useProvider === 'api' && !config.apiKey) throw Object.assign(new Error('还没有填 DeepSeek API key'), { status: 400 })
+  if (useProvider === 'dsh' && !dshSelection()) {
+    throw Object.assign(new Error('当前没有可用的 DSH 模型，先在 DSH 里选一个模型'), { status: 503 })
+  }
   if (useProvider === 'local' && !currentLocalModel().ready) {
     throw Object.assign(new Error('本地翻译模型还没下载好'), { status: 503 })
   }
@@ -412,7 +474,9 @@ export async function startTranslation(episodeId, { target = 'zh', provider, for
     }
     try {
       const items = pending.map((line) => ({ id: line.id, text: line.text }))
-      const mapping = useProvider === 'api'
+      const mapping = useProvider === 'dsh'
+        ? await translateWithDsh(items, target)
+        : useProvider === 'api'
         ? await translateWithApi(items, target, config, {
             onBatch: async (parsed, batch) => {
               const translated = new Map()
@@ -445,11 +509,19 @@ export async function translateLine(episodeId, lineId, { target = 'zh', provider
   const line = transcript.lines.find((item) => item.id === lineId)
   if (!line) throw Object.assign(new Error('找不到这一行'), { status: 404 })
   if (useProvider === 'api' && !config.apiKey) throw Object.assign(new Error('还没有填 DeepSeek API key'), { status: 400 })
+  if (useProvider === 'dsh' && !dshSelection()) {
+    throw Object.assign(new Error('当前没有可用的 DSH 模型，先在 DSH 里选一个模型'), { status: 503 })
+  }
   if (useProvider === 'local' && !currentLocalModel().ready) {
     throw Object.assign(new Error('本地翻译模型还没下载好'), { status: 503 })
   }
   const items = [{ id: line.id, text: line.text }]
-  const mapping = useProvider === 'api' ? await translateWithApi(items, target, config) : await translateWithLocal(items, target)
+  const mapping =
+    useProvider === 'dsh'
+      ? await translateWithDsh(items, target)
+      : useProvider === 'api'
+        ? await translateWithApi(items, target, config)
+        : await translateWithLocal(items, target)
   const text = mapping?.get?.(line.id)
   if (!text) throw Object.assign(new Error('这一行没有拿到译文，可以稍后再试'), { status: 502 })
   // 重新读一遍再写，避免把翻译期间用户手动编辑的内容盖掉。

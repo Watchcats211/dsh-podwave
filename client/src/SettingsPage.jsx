@@ -311,11 +311,25 @@ export default function SettingsPage() {
     }
   }
 
+  // 翻译引擎选了就存，不用再点一次保存。
+  const changeProvider = async (next) => {
+    const before = provider
+    setProvider(next)
+    try {
+      const data = await sendJSON(`${API}/translate/settings`, 'PUT', { provider: next })
+      setTrConfig(data)
+    } catch (err) {
+      setProvider(before)
+      setError(err.message)
+    }
+  }
+
   const saveApi = async () => {
     setSaving('api')
     setError('')
     try {
-      const patch = { provider, apiBase, apiModel }
+      const patch = { apiBase, apiModel }
+      if (provider === 'api') patch.provider = 'api'
       if (apiKey.trim()) patch.apiKey = apiKey.trim()
       const next = await sendJSON(`${API}/translate/settings`, 'PUT', patch)
       setTrConfig(next)
@@ -676,8 +690,8 @@ export default function SettingsPage() {
           {asrProviderUi === 'api' ? (
             <p className="settings-status">
               {transcribeInfo?.api?.hasKey
-                ? '用下面 DeepSeek API 里那把 key，已经在用了，可以直接转写'
-                : '还没有 DeepSeek key —— 去下面「DeepSeek API」卡片填一次，转写和翻译都能用'}
+                ? '用「翻译」卡片里那把 API key，已经在用了，可以直接转写'
+                : '还没有 API key —— 去下面「翻译」卡片填一次，转写就能用'}
             </p>
           ) : (
             <p className="settings-status">
@@ -748,71 +762,86 @@ export default function SettingsPage() {
         </div></section>
 
       <section className="settings-card">
-        <h2>DeepSeek API（转写与翻译共用）</h2>
-        <p className="settings-hint">转写和翻译用同一把 key，填一次就够。字幕翻译也可以改用本机模型，那时用不着 key。</p>
+        <h2>翻译</h2>
+        <p className="settings-hint">
+          默认用 DSH 里正在用的那个模型翻译，不用在这里再填一遍密钥和模型名。想离线就切成本地模型。
+        </p>
         <div className="settings-fields">
           <label className="field-row">
-            <span>翻译引擎</span>
-            <select value={provider} onChange={(event) => setProvider(event.target.value)}>
-              <option value="api">DeepSeek API</option>
-              <option value="local">本地模型</option>
+            <span>翻译用</span>
+            <select value={provider} onChange={(event) => changeProvider(event.target.value)}>
+              <option value="dsh">DSH 当前模型</option>
+              <option value="local">本地模型（离线）</option>
+              <option value="api">自定义 API</option>
             </select>
           </label>
-          <label className="field-row">
-            <span>API 地址</span>
-            <input value={apiBase} onChange={(event) => setApiBase(event.target.value)} placeholder="https://api.deepseek.com" />
-          </label>
-          <div className="field-row">
-            <span>API 模型</span>
-            {manualModel || !apiModels.length ? (
-              <input value={apiModel} onChange={(event) => setApiModel(event.target.value)} placeholder="deepseek-chat" />
-            ) : (
-              <select
-                value={apiModels.includes(apiModel) ? apiModel : apiModel ? '__saved' : ''}
-                onChange={(event) => setApiModel(event.target.value)}
-              >
-                {!apiModels.includes(apiModel) && apiModel && <option value="__saved">{apiModel}（当前，列表里没有）</option>}
-                {apiModels.map((name) => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
-            )}
-            <button
-              type="button"
-              className="settings-btn is-mini"
-              onClick={() => refreshApiModels()}
-              disabled={modelListBusy}
-            >
-              {modelListBusy ? '读取中…' : '读取模型列表'}
-            </button>
-          </div>
-          <div className="settings-actions">
-            <span className="settings-status">
-              {modelListNote || (apiModels.length ? `${apiModels.length} 个可用模型` : '还没读到模型列表，点「读取模型列表」')}
-            </span>
-            <button
-              type="button"
-              className="settings-btn is-mini"
-              onClick={() => setManualModel((value) => !value)}
-            >
-              {manualModel || !apiModels.length ? '改用列表选择' : '手动输入模型名'}
-            </button>
-          </div>
-          <label className="field-row">
-            <span>API Key</span>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-              placeholder={trConfig?.hasApiKey ? `已保存 ${trConfig.apiKeyMasked}（留空不修改）` : 'sk-...'}
-            />
-          </label>
+          {provider === 'dsh' && (
+            <div className="field-row">
+              <span>当前模型</span>
+              <span className="settings-status">
+                {trConfig?.dshReady ? trConfig.dshLabel : 'DSH 里还没有选模型'}
+              </span>
+            </div>
+          )}
+          {provider === 'local' && (
+            <div className="field-row">
+              <span>本地模型</span>
+              <span className="settings-status">
+                {trConfig?.localReady ? `${trConfig.localModel}（已就绪）` : '还没下载本地翻译模型'}
+              </span>
+            </div>
+          )}
+          {(provider === 'api' || asrProviderUi === 'api') && (
+            <>
+              <label className="field-row">
+                <span>API 地址</span>
+                <input value={apiBase} onChange={(event) => setApiBase(event.target.value)} placeholder="https://api.deepseek.com" />
+              </label>
+              <div className="field-row">
+                <span>API 模型</span>
+                {manualModel || !apiModels.length ? (
+                  <input value={apiModel} onChange={(event) => setApiModel(event.target.value)} placeholder="deepseek-chat" />
+                ) : (
+                  <select
+                    value={apiModels.includes(apiModel) ? apiModel : apiModel ? '__saved' : ''}
+                    onChange={(event) => setApiModel(event.target.value)}
+                  >
+                    {!apiModels.includes(apiModel) && apiModel && <option value="__saved">{apiModel}（当前，列表里没有）</option>}
+                    {apiModels.map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  type="button"
+                  className="settings-btn is-mini"
+                  onClick={() => refreshApiModels()}
+                  disabled={modelListBusy}
+                >
+                  {modelListBusy ? '读取中…' : '读取模型列表'}
+                </button>
+              </div>
+              <label className="field-row">
+                <span>API Key</span>
+                <input
+                  type="password"
+                  value={apiKey}
+                  onChange={(event) => setApiKey(event.target.value)}
+                  placeholder={trConfig?.hasApiKey ? `已保存 ${trConfig.apiKeyMasked}（留空不修改）` : 'sk-...'}
+                />
+              </label>
+            </>
+          )}
         </div>
         <div className="settings-actions">
-          <button className="settings-btn" onClick={saveApi} disabled={saving === 'api'}>
-            {saving === 'api' ? '保存中…' : '保存 API 设置'}
-          </button>
-          <span className="settings-status">{trConfig?.hasApiKey ? 'API Key 已保存' : '尚未填写 API Key'}</span>
+          {(provider === 'api' || asrProviderUi === 'api') && (
+            <button className="settings-btn" onClick={saveApi} disabled={saving === 'api'}>
+              {saving === 'api' ? '保存中…' : '保存 API 设置'}
+            </button>
+          )}
+          <span className="settings-status">
+            {provider === 'dsh' ? '跟随 DSH 的模型选择，换模型在 DSH 设置里改' : provider === 'local' ? '不联网、不花钱' : '走自定义地址与密钥'}
+          </span>
         </div>
       </section>
 

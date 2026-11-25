@@ -82,7 +82,7 @@ import { listJobs, removeJob, upsertJob, getJob } from './jobs.js'
 import { scan as scanSetup, plan as planSetup, install as installSetup, cancelSetup, setupJob, llamaBinary, verify as verifySetup } from './setup.js'
 import { getSection, updateSection } from './config.js'
 import { diarizeInfo } from './diarize.js'
-import { getTranslationState, listApiModels, publicConfig, saveConfig, startTranslation, translateLine } from './translate.js'
+import { getTranslationState, listApiModels, publicConfig, saveConfig, setDshContext, startTranslation, translateLine } from './translate.js'
 import { listModels, loadModelConfig, modelsDir, modelsMoveState, modelsSummary, removeModel, saveModelConfig, setModelsDir, setWorkspaceRoots, getWorkspaceRoot } from './models.js'
 import { findEpisode, getProviderById, listAllEpisodes } from './providers.js'
 // 设置页每次打开都会拉 /api/update；漏了这个 import 会让整页 500（v0.11.10 起就漏了）。
@@ -526,7 +526,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.52',
+      version: '0.11.53',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -556,7 +556,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.52', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.53', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -1279,7 +1279,7 @@ async function route(ctx, req, res) {
     if (method === 'PUT') {
       const body = await readJson(req)
       const patch = {}
-      if (body?.provider === 'api' || body?.provider === 'local') patch.provider = body.provider
+      if (body?.provider === 'dsh' || body?.provider === 'api' || body?.provider === 'local') patch.provider = body.provider
       if (body?.target === 'zh' || body?.target === 'en') patch.target = body.target
       if (typeof body?.apiKey === 'string') patch.apiKey = body.apiKey.trim()
       if (typeof body?.apiBase === 'string' && body.apiBase.trim()) patch.apiBase = body.apiBase.trim()
@@ -1364,6 +1364,8 @@ export default {
   apply(ctx) {
     const ready = boot()
     startMediaServer()
+    // 翻译默认走 DSH 自己的模型，把 ctx 交给 translate.js 去读 llm / agentDefaultModel。
+    setDshContext(ctx)
     // 记住「当前工作区」：发布版靠它决定模型默认落在哪儿。
     // 优先认会话真正开在的目录（session/created 带 cwd），
     // 拿不到就退化成「最近更新的工作区」。

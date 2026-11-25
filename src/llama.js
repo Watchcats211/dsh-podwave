@@ -111,7 +111,7 @@ idleTimer.unref?.()
 // 混元 Hy-MT 系列（MT2 / MT3）官方推荐的就是「将以下文本翻译为X，注意只需要输出翻译后的结果，
 // 不要额外解释」这一句中英指令，而且模型没有默认 system prompt。所以这里不发 system 消息，
 // 把编号与顺序的要求并进同一句人话里——官方模板 + 最少改动，实测比自拟的英文 system+user 两段式更稳。
-function buildUserPrompt(items, target) {
+export function buildUserPrompt(items, target) {
   const numbered = items.map((item, index) => `${index + 1}. ${item.text}`).join('\n')
   const language = TARGET_NAMES[target] || target
   return [

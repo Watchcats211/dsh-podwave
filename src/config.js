@@ -57,8 +57,10 @@ export const CONFIG_DEFAULTS = {
     key: '',
     model: 'deepseek-chat',
   },
+  // 默认用 DeepSeek Harness 自己的模型（插件不另存密钥/地址/模型名），
+  // 想离线时在设置页切到 local，或用 api 走自定义中转。
   translate: {
-    provider: 'api',
+    provider: 'dsh',
     target: 'zh',
   },
   // 默认模型绝不能写死 MLX：那套模型 platform 是 darwin-arm64，Windows 装不了。
