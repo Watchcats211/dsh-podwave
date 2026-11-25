@@ -10,6 +10,11 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), 'podwave-moss-'))
 process.env.HOME = home
 process.env.PODWAVE_DATA_DIR = path.join(home, '.podwave')
 
+// Windows 上没有 /bin/sh，没法用一个 shell 脚本冒充 python 去跑 moss_server.py。
+// 下面 3 个用例验证的是「引擎识别 / 参数拼装 / 输出解析」这段胶水，
+// 它本身跟平台无关（路径相关部分由 windows-compat.test.mjs 覆盖），所以 Windows 上跳过。
+const onWindows = process.platform === 'win32'
+
 const venv = path.join(home, 'venv')
 fs.mkdirSync(path.join(venv, 'bin'), { recursive: true })
 const fake = path.join(home, 'fake-moss.mjs')
@@ -42,9 +47,16 @@ process.stdout.write(JSON.stringify({ type: 'done', index: 0 }) + '\\n')
 `,
   'utf8',
 )
-const shim = path.join(venv, 'bin', 'python')
-fs.writeFileSync(shim, `#!/bin/sh\nexec "${process.execPath}" "${fake}" "$@"\n`, 'utf8')
-fs.chmodSync(shim, 0o755)
+if (onWindows) {
+  // Windows 上 venv 的解释器在 Scripts\python.exe。这里只要一个存在的占位文件就够
+  // （第一个用例只查「装好了没有」），真正 spawn 的两个用例在 Windows 上跳过。
+  fs.mkdirSync(path.join(venv, 'Scripts'), { recursive: true })
+  fs.writeFileSync(path.join(venv, 'Scripts', 'python.exe'), '', 'utf8')
+} else {
+  const shim = path.join(venv, 'bin', 'python')
+  fs.writeFileSync(shim, `#!/bin/sh\nexec "${process.execPath}" "${fake}" "$@"\n`, 'utf8')
+  fs.chmodSync(shim, 0o755)
+}
 process.env.PODWAVE_RUNTIME_VENV = venv
 
 const models = path.join(home, 'models')
@@ -84,10 +96,11 @@ test('moss model is recognised with its own engine', () => {
   const model = transcribe.currentAsrModel()
   assert.equal(model.engine, 'moss')
   assert.equal(model.ready, true)
-  assert.match(transcribe.runtimeInfo().cli, /venv\/bin\/python$/)
+  // venv 的解释器路径两个平台不一样：posix 是 bin/python，Windows 是 Scripts\\python.exe。
+  assert.match(transcribe.runtimeInfo().cli, onWindows ? /Scripts[\\/]python\.exe$/ : /venv\/bin\/python$/)
 })
 
-test('moss output keeps model sentences and speaker labels', async () => {
+test('moss output keeps model sentences and speaker labels', { skip: onWindows }, async () => {
   process.env.FAKE_MOSS = 'ok'
   const item = episode('mosswork')
   await transcribe.startTranscription(item, { force: true })
@@ -102,7 +115,7 @@ test('moss output keeps model sentences and speaker labels', async () => {
   assert.equal(transcript.model, 'moss-transcribe-diarize')
 })
 
-test('moss failure surfaces stderr in the job error', async () => {
+test('moss failure surfaces stderr in the job error', { skip: onWindows }, async () => {
   process.env.FAKE_MOSS = 'fail'
   const item = episode('mossfail')
   await transcribe.startTranscription(item, { force: true })

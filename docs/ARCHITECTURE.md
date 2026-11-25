@@ -42,6 +42,7 @@ library.js（媒体库）  state.js（播放进度/文件夹）
 | `config.json` | 统一配置：`ui`（侧栏开关/收起）、`translate`（API 与目标语言）、`models`（已选 ASR / 翻译模型）、`transcribe`（热词） |
 | `jobs.json` | 转写/翻译任务记录（最多 80 条，重启时未完成标 `interrupted`） |
 | `transcripts/<id>.json` | 字幕 v2（见下）；旧格式迁移后原文件保留 `<id>.json.v1.bak` |
+| `live/<id>.json|.srt|.md` | 实时字幕（听系统声音）保存下来的会话；不保存则不产生文件 |
 | `imports/<batch>/` | 拖拽上传进来的音频 |
 | `models/<name>/` | 本地模型目录（ASR、翻译） |
 | `runtime/.venv/` | MLX 运行环境（uv 创建的 Python 虚拟环境） |
@@ -122,6 +123,8 @@ library.js（媒体库）  state.js（播放进度/文件夹）
 | POST | `/episodes/:id/diarize` | 对已有字幕补跑说话人分离 |
 | PUT/POST | `/episodes/:id/transcript/lines/:lineId` 及 `/split` `/merge` `/validate` | 字幕行编辑 |
 | GET/DELETE/POST/GET | `/episodes/:id/translate` · `/translate/settings` | 翻译与配置 |
+| GET/PUT | `/live` · `/live/settings` | 实时字幕：状态（有没有 key、当前会话）/ 记设备偏好 |
+| POST | `/live/start` · `/live/segment` · `/live/stop` | 开始听 / 送一句 WAV（二进制）/ 结束（可选保存） |
 | GET | `/episodes/:id/transcript/export?format=srt\|md` | 导出字幕 |
 | GET/PUT | `/models` | 模型列表 / 选择 |
 | GET | `/history` | 已完成的转写/翻译 |
