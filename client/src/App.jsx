@@ -569,7 +569,8 @@ export default function App() {
       let deviceId = info.deviceId || ''
       let label = info.deviceLabel || ''
       if (!deviceId) {
-        const devices = await listInputDevices()
+        // 读不到设备列表不算致命（有些环境没有 enumerateDevices）：照样让系统给默认输入设备。
+        const devices = await listInputDevices().catch(() => [])
         const picked = pickCaptureDevice(devices)
         if (picked) {
           deviceId = picked.deviceId

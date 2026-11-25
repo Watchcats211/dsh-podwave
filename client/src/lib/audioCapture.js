@@ -30,6 +30,9 @@ registerProcessor('podwave-tap', PodwaveTap)
 
 /** 列出所有音频输入设备（没授权时 label 是空的，只有 deviceId）。 */
 export async function listInputDevices() {
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    throw new Error('这个环境读不到音频设备列表（需要安全上下文）')
+  }
   const devices = await navigator.mediaDevices.enumerateDevices()
   return devices.filter((device) => device.kind === 'audioinput')
 }
