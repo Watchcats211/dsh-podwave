@@ -55,6 +55,8 @@ export function saveConfig(patch) {
     if (api.key !== undefined) mirror.apiKey = api.key
     updateSection('translate', mirror)
   }
+  // 用户亲手选了引擎就记一笔，别让「老配置迁移」下次又改回去。
+  if (typeof rest.provider === 'string') rest.providerPinned = true
   if (Object.keys(rest).length) updateSection('translate', rest)
   return loadConfig()
 }

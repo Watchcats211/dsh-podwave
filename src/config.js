@@ -59,8 +59,10 @@ export const CONFIG_DEFAULTS = {
   },
   // 默认用 DeepSeek Harness 自己的模型（插件不另存密钥/地址/模型名），
   // 想离线时在设置页切到 local，或用 api 走自定义中转。
+  // providerPinned：用户亲手选过引擎，就别再被下面的老配置迁移覆盖。
   translate: {
     provider: 'dsh',
+    providerPinned: false,
     target: 'zh',
   },
   // 默认模型绝不能写死 MLX：那套模型 platform 是 darwin-arm64，Windows 装不了。
@@ -167,6 +169,14 @@ export function loadConfig() {
   if (cache && cacheKey === key) return clone(cache)
   const stored = key === 'missing' ? null : readJson(CONFIG_PATH)
   cache = stored ? merge(clone(CONFIG_DEFAULTS), stored) : migrateLegacy()
+  // 0.11.53 起翻译默认跟随 DSH 的模型。老配置里写死的 provider: 'api'（多半还配着已经
+  // 下线的 deepseek-chat）自动改成 dsh；用户亲手选过引擎的（providerPinned）不动。
+  if (cache.translate?.provider === 'api' && !cache.translate.providerPinned) {
+    cache.translate.provider = 'dsh'
+    try {
+      writeConfig(cache)
+    } catch {}
+  }
   if (migrateApiSection(stored, cache)) {
     // 迁移只做一次：写回失败也不影响本次读取，下次再试。
     try {
