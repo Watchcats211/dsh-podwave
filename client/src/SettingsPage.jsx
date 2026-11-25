@@ -74,6 +74,8 @@ export default function SettingsPage() {
   const [historyDir, setHistoryDir] = useState('')
   const [historyBytes, setHistoryBytes] = useState(0)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [envOpen, setEnvOpen] = useState(false)
+  const [modelsOpen, setModelsOpen] = useState(false)
   const [models, setModels] = useState([])
   const [storage, setStorage] = useState(null)
   const [dirDraft, setDirDraft] = useState('')
@@ -141,6 +143,8 @@ export default function SettingsPage() {
       setHistoryDir(historyData.dir || '')
       setHistoryBytes(Number(historyData.bytes) || 0)
       setHistoryOpen(uiData?.historyOpen === true)
+      setEnvOpen(uiData?.envOpen === true)
+      setModelsOpen(uiData?.modelsOpen === true)
       setModels(modelsData.models || [])
       setStorage(modelsData.storage || null)
       setDirDraft(modelsData.storage?.dir || '')
@@ -219,6 +223,18 @@ export default function SettingsPage() {
     setHistoryOpen(next)
     sendJSON(`${API}/ui-settings`, 'PUT', { historyOpen: next }).catch(() => {})
   }
+
+  // 环境与模型、模型两张诊断卡同理：云端模式下默认收起，别一进设置页就是一屏检查项。
+  const toggleCard = (key, value, setValue) => {
+    const next = !value
+    setValue(next)
+    sendJSON(`${API}/ui-settings`, 'PUT', { [key]: next }).catch(() => {})
+  }
+
+  // 收起的卡片要在标题行一眼说清状态：环境还差几项、本地模型占多大。
+  const setupMissing = Array.isArray(setup?.missing) ? setup.missing.length : 0
+  const envBadge = !setup ? '正在扫描…' : setupMissing ? `${setupMissing} 项待安装` : '全部就绪'
+  const modelsBadge = storage ? `${storage.items?.length || 0} 个 · ${fmtBytes(storage.totalBytes)}` : ''
 
   // 本地模型是「按需装」：只有用户主动切到本地、或点这个按钮，才去下 python 运行时和 2.4 GB 模型。
   const openHistoryDir = async () => {
@@ -522,8 +538,20 @@ export default function SettingsPage() {
       {message ? <div className="settings-message">{message}</div> : null}
 
 
-      <section className="settings-card">
-        <h2>环境与模型</h2>
+      <section className={`settings-card collapsible ${envOpen ? 'is-open' : ''}`}>
+        <button
+          type="button"
+          className="card-head"
+          onClick={() => toggleCard('envOpen', envOpen, setEnvOpen)}
+          aria-expanded={envOpen}
+          title={envOpen ? '收起' : '展开'}
+        >
+          <h2>环境与模型</h2>
+          <span className="card-badge">{envBadge}</span>
+          <span className="card-caret" aria-hidden="true">▾</span>
+        </button>
+        {envOpen ? (
+        <>
         <p className="settings-hint">换电脑或换系统时，先扫描本机缺什么；模型下载支持国际与国内两条线路，安装完会列出下载内容与体积。</p>
         {setup ? (
           <>
@@ -621,6 +649,8 @@ export default function SettingsPage() {
         ) : (
           <p className="settings-empty">正在扫描本机…</p>
         )}
+        </>
+        ) : null}
       </section>
 
       <section className={`settings-card history-card ${historyOpen ? 'is-open' : ''}`}>
@@ -864,8 +894,20 @@ export default function SettingsPage() {
         </div>
       </section>
 
-      <section className="settings-card">
-        <h2>模型</h2>
+      <section className={`settings-card collapsible ${modelsOpen ? 'is-open' : ''}`}>
+        <button
+          type="button"
+          className="card-head"
+          onClick={() => toggleCard('modelsOpen', modelsOpen, setModelsOpen)}
+          aria-expanded={modelsOpen}
+          title={modelsOpen ? '收起' : '展开'}
+        >
+          <h2>模型</h2>
+          <span className="card-badge">{modelsBadge}</span>
+          <span className="card-caret" aria-hidden="true">▾</span>
+        </button>
+        {modelsOpen ? (
+        <>
         <p className="settings-hint">
           {storageHint(storage)}，可以改成任意目录（比如外置硬盘），改完会把已有模型一起搬过去。
         </p>
@@ -957,6 +999,8 @@ export default function SettingsPage() {
             {saving === 'models' ? '保存中…' : '保存模型选择'}
           </button>
         </div>
+        </>
+        ) : null}
       </section>
 
       <section className="settings-card">

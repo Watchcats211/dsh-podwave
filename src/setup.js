@@ -365,6 +365,11 @@ export function scan() {
   const pythonOk = fs.existsSync(venvPython())
   const runtimeOk = runtimeReady(platform)
   const llama = engine.id === 'mlx' ? null : llamaBinary(platform)
+  // 云端模式（转写走 DeepSeek、翻译跟随 DSH）下，本地运行时和本地模型都只是可选项：
+  // 不该在「环境与模型」里亮红灯，也不该让人以为非得装 2.4 GB 模型才能用。
+  const cloudAsr = asrProvider() === 'api'
+  const cloudTranslate = String(getSection('translate')?.provider || 'api') !== 'local'
+  const cloudOnly = cloudAsr && cloudTranslate
   const components = []
   const push = (item) => components.push(item)
 
@@ -382,20 +387,21 @@ export function scan() {
     id: 'runtime',
     kind: 'runtime',
     label: platform.mlxCapable ? 'Python 运行时（sherpa-onnx + MLX）' : 'Python 运行时（sherpa-onnx）',
-    required: true,
+    required: !cloudOnly,
     ready: runtimeOk,
-    detail: pythonOk ? venvPython() : '未安装',
+    detail: pythonOk ? venvPython() : cloudOnly ? '未安装；只用云端时可以不管' : '未安装',
     bytes: 0,
   })
   for (const artifact of [artifacts.asr, artifacts.translate, artifacts.diarization]) {
     const state = modelState(artifact)
+    const covered = artifact.kind === 'asr' ? cloudAsr : artifact.kind === 'translate' ? cloudTranslate : false
     push({
       id: artifact.kind,
       kind: 'model',
       label: artifact.label,
-      required: artifact.kind !== 'diarization',
+      required: artifact.kind !== 'diarization' && !covered,
       ready: state.ready,
-      detail: state.ready ? state.dir : artifact.note,
+      detail: state.ready ? state.dir : covered ? '走云端，不需要下载' : artifact.note,
       bytes: artifact.approxBytes || 0,
       artifactId: artifact.id,
     })
@@ -406,9 +412,9 @@ export function scan() {
       id: 'llama',
       kind: 'engine',
       label: 'llama.cpp 运行时',
-      required: true,
+      required: !cloudTranslate,
       ready: Boolean(llama),
-      detail: llama || (asset ? `${asset.name}（安装时下载）` : '该平台暂无预编译包'),
+      detail: llama || (asset ? `${asset.name}（安装时下载）` : cloudTranslate ? '本地翻译才需要' : '该平台暂无可用的预编译包'),
       bytes: 0,
     })
   }

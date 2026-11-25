@@ -526,7 +526,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.54',
+      version: '0.11.55',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -556,7 +556,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.54', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.55', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -1247,6 +1247,8 @@ async function route(ctx, req, res) {
       if (Number.isFinite(Number(body?.subtitleSize))) patch.subtitleSize = Math.max(12, Math.min(42, Math.round(Number(body.subtitleSize))))
       if (typeof body?.captionOpen === 'boolean') patch.captionOpen = body.captionOpen
       if (typeof body?.historyOpen === 'boolean') patch.historyOpen = body.historyOpen
+      if (typeof body?.envOpen === 'boolean') patch.envOpen = body.envOpen
+      if (typeof body?.modelsOpen === 'boolean') patch.modelsOpen = body.modelsOpen
       // 悬浮字幕的位置：传 null / 空串表示回到默认位置（注意 Number(null) 是 0，不能直接判有限）。
       const coordinate = (value) => {
         if (value === null || value === undefined || value === '') return null

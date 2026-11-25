@@ -53,6 +53,8 @@ test('host: ui 设置里能存字幕字号和悬浮字幕的位置', async () =>
     assert.equal(initial.transcriptH, null, '字幕面板默认高度')
     assert.equal(initial.episodeLeftW, null, '详情页封面栏默认宽度')
     assert.equal(initial.historyOpen, false, '历史记录默认收起')
+    assert.equal(initial.envOpen, false, '环境与模型默认收起')
+    assert.equal(initial.modelsOpen, false, '模型卡片默认收起')
 
     assert.equal((await put({ subtitleSize: 22 })).status, 200)
     let body = await (await fetch(`${base}/podwave/api/ui-settings`)).json()
@@ -141,6 +143,17 @@ test('host: ui 设置里能存字幕字号和悬浮字幕的位置', async () =>
     await put({ historyOpen: false })
     body = await (await fetch(`${base}/podwave/api/ui-settings`)).json()
     assert.equal(body.historyOpen, false)
+
+    // 云端模式下这两张诊断卡也不该占版面：收起状态同样要能存能读
+    await put({ envOpen: true, modelsOpen: true })
+    body = await (await fetch(`${base}/podwave/api/ui-settings`)).json()
+    assert.equal(body.envOpen, true)
+    assert.equal(body.modelsOpen, true)
+    assert.equal(body.historyOpen, false, '展开环境卡不该影响历史记录')
+    await put({ envOpen: false, modelsOpen: false })
+    body = await (await fetch(`${base}/podwave/api/ui-settings`)).json()
+    assert.equal(body.envOpen, false)
+    assert.equal(body.modelsOpen, false)
 
     // 空 patch 要报错，而不是静默成功
     assert.equal((await put({})).status, 400)
