@@ -102,6 +102,11 @@ export default function SettingsPage() {
   const [apiBase, setApiBase] = useState('https://api.deepseek.com')
   const [apiModel, setApiModel] = useState('deepseek-chat')
   const [apiKey, setApiKey] = useState('')
+  // 这个 API 地址下能调用的模型列表（GET /models），空数组表示还没取到。
+  const [apiModels, setApiModels] = useState([])
+  const [modelListBusy, setModelListBusy] = useState(false)
+  const [modelListNote, setModelListNote] = useState('')
+  const [manualModel, setManualModel] = useState(false)
 
   const [asrModel, setAsrModel] = useState('')
   const [translateModel, setTranslateModel] = useState('')
@@ -147,6 +152,14 @@ export default function SettingsPage() {
       setProvider(trData.provider || 'api')
       setApiBase(trData.apiBase || 'https://api.deepseek.com')
       setApiModel(trData.apiModel || 'deepseek-chat')
+      // 打开设置页就顺手问一次有哪些模型，省得用户先点刷新。
+      sendJSON(`${API}/translate/models`, 'POST', { base: trData.apiBase, key: undefined })
+        .then((data) => {
+          const list = Array.isArray(data?.models) ? data.models : []
+          setApiModels(list)
+          setModelListNote(list.length ? `这个地址下有 ${list.length} 个模型` : '')
+        })
+        .catch(() => {})
       setApiKey('')
       setError('')
     } catch (err) {
@@ -275,6 +288,26 @@ export default function SettingsPage() {
       flash('诊断信息已复制，可直接粘贴给我')
     } catch (error) {
       flash(error.message || '复制失败')
+    }
+  }
+
+  const refreshApiModels = async ({ silent = false } = {}) => {
+    if (!silent) setModelListBusy(true)
+    if (!silent) setModelListNote('')
+    try {
+      const data = await sendJSON(`${API}/translate/models`, 'POST', {
+        base: apiBase,
+        key: apiKey.trim() || undefined,
+      })
+      const list = Array.isArray(data?.models) ? data.models : []
+      setApiModels(list)
+      if (!silent) setModelListNote(list.length ? `这个地址下有 ${list.length} 个模型` : '这个地址没有返回可用模型')
+      return list
+    } catch (error) {
+      if (!silent) setModelListNote(error.message || '列表获取失败')
+      return []
+    } finally {
+      if (!silent) setModelListBusy(false)
     }
   }
 
@@ -729,10 +762,42 @@ export default function SettingsPage() {
             <span>API 地址</span>
             <input value={apiBase} onChange={(event) => setApiBase(event.target.value)} placeholder="https://api.deepseek.com" />
           </label>
-          <label className="field-row">
+          <div className="field-row">
             <span>API 模型</span>
-            <input value={apiModel} onChange={(event) => setApiModel(event.target.value)} placeholder="deepseek-chat" />
-          </label>
+            {manualModel || !apiModels.length ? (
+              <input value={apiModel} onChange={(event) => setApiModel(event.target.value)} placeholder="deepseek-chat" />
+            ) : (
+              <select
+                value={apiModels.includes(apiModel) ? apiModel : apiModel ? '__saved' : ''}
+                onChange={(event) => setApiModel(event.target.value)}
+              >
+                {!apiModels.includes(apiModel) && apiModel && <option value="__saved">{apiModel}（当前，列表里没有）</option>}
+                {apiModels.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            )}
+            <button
+              type="button"
+              className="settings-btn is-mini"
+              onClick={() => refreshApiModels()}
+              disabled={modelListBusy}
+            >
+              {modelListBusy ? '读取中…' : '读取模型列表'}
+            </button>
+          </div>
+          <div className="settings-actions">
+            <span className="settings-status">
+              {modelListNote || (apiModels.length ? `${apiModels.length} 个可用模型` : '还没读到模型列表，点「读取模型列表」')}
+            </span>
+            <button
+              type="button"
+              className="settings-btn is-mini"
+              onClick={() => setManualModel((value) => !value)}
+            >
+              {manualModel || !apiModels.length ? '改用列表选择' : '手动输入模型名'}
+            </button>
+          </div>
           <label className="field-row">
             <span>API Key</span>
             <input

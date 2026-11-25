@@ -85,6 +85,50 @@ export function publicConfig() {
   }
 }
 
+// 列出当前 API 地址下能调用的模型（OpenAI 兼容的 GET /models）。
+// 用户换了第三方中转或本地 ollama / vLLM 时，不想自己猜模型名；也允许留空 key（本机服务常常不要）。
+export async function listApiModels({ base, key } = {}) {
+  const config = loadConfig()
+  // undefined 才算「没传，用已保存的」；显式传空串表示用户把这个框清空了，要报错而不是偷偷回落到默认地址。
+  const rawBase = base === undefined ? config.apiBase : base
+  const rawKey = key === undefined ? config.apiKey : key
+  const apiBase = String(rawBase || '').trim().replace(/\/+$/, '')
+  const apiKey = String(rawKey || '').trim()
+  if (!apiBase) throw Object.assign(new Error('还没有填 API 地址'), { status: 400 })
+  const headers = { accept: 'application/json' }
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`
+  const endpoints = [`${apiBase}/models`]
+  // 有些网关只暴露 /v1/models，而用户把地址填成根域名。
+  if (!/\/v\d+$/.test(apiBase)) endpoints.push(`${apiBase}/v1/models`)
+  let lastError = null
+  for (const url of endpoints) {
+    let response
+    try {
+      response = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) })
+    } catch (error) {
+      lastError = error
+      continue
+    }
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '')
+      lastError = Object.assign(new Error(`列模型失败 ${response.status}：${detail.slice(0, 200)}`), { status: 502 })
+      if (response.status === 404 || response.status === 405) continue
+      throw lastError
+    }
+    const data = await response.json().catch(() => null)
+    const rows = Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : []
+    const models = []
+    for (const row of rows) {
+      const id = typeof row === 'string' ? row : row?.id || row?.name || ''
+      if (id && !models.includes(id)) models.push(String(id))
+    }
+    models.sort((a, b) => a.localeCompare(b))
+    return { base: apiBase, models, current: config.apiModel, url }
+  }
+  const reason = lastError?.message || '连不上'
+  throw Object.assign(new Error(`列模型失败：${reason}`), { status: 502 })
+}
+
 const KANA_RE = /[\u3040-\u30ff\u31f0-\u31ff\uff66-\uff9f]/
 const HANGUL_RE = /[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]/
 const HAN_RE = /[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]/

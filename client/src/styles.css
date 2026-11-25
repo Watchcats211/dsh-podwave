@@ -1198,6 +1198,7 @@ select:focus-visible {
 .podwave-settings .settings-btn { height: 30px; padding: 0 14px; border: 0; border-radius: 8px; color: inherit; background: color-mix(in srgb, currentColor 11%, transparent); font-size: 13.5px; font-weight: 500; cursor: pointer; }
 .podwave-settings .settings-btn:hover { background: color-mix(in srgb, currentColor 17%, transparent); }
 .podwave-settings .settings-btn:disabled { opacity: 0.5; cursor: default; }
+.podwave-settings .settings-btn.is-mini { height: 28px; padding: 0 10px; font-size: 12.5px; flex: none; }
 .podwave-settings .check-row { display: flex; align-items: center; gap: 9px; font-size: 13.5px; color: inherit; }
 .podwave-settings .check-row input { width: 15px; height: 15px; accent-color: #7aa7ff; }
 

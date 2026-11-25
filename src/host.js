@@ -82,7 +82,7 @@ import { listJobs, removeJob, upsertJob, getJob } from './jobs.js'
 import { scan as scanSetup, plan as planSetup, install as installSetup, cancelSetup, setupJob, llamaBinary, verify as verifySetup } from './setup.js'
 import { getSection, updateSection } from './config.js'
 import { diarizeInfo } from './diarize.js'
-import { getTranslationState, publicConfig, saveConfig, startTranslation, translateLine } from './translate.js'
+import { getTranslationState, listApiModels, publicConfig, saveConfig, startTranslation, translateLine } from './translate.js'
 import { listModels, loadModelConfig, modelsDir, modelsMoveState, modelsSummary, removeModel, saveModelConfig, setModelsDir, setWorkspaceRoots, getWorkspaceRoot } from './models.js'
 import { findEpisode, getProviderById, listAllEpisodes } from './providers.js'
 // 设置页每次打开都会拉 /api/update；漏了这个 import 会让整页 500（v0.11.10 起就漏了）。
@@ -526,7 +526,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.50',
+      version: '0.11.51',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -556,7 +556,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.50', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.51', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -1286,6 +1286,18 @@ async function route(ctx, req, res) {
       if (typeof body?.apiModel === 'string' && body.apiModel.trim()) patch.apiModel = body.apiModel.trim()
       saveConfig(patch)
       return json(res, 200, publicConfig())
+    }
+  }
+
+  // 让设置页能列出「这个 API 地址下现在有哪些模型」，不用用户自己猜名字。
+  if (routePath === 'api/translate/models') {
+    if (method !== 'POST') return json(res, 405, { error: '方法不允许' })
+    const body = await readJson(req).catch(() => null)
+    try {
+      const result = await listApiModels({ base: body?.base, key: body?.key })
+      return json(res, 200, result)
+    } catch (error) {
+      return json(res, error.status || 502, { error: String(error.message || error) })
     }
   }
 
