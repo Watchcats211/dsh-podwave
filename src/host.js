@@ -1523,6 +1523,7 @@ async function route(ctx, req, res) {
       opacity: clampNumber(config.opacity, 0.15, 1, 0.78),
       fontSize: clampNumber(config.fontSize, 12, 42, 18),
       width: clampNumber(config.width, 380, 1600, 780),
+      translationFontSize: clampNumber(config.translationFontSize, 10, 42, 15),
       height: rawHeight,
       displayMode: ['original', 'bilingual', 'translation'].includes(config.displayMode) ? config.displayMode : 'bilingual',
       source: ['auto', 'tap', 'browser'].includes(config.source) ? config.source : 'auto',
@@ -1572,6 +1573,9 @@ async function route(ctx, req, res) {
     if (Number.isFinite(Number(body?.opacity))) patch.opacity = clampNumber(body.opacity, 0.15, 1, 0.78)
     if (Number.isFinite(Number(body?.fontSize))) patch.fontSize = clampNumber(body.fontSize, 12, 42, 18)
     if (Number.isFinite(Number(body?.width))) patch.width = clampNumber(body.width, 380, 1600, 780)
+    if (Number.isFinite(Number(body?.translationFontSize))) {
+      patch.translationFontSize = clampNumber(body.translationFontSize, 10, 42, 15)
+    }
     if (body && 'height' in body) {
       if (body.height === null || body.height === '' || Number(body.height) <= 0) patch.height = null
       else if (Number.isFinite(Number(body.height))) patch.height = clampNumber(body.height, 88, 600, null)
@@ -1588,6 +1592,7 @@ async function route(ctx, req, res) {
       const payload = {}
       if (patch.opacity !== undefined) payload.opacity = next?.opacity
       if (patch.fontSize !== undefined) payload.fontSize = next?.fontSize
+      if (patch.translationFontSize !== undefined) payload.translationFontSize = next?.translationFontSize
       if (patch.width !== undefined) payload.width = next?.width
       if ('height' in patch) payload.height = next?.height || 0
       if (patch.displayMode !== undefined) payload.displayMode = next?.displayMode
@@ -1752,6 +1757,7 @@ async function route(ctx, req, res) {
           opacity: clampNumber(liveCfg.opacity, 0.15, 1, 0.78),
           fontSize: clampNumber(liveCfg.fontSize, 12, 42, 18),
           width: clampNumber(liveCfg.width, 380, 1600, 780),
+          translationFontSize: clampNumber(liveCfg.translationFontSize, 10, 42, 15),
           height: savedHeight,
           displayMode: ['original', 'bilingual', 'translation'].includes(liveCfg.displayMode) ? liveCfg.displayMode : 'bilingual',
           saveOnStop: liveCfg.saveOnStop !== false,

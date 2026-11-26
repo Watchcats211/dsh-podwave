@@ -119,6 +119,7 @@ export default function SettingsPage() {
   const [liveDraftReady, setLiveDraftReady] = useState(false)
   const [liveOpacity, setLiveOpacity] = useState(0.78)
   const [liveStyleSize, setLiveStyleSize] = useState(18)
+  const [liveTranslationSize, setLiveTranslationSize] = useState(15)
   const [liveWidth, setLiveWidth] = useState(780)
   const [liveNote, setLiveNote] = useState('')
   const liveStyleTimer = useRef(0)
@@ -212,6 +213,7 @@ export default function SettingsPage() {
       setLiveDraftReady(Boolean(liveData?.draft?.available))
       if (Number.isFinite(Number(liveData?.opacity))) setLiveOpacity(Number(liveData.opacity))
       if (Number.isFinite(Number(liveData?.fontSize))) setLiveStyleSize(Number(liveData.fontSize))
+      if (Number.isFinite(Number(liveData?.translationFontSize))) setLiveTranslationSize(Number(liveData.translationFontSize))
       if (Number.isFinite(Number(liveData?.width))) setLiveWidth(Number(liveData.width))
       loadLiveDevices()
 
@@ -432,6 +434,7 @@ export default function SettingsPage() {
   const changeLiveStyle = (patch) => {
     if (Number.isFinite(Number(patch.opacity))) setLiveOpacity(Number(patch.opacity))
     if (Number.isFinite(Number(patch.fontSize))) setLiveStyleSize(Number(patch.fontSize))
+    if (Number.isFinite(Number(patch.translationFontSize))) setLiveTranslationSize(Number(patch.translationFontSize))
     if (Number.isFinite(Number(patch.width))) setLiveWidth(Number(patch.width))
     window.clearTimeout(liveStyleTimer.current)
     liveStyleTimer.current = window.setTimeout(() => {
@@ -908,7 +911,7 @@ export default function SettingsPage() {
               <span className="settings-status">{Math.round(liveOpacity * 100)}%</span>
             </label>
             <label className="field-row">
-              <span>字号</span>
+              <span>原文字号</span>
               <input
                 type="range"
                 min="12"
@@ -918,6 +921,18 @@ export default function SettingsPage() {
                 onChange={(event) => changeLiveStyle({ fontSize: Number(event.target.value) })}
               />
               <span className="settings-status">{liveStyleSize}px</span>
+            </label>
+            <label className="field-row">
+              <span>译文字号</span>
+              <input
+                type="range"
+                min="10"
+                max="42"
+                step="1"
+                value={liveTranslationSize}
+                onChange={(event) => changeLiveStyle({ translationFontSize: Number(event.target.value) })}
+              />
+              <span className="settings-status">{liveTranslationSize}px</span>
             </label>
             <label className="field-row">
               <span>窗口宽度</span>

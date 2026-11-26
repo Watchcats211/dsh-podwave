@@ -105,6 +105,8 @@ export const CONFIG_DEFAULTS = {
     // 独立字幕窗的外观：不透明度只管底板（文字始终不透明），宽度/高度和字号决定「大小」。
     opacity: 0.78,
     fontSize: 18,
+    // 译文字号单独一个：原文和译文是两种字，各调各的。
+    translationFontSize: 15,
     width: 780,
     height: null,
     // 实时字幕显示内容：bilingual（原文 + 译文）/ original（仅原文）/ translation（仅译文）。

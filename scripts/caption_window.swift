@@ -27,6 +27,7 @@ struct Payload: Decodable {
   var status: String?
   var hint: String?
   var fontSize: Double?
+  var translationFontSize: Double?
   var opacity: Double?
   var width: Double?
   var height: Double?
@@ -253,6 +254,7 @@ final class Controller: NSObject, NSWindowDelegate {
   private var manualHeight: CGFloat? = nil
   private var panelAlpha: CGFloat = 0.78
   private var fontSize: CGFloat = 18
+  private var translationFontSize: CGFloat = 15
   private var saveOnStop: Bool = true
   private var displayMode: String = "bilingual" // original | bilingual | translation
   private var hovering = false
@@ -424,7 +426,7 @@ final class Controller: NSObject, NSWindowDelegate {
     opacitySlider = makeSlider(min: 0.15, max: 1.0, value: Double(panelAlpha), action: #selector(onOpacitySlider))
     opacityVal = makeSmallLabel("\(Int(round(panelAlpha * 100)))%", alpha: 0.9)
 
-    let sizeLbl = makeSmallLabel("字号")
+    let sizeLbl = makeSmallLabel("原文")
     sizeLbl.tag = 102
     sizeSlider = makeSlider(min: 12, max: 42, value: Double(fontSize), action: #selector(onSizeSlider))
     sizeVal = makeSmallLabel("\(Int(round(fontSize)))", alpha: 0.9)
@@ -613,11 +615,18 @@ final class Controller: NSObject, NSWindowDelegate {
     if let value = payload.fontSize, value >= 12, value <= 64 {
       fontSize = CGFloat(value)
     }
+    if let value = payload.translationFontSize, value >= 10, value <= 42 {
+      translationFontSize = CGFloat(value)
+    }
     if let mode = payload.displayMode, ["original", "bilingual", "translation"].contains(mode) {
       displayMode = mode
     }
     if let value = payload.saveOnStop {
       saveOnStop = value
+    }
+    // 有正文而没带 hint：说明这条是正式字幕，把启动提示清掉，别在「仅原文」下多一行灰字。
+    if payload.hint == nil && (payload.text != nil || payload.translation != nil) {
+      state.hint = ""
     }
     if payload.text != nil || payload.translation != nil || payload.status != nil || payload.hint != nil {
       if let t = payload.text { state.text = t }
@@ -705,13 +714,12 @@ final class Controller: NSObject, NSWindowDelegate {
     let prevColor = NSColor(calibratedWhite: 0.9, alpha: 0.5)
     let bright = NSColor.white
     let main = NSFont.systemFont(ofSize: fontSize, weight: .medium)
-    let small = NSFont.systemFont(ofSize: max(11, fontSize * 0.8), weight: .regular)
-    let tiny = NSFont.systemFont(ofSize: max(10, fontSize * 0.68), weight: .regular)
+    let trans = NSFont.systemFont(ofSize: translationFontSize, weight: .regular)
 
     func append(_ text: String, font: NSFont, color: NSColor, spaceAfter: CGFloat) {
       guard !text.isEmpty else { return }
       let style = NSMutableParagraphStyle()
-      style.lineSpacing = max(2, fontSize * 0.16)
+      style.lineSpacing = max(2, min(fontSize, translationFontSize) * 0.18)
       style.paragraphSpacing = spaceAfter
       result.append(NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: style]))
     }
@@ -719,51 +727,31 @@ final class Controller: NSObject, NSWindowDelegate {
     let text = (state.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     let translation = (state.translation ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     let draft = (state.draft ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    let previous = (state.previous ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-    let previousTranslation = (state.previousTranslation ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     let hint = (state.hint ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 
-    if text.isEmpty && translation.isEmpty && draft.isEmpty {
-      append(hint.isEmpty ? "等着听…" : hint, font: small, color: dim, spaceAfter: 0)
-      return result
-    }
-
     if text.isEmpty && translation.isEmpty {
-      append(draft + " …", font: main, color: draftColor, spaceAfter: 0)
+      // 还没出结果时，用滚字草稿占位（只有这一种字，不会再出现第二种颜色）。
+      let placeholder = !draft.isEmpty ? draft + " …" : (hint.isEmpty ? "等着听…" : hint)
+      append(placeholder, font: main, color: draftColor, spaceAfter: 0)
       return result
     }
 
+    // 两种字：原文 = 白色大字（fontSize），译文 = 灰字（translationFontSize）。
+    // 单一语言模式只出这一种字；不再显示「上一句」之类的第三行灰字。
     switch displayMode {
     case "original":
-      append(text, font: main, color: bright, spaceAfter: 0)
-      if !draft.isEmpty && draft != text {
-        append("\n" + draft + " …", font: small, color: draftColor, spaceAfter: 0)
-      } else if !previous.isEmpty {
-        append("\n" + previous, font: tiny, color: prevColor, spaceAfter: 0)
-      }
+      append(text.isEmpty ? translation : text, font: main, color: bright, spaceAfter: 0)
     case "translation":
-      // 仅译文：有译文优先大字显示译文；若译文尚在路上或本句已是目标语言，平滑回退显示原文避免黑屏。
-      let primary = !translation.isEmpty ? translation : text
-      append(primary, font: main, color: bright, spaceAfter: 0)
-      let prevLine = !previousTranslation.isEmpty ? previousTranslation : previous
-      if !draft.isEmpty && draft != text {
-        append("\n" + draft + " …", font: small, color: draftColor, spaceAfter: 0)
-      } else if !prevLine.isEmpty {
-        append("\n" + prevLine, font: tiny, color: prevColor, spaceAfter: 0)
-      }
+      append(translation.isEmpty ? text : translation, font: trans, color: bright, spaceAfter: 0)
     default: // bilingual
       append(text, font: main, color: bright, spaceAfter: 0)
-      if !translation.isEmpty {
-        append("\n" + translation, font: small, color: dim, spaceAfter: 0)
-      }
-      if !draft.isEmpty && draft != text {
-        append("\n" + draft + " …", font: small, color: draftColor, spaceAfter: 0)
-      } else if !previous.isEmpty {
-        append("\n" + previous, font: tiny, color: prevColor, spaceAfter: 0)
+      if !translation.isEmpty && translation != text {
+        append("\n" + translation, font: trans, color: dim, spaceAfter: 0)
       }
     }
     if !hint.isEmpty {
-      append("\n" + hint, font: tiny, color: prevColor, spaceAfter: 0)
+      let hintFont = NSFont.systemFont(ofSize: max(10, translationFontSize * 0.85), weight: .regular)
+      append("\n" + hint, font: hintFont, color: prevColor, spaceAfter: 0)
     }
     return result
   }
