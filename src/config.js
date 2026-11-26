@@ -96,6 +96,9 @@ export const CONFIG_DEFAULTS = {
     opacity: 0.78,
     fontSize: 18,
     width: 780,
+    // 采集来源：auto = 能用系统音频就去掉虚拟声卡，否则退回浏览器采集；
+    // tap = 只用系统音频；browser = 只用 BlackHole/麦克风。
+    source: 'auto',
   },
 }
 

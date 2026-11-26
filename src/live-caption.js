@@ -42,6 +42,8 @@ export function publicLiveSession(session) {
     closed: session.closed,
     errors: session.errors,
     lastError: session.lastError || null,
+    level: Number(session.level) || 0,
+    hint: session.hint || '',
   }
 }
 
@@ -56,6 +58,8 @@ export function startLiveSession({ target = 'zh' } = {}) {
     errors: 0,
     lastError: null,
     index: 0,
+    level: 0,
+    hint: '',
     chain: Promise.resolve(),
   }
   sessions.set(session.id, session)

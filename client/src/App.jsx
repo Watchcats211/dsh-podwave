@@ -271,6 +271,9 @@ export default function App() {
   const [liveHint, setLiveHint] = useState('')
   // 独立置顶窗（macOS 原生小窗）是否开着：开着就把字幕画到屏幕上，页面里只留控制条。
   const [liveNative, setLiveNative] = useState(false)
+  // 采集来源：tap = 系统音频 helper（不用 BlackHole）；false = 浏览器 getUserMedia。
+  const [liveTapMode, setLiveTapMode] = useState(false)
+  const [liveTapInfo, setLiveTapInfo] = useState(null)
   // 独立窗外观：不透明度（只作用于底板）、字号、宽度。都存在 config 的 live 段里。
   const [liveOpacity, setLiveOpacity] = useState(0.78)
   const [liveStyleSize, setLiveStyleSize] = useState(18)
@@ -298,6 +301,7 @@ export default function App() {
   const liveLevelRef = useRef(0)
   // 最近一次「听到声音」的时刻：静音超过 6 秒就提示用户去检查系统输出。
   const liveLastSoundRef = useRef(0)
+  const liveLastLineRef = useRef(0)
   const liveStyleTimerRef = useRef(0)
 
   useEffect(() => { setNotesOpen(false) }, [detailId])
@@ -606,6 +610,8 @@ export default function App() {
         body: JSON.stringify({ action: 'close' }),
       }).catch(() => {})
       setLiveNative(false)
+      setLiveTapMode(false)
+      liveLastLineRef.current = 0
       liveQueueRef.current = []
       liveLinesRef.current = []
       setLiveStatus('idle')
@@ -617,6 +623,28 @@ export default function App() {
   }, [flash])
 
   const stopLive = useCallback(async () => {
+    if (liveTapMode) {
+      // 系统音频模式：先让宿主停掉采集（keep=true 保住会话），再把最后几句取回来，
+      // 这样「停止 → 问保存」之间不会丢句子。
+      try {
+        await sendJSON(`${API}/live/tap`, 'POST', { action: 'stop', keep: true })
+      } catch {
+        /* 采集可能已经自己退了 */
+      }
+      try {
+        const data = await getJSON(`${API}/live/lines?since=${liveLastLineRef.current}`)
+        if (Array.isArray(data?.lines) && data.lines.length) {
+          liveLinesRef.current = [...liveLinesRef.current, ...data.lines]
+          setLiveLines(liveLinesRef.current)
+          liveLastLineRef.current = liveLinesRef.current[liveLinesRef.current.length - 1]?.id || liveLastLineRef.current
+        }
+      } catch {
+        /* ignore */
+      }
+      if (liveLinesRef.current.length) setLiveStatus('asking')
+      else await finishLive(false)
+      return
+    }
     const capture = liveCaptureRef.current
     liveCaptureRef.current = null
     if (capture) await capture.stop().catch(() => {})
@@ -627,7 +655,65 @@ export default function App() {
     }
     if (liveLinesRef.current.length) setLiveStatus('asking')
     else await finishLive(false)
-  }, [finishLive])
+  }, [finishLive, liveTapMode])
+
+  // 系统音频模式下，字幕是宿主生成的：每 600ms 取一次增量，喂给面板和（必要的）浮层。
+  useEffect(() => {
+    if (!liveTapMode || liveStatus !== 'listening') return undefined
+    let cancelled = false
+    const timer = window.setInterval(async () => {
+      try {
+        const data = await getJSON(`${API}/live/lines?since=${liveLastLineRef.current}`)
+        if (cancelled) return
+        if (Array.isArray(data?.lines) && data.lines.length) {
+          liveLinesRef.current = [...liveLinesRef.current, ...data.lines]
+          setLiveLines(liveLinesRef.current)
+          liveLastLineRef.current = liveLinesRef.current[liveLinesRef.current.length - 1]?.id || liveLastLineRef.current
+        }
+        if (Number.isFinite(Number(data?.level))) {
+          liveLevelRef.current = Number(data.level)
+          if (Number(data.level) > 0.004) liveLastSoundRef.current = Date.now()
+        }
+        if (typeof data?.hint === 'string' && data.hint !== liveHint) setLiveHint(data.hint)
+      } catch {
+        /* 宿主重启时拉取会失败，下一轮自动恢复 */
+      }
+    }, 600)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [liveTapMode, liveStatus, liveHint])
+
+  // 打开独立置顶窗（两条采集路径共用）。打不开就留在页面浮层里，并说明原因。
+  const openNativeWindow = useCallback(async (info = {}) => {
+    try {
+      const opacity = Number.isFinite(Number(info.opacity)) ? Number(info.opacity) : 0.78
+      const size = Number.isFinite(Number(info.fontSize)) ? Number(info.fontSize) : 18
+      const width = Number.isFinite(Number(info.width)) ? Number(info.width) : 780
+      setLiveOpacity(opacity)
+      setLiveStyleSize(size)
+      setLiveWidth(width)
+      const opened = await sendJSON(`${API}/live/window`, 'POST', { action: 'open' })
+      if (opened?.ok) {
+        setLiveNative(true)
+        pushLiveWindow({
+          text: '',
+          status: 'listening',
+          hint: '听着呢，播放声音就会出字幕',
+          opacity,
+          fontSize: size,
+          width,
+        })
+        return true
+      }
+      setLiveNative(false)
+      if (opened?.error) flash(`独立字幕窗没打开，字幕显示在卡片里：${opened.error}`)
+    } catch {
+      setLiveNative(false)
+    }
+    return false
+  }, [flash, pushLiveWindow])
 
   const startLive = useCallback(async () => {
     if (liveStatus === 'starting' || liveStatus === 'listening') return
@@ -652,6 +738,29 @@ export default function App() {
           label = picked.label || ''
         }
       }
+      // 采集方式：能用系统音频就用（不需要装 BlackHole），起不来再退回浏览器采集。
+      const wantTap = info.tap?.supported !== false && info.source !== 'browser'
+      if (wantTap) {
+        try {
+          const tapped = await sendJSON(`${API}/live/tap`, 'POST', { target: info.target || 'zh', chunkMs: 500 })
+          if (tapped?.ok) {
+            setLiveTapInfo(tapped)
+            setLiveTapMode(true)
+            liveSessionRef.current = tapped.session?.id || ''
+            setLiveDevice('系统音频')
+            setLiveStartedAt(Date.now())
+            setLiveStatus('listening')
+            liveLastSoundRef.current = Date.now()
+            await openNativeWindow(info)
+            return
+          }
+          flash(`系统音频没起来，改用虚拟声卡：${tapped?.error || '未知原因'}`)
+        } catch (error) {
+          flash(`系统音频没起来，改用虚拟声卡：${error.message || error}`)
+        }
+      }
+      setLiveTapMode(false)
+
       const started = await sendJSON(`${API}/live/start`, 'POST', { target: info.target || 'zh' })
       if (!started?.session?.id) throw new Error('宿主没给出会话 id')
       liveSessionRef.current = started.session.id
@@ -673,33 +782,7 @@ export default function App() {
       setLiveStartedAt(Date.now())
       setLiveStatus('listening')
       liveLastSoundRef.current = Date.now()
-      // 独立置顶窗：macOS 上开一个原生小窗，字幕画到屏幕上（盖在所有应用之上）。
-      // 打不开（非 macOS / 没有 swiftc / 编译失败）就退回页面里的浮层，并说明原因。
-      try {
-        const opacity = Number.isFinite(Number(info.opacity)) ? Number(info.opacity) : 0.78
-        const size = Number.isFinite(Number(info.fontSize)) ? Number(info.fontSize) : 18
-        const width = Number.isFinite(Number(info.width)) ? Number(info.width) : 780
-        setLiveOpacity(opacity)
-        setLiveStyleSize(size)
-        setLiveWidth(width)
-        const opened = await sendJSON(`${API}/live/window`, 'POST', { action: 'open' })
-        if (opened?.ok) {
-          setLiveNative(true)
-          pushLiveWindow({
-            text: '',
-            status: 'listening',
-            hint: '听着呢，播放声音就会出字幕',
-            opacity,
-            fontSize: size,
-            width,
-          })
-        } else {
-          setLiveNative(false)
-          if (opened?.error) flash(`独立字幕窗没打开，字幕显示在卡片里：${opened.error}`)
-        }
-      } catch {
-        setLiveNative(false)
-      }
+      await openNativeWindow(info)
       if (deviceId && (deviceId !== info.deviceId || (capture.label || label) !== info.deviceLabel)) {
         sendJSON(`${API}/live/settings`, 'PUT', { deviceId, deviceLabel: capture.label || label }).catch(() => {})
       }

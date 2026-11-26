@@ -204,7 +204,6 @@ final class CaptureEngine {
   private var resampler: Resampler?
   private var nonInterleaved = false
   private var channels: UInt32 = 2
-  private var silentChunks = 0
   private var running = true
 
   init(options: Options) {
@@ -419,11 +418,8 @@ final class CaptureEngine {
       }
     }
     for value in mono where abs(value) > 0.002 { any = true; break }
-    if any { silentChunks = 0 } else { silentChunks += 1 }
-    if silentChunks == 6 {
-      // 连续静音可能是权限被拒（tap 建成功但拿不到数据），宿主会把这条提示给用户。
-      FileHandle.standardError.write("{\"warning\":\"silence\",\"code\":\"tap-silent\"}\n".data(using: .utf8)!)
-    }
+    _ = any
+
     guard let resampler else { return }
     let converted = resampler.process(mono)
     writer.append(converted)

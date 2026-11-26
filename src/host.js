@@ -78,6 +78,7 @@ import {
 } from './transcribe.js'
 import { closeLiveSpeakers } from './live-speaker.js'
 import { captionWindowState, closeCaptionWindow, openCaptionWindow, pushCaption } from './caption-window.js'
+import { startTap, stopTap, tapState, tapSupport } from './live-tap.js'
 import {
   getLiveSession,
   liveReady,
@@ -544,7 +545,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.61',
+      version: '0.11.62',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -574,7 +575,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.61', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.62', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -1389,6 +1390,8 @@ async function route(ctx, req, res) {
       opacity: clampNumber(config.opacity, 0.15, 1, 0.78),
       fontSize: clampNumber(config.fontSize, 12, 42, 18),
       width: clampNumber(config.width, 380, 1600, 780),
+      source: ['auto', 'tap', 'browser'].includes(config.source) ? config.source : 'auto',
+      tap: tapSupport(),
       target: (getSection('translate') || {}).target || 'zh',
     })
   }
@@ -1402,6 +1405,7 @@ async function route(ctx, req, res) {
     if (Number.isFinite(Number(body?.opacity))) patch.opacity = clampNumber(body.opacity, 0.15, 1, 0.78)
     if (Number.isFinite(Number(body?.fontSize))) patch.fontSize = clampNumber(body.fontSize, 12, 42, 18)
     if (Number.isFinite(Number(body?.width))) patch.width = clampNumber(body.width, 380, 1600, 780)
+    if (['auto', 'tap', 'browser'].includes(body?.source)) patch.source = body.source
     const next = updateSection('live', patch)
     return json(res, 200, next || {})
   }
@@ -1435,6 +1439,81 @@ async function route(ctx, req, res) {
     if (!session) return json(res, 409, { error: '实时字幕还没开始' })
     const result = await stopLiveSession(session, { save: body?.save === true })
     return json(res, 200, result)
+  }
+
+  // 系统音频采集（macOS tap helper）：不用虚拟声卡就能听电脑里播放的声音。
+  if (routePath === 'api/live/tap' && method === 'POST') {
+    const body = await readJson(req).catch(() => ({}))
+    const action = String(body?.action || 'start')
+    if (action === 'start') {
+      if (!liveReady().ready) return json(res, 400, { ok: false, error: '还没有填 DeepSeek API key，实时字幕用云端识别' })
+      const existing = openLiveSession()
+      const session = existing || startLiveSession({ target: String(body?.target || 'zh') })
+      const target = Number(body?.chunkMs) || 500
+      try {
+        const started = await startTap({
+          chunkMs: target,
+          onLevel: (value) => {
+            session.level = value
+          },
+          onHint: (text) => {
+            session.hint = text || ''
+            pushCaption({ hint: text || '' })
+          },
+          onSegment: (segment) => {
+            queueLiveSegment(session, Buffer.from(segment.wav), { start: segment.start, end: segment.end })
+              .then((result) => {
+                if (!result?.lines?.length) return
+                const all = session.lines
+                const last = all[all.length - 1]
+                const prev = all[all.length - 2]
+                pushCaption({
+                  text: last?.text || '',
+                  translation: last?.translations?.zh || last?.translations?.en || '',
+                  previous: prev?.text || '',
+                  previousTranslation: prev?.translations?.zh || prev?.translations?.en || '',
+                  status: 'listening',
+                  hint: '',
+                })
+              })
+              .catch((error) => {
+                session.lastError = error?.message || String(error)
+              })
+          },
+        })
+        return json(res, 200, { ok: true, session: publicLiveSession(session), ...started })
+      } catch (error) {
+        return json(res, 200, { ok: false, error: error.message || String(error), session: publicLiveSession(existing) })
+      }
+    }
+    if (action === 'stop') {
+      stopTap()
+      // keep=true：只停采集、不结束会话。前端要用它在「停止」之后问一句「保存吗」。
+      if (body?.keep === true) {
+        const kept = getLiveSession(body?.session || '') || openLiveSession()
+        return json(res, 200, { ok: true, kept: true, session: publicLiveSession(kept) })
+      }
+      const session = getLiveSession(body?.session || '') || openLiveSession()
+      let result = null
+      if (session) result = await stopLiveSession(session, { save: body?.save === true })
+      closeCaptionWindow()
+      return json(res, 200, { ok: true, ...(result || {}) })
+    }
+    return json(res, 400, { ok: false, error: '未知操作' })
+  }
+
+  if (routePath === 'api/live/lines' && method === 'GET') {
+    const session = getLiveSession(url.searchParams.get('session') || '') || openLiveSession()
+    if (!session) return json(res, 200, { lines: [], count: 0, ...tapState() })
+    const since = Number(url.searchParams.get('since')) || 0
+    return json(res, 200, {
+      lines: session.lines.filter((line) => line.id > since),
+      count: session.lines.length,
+      countDown: false,
+      ...tapState(),
+      level: Number(session.level) || tapState().level,
+      hint: session.hint || tapState().hint,
+    })
   }
 
   // 独立置顶字幕窗（macOS 原生小窗，盖在所有应用之上）。
@@ -1531,6 +1610,7 @@ export default {
       closeLiveSpeakers()
       // 插件重载/禁用：实时字幕的会话是内存里的，直接丢掉，别让新实例接到一个半死的会话。
       resetLiveSessions()
+      stopTap()
       closeCaptionWindow()
     }, 'dsh-podwave: stop transcription workers')
   },

@@ -104,6 +104,8 @@ export default function SettingsPage() {
   const [liveDeviceId, setLiveDeviceId] = useState('')
   const [liveDevices, setLiveDevices] = useState([])
   const [liveSaveOnStop, setLiveSaveOnStop] = useState(true)
+  const [liveSource, setLiveSource] = useState('auto')
+  const [liveTapOk, setLiveTapOk] = useState(true)
   const [liveNote, setLiveNote] = useState('')
 
   const [provider, setProvider] = useState('api')
@@ -148,6 +150,8 @@ export default function SettingsPage() {
       setRealtime(txData.realtime !== false)
       setLiveDeviceId(liveData?.deviceId || '')
       setLiveSaveOnStop(liveData?.saveOnStop !== false)
+      setLiveSource(liveData?.source || 'auto')
+      setLiveTapOk(liveData?.tap?.supported !== false)
       if (!liveData?.ready) setLiveNote('还没有 DeepSeek API key，实时字幕要先用云端识别')
       loadLiveDevices().then((inputs) => {
         if (inputs.length && !inputs.some((device) => device.label)) {
@@ -480,9 +484,15 @@ export default function SettingsPage() {
     setError('')
     try {
       const label = liveDevices.find((device) => device.deviceId === liveDeviceId)?.label || ''
-      const data = await sendJSON(`${API}/live/settings`, 'PUT', { deviceId: liveDeviceId, deviceLabel: label, saveOnStop: liveSaveOnStop })
+      const data = await sendJSON(`${API}/live/settings`, 'PUT', {
+        deviceId: liveDeviceId,
+        deviceLabel: label,
+        saveOnStop: liveSaveOnStop,
+        source: liveSource,
+      })
       setLiveDeviceId(data.deviceId || '')
       setLiveSaveOnStop(data.saveOnStop !== false)
+      setLiveSource(data.source || 'auto')
       flash('实时字幕设置已保存')
     } catch (err) {
       setError(err.message)
@@ -729,6 +739,17 @@ export default function SettingsPage() {
           Windows 用 VB-Cable 或「立体声混音」。识别走 DeepSeek 云端，约 ¥0.4/小时。
         </p>
         <div className="settings-fields">
+          <label className="field-row">
+            <span>采集方式</span>
+            <select value={liveSource} onChange={(event) => setLiveSource(event.target.value)}>
+              <option value="auto">自动（优先系统音频，不需要虚拟声卡）</option>
+              <option value="tap">只看系统音频（macOS 14.2+）</option>
+              <option value="browser">虚拟声卡 / 麦克风（BlackHole）</option>
+            </select>
+          </label>
+          {liveTapOk ? null : (
+            <p className="settings-hint">这台机器不支持系统音频采集（需要 macOS 14.2+），只能用虚拟声卡或麦克风。</p>
+          )}
           <label className="field-row">
             <span>输入设备</span>
             <select value={liveDeviceId} onChange={(event) => setLiveDeviceId(event.target.value)}>
