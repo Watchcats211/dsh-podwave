@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Podwave 系统音频采集 helper 的 app bundle 描述。
+     权限（TCC）按「哪个 app 申请」记录，所以这个 helper 必须是一个 .app bundle：
+     macOS 认这里的 NSAudioCaptureUsageDescription，用户看到的授权文案就是这一句。
+     宿主安装时会把它写进 <数据目录>/bin/PodwaveAudioTap.app/Contents/Info.plist。 -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key><string>PodwaveAudioTap</string>
+	<key>CFBundleDisplayName</key><string>Podwave 系统音频</string>
+	<key>CFBundleIdentifier</key><string>com.podwave.audio-tap</string>
+	<key>CFBundleExecutable</key><string>podwave-audio-tap</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleShortVersionString</key><string>1.0</string>
+	<key>CFBundleVersion</key><string>1</string>
+	<key>LSMinimumSystemVersion</key><string>13.5</string>
+	<key>LSUIElement</key><true/>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Podwave 需要录制电脑正在播放的声音，用来生成实时字幕。音频只在本机处理，不会上传。</string>
+</dict>
+</plist>
