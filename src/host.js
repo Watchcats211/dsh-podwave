@@ -77,7 +77,7 @@ import {
   validateTranscript,
 } from './transcribe.js'
 import { closeLiveSpeakers } from './live-speaker.js'
-import { captionWindowState, closeCaptionWindow, openCaptionWindow, pushCaption } from './caption-window.js'
+import { captionWindowState, closeCaptionWindow, onCaptionWindowEvent, openCaptionWindow, pushCaption } from './caption-window.js'
 import { startTap, stopTap, tapState, tapSupport } from './live-tap.js'
 import {
   getLiveSession,
@@ -545,7 +545,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.62',
+      version: '0.11.63',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -575,7 +575,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.62', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.63', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -1504,11 +1504,12 @@ async function route(ctx, req, res) {
 
   if (routePath === 'api/live/lines' && method === 'GET') {
     const session = getLiveSession(url.searchParams.get('session') || '') || openLiveSession()
-    if (!session) return json(res, 200, { lines: [], count: 0, ...tapState() })
+    if (!session) return json(res, 200, { lines: [], count: 0, alive: false, ...tapState() })
     const since = Number(url.searchParams.get('since')) || 0
     return json(res, 200, {
       lines: session.lines.filter((line) => line.id > since),
       count: session.lines.length,
+      alive: true,
       countDown: false,
       ...tapState(),
       level: Number(session.level) || tapState().level,
@@ -1542,6 +1543,33 @@ async function route(ctx, req, res) {
 export default {
   inject: ['webServer', 'connection'],
   apply(ctx) {
+    // 字幕窗里的操作：拖滑块写回配置（夹取范围），点 ✕ 结束这次监听。
+    onCaptionWindowEvent((payload) => {
+      if (payload.event === 'style') {
+        const patch = {}
+        if (Number.isFinite(Number(payload.opacity))) patch.opacity = clampNumber(payload.opacity, 0.15, 1, 0.78)
+        if (Number.isFinite(Number(payload.fontSize))) patch.fontSize = clampNumber(payload.fontSize, 12, 42, 18)
+        if (Number.isFinite(Number(payload.width))) patch.width = clampNumber(payload.width, 380, 1600, 780)
+        if (Object.keys(patch).length) updateSection('live', patch)
+        return
+      }
+      if (payload.event === 'saveOnStop') {
+        updateSection('live', { saveOnStop: payload.value === true })
+        return
+      }
+      if (payload.event === 'stop') {
+        // ✕ 就是「停下来」：停采集、按设置决定存不存、关窗。前端轮询会发现会话没了。
+        const live = getSection('live') || {}
+        const session = openLiveSession()
+        stopTap()
+        if (session) {
+          stopLiveSession(session, { save: live.saveOnStop !== false }).catch((error) => {
+            console.error('[dsh-podwave] 窗口内停止失败:', error.message)
+          })
+        }
+        closeCaptionWindow()
+      }
+    })
     const ready = boot()
     startMediaServer()
     // 翻译默认走 DSH 自己的模型，把 ctx 交给 translate.js 去读 llm / agentDefaultModel。

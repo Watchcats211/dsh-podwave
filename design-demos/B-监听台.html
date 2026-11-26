@@ -1,0 +1,125 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>方向 B · 监听台</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #08080a; }
+  body { font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; }
+  .dsh { width: 1280px; height: 800px; display: grid; grid-template-columns: 232px 1fr; background: #0b0b0e; color: #ececef; position: relative; }
+  .side { background: #09090c; border-right: 1px solid #1a1a21; padding: 22px 14px; display: flex; flex-direction: column; gap: 4px; }
+  .brand { display: flex; align-items: center; gap: 8px; padding: 0 8px 18px; font-weight: 600; }
+  .brand i { width: 20px; height: 20px; border-radius: 6px; background: linear-gradient(140deg, #e6a54a, #b26a12); display: block; }
+  .nav { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; color: #a9a9b3; font-size: 13.5px; }
+  .nav.on { background: #16161c; color: #f2f2f5; }
+  .nav .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .5; }
+
+  .main { display: flex; flex-direction: column; min-width: 0; padding: 20px 26px 0; }
+  .top { display: flex; align-items: center; gap: 14px; }
+  .top h1 { margin: 0; font-size: 19px; font-weight: 600; }
+  .top .tools { margin-left: auto; display: flex; gap: 10px; }
+  .tool { height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid #26262e; color: #b9b9c3; font-size: 13px; background: none; display: flex; align-items: center; gap: 7px; }
+  .tool.live { border-color: #4a3818; background: #1f170c; color: #f0b566; }
+  .tool.live .pulse { width: 7px; height: 7px; border-radius: 50%; background: #e6a54a; box-shadow: 0 0 0 4px rgba(230,165,74,.16); }
+
+  /* 监听台：整块面板就是一个仪表盘 */
+  .console { margin-top: 18px; border: 1px solid #232329; border-radius: 12px; background: #0f0f14; display: grid; grid-template-columns: 300px 1fr; overflow: hidden; }
+  .left { padding: 22px; border-right: 1px solid #1e1e25; display: flex; flex-direction: column; gap: 18px; }
+  .microlabel { font-size: 10.5px; letter-spacing: .16em; text-transform: uppercase; color: #5f5f6a; }
+  .elapsed { font-size: 40px; font-weight: 300; font-variant-numeric: tabular-nums; letter-spacing: -.01em; color: #f4f4f7; line-height: 1; }
+  .bars { display: flex; align-items: flex-end; gap: 3px; height: 54px; }
+  .bars i { flex: 1; background: #2b2b34; border-radius: 2px; }
+  .bars i.on { background: #e6a54a; }
+  .kv { display: flex; justify-content: space-between; font-size: 12.5px; color: #8a8a95; }
+  .kv b { font-weight: 500; color: #cfcfd6; }
+
+  .right { padding: 20px 22px; display: flex; flex-direction: column; gap: 10px; }
+  .right .head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 2px; }
+  .right .head h2 { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .02em; }
+  .right .head span { font-size: 11.5px; color: #6a6a75; }
+  .line { display: grid; grid-template-columns: 46px 1fr; gap: 12px; padding: 9px 0; border-top: 1px solid #1b1b22; }
+  .line time { font-size: 11.5px; color: #5d5d68; font-variant-numeric: tabular-nums; padding-top: 2px; }
+  .line p { margin: 0; font-size: 13.5px; line-height: 1.5; color: #dedee4; }
+  .line p.tr { color: #8f8f9b; font-size: 12.5px; margin-top: 3px; }
+  .line.fresh p { color: #fff; }
+  .line.fresh p.tr { color: #e6b877; }
+
+  .actions { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 16px 0 18px; }
+  .btn { height: 34px; padding: 0 15px; border-radius: 8px; font-size: 13px; border: 1px solid #303039; background: #17171d; color: #d6d6dd; }
+  .btn.ghost { background: none; color: #9d9da7; }
+  .btn.danger { color: #f0b3a8; border-color: #4a2a26; background: #1d1210; }
+  .sliders { display: flex; gap: 22px; margin-left: auto; }
+  .slider { display: flex; flex-direction: column; gap: 6px; }
+  .slider span { font-size: 11px; color: #6c6c77; }
+  .slider .track { width: 96px; height: 3px; border-radius: 99px; background: #26262e; position: relative; }
+  .slider .track i { position: absolute; top: -4px; width: 11px; height: 11px; border-radius: 50%; background: #e6a54a; }
+
+  /* 屏幕上的字幕窗：只放当前一句 */
+  .cap { position: absolute; left: 50%; transform: translateX(-50%); bottom: 40px; width: 720px; padding: 15px 22px; border-radius: 14px; background: rgba(6,6,8,.84); border: 1px solid rgba(255,255,255,.10); box-shadow: 0 18px 44px rgba(0,0,0,.5); }
+  .cap p { margin: 0; }
+  .cap .now { font-size: 22px; line-height: 1.35; color: #fff; }
+  .cap .tr { font-size: 16px; line-height: 1.5; margin-top: 6px; color: rgba(255,255,255,.72); }
+</style></head>
+<body>
+<div class="dsh">
+  <aside class="side">
+    <div class="brand"><i></i>deepseek harness</div>
+    <div class="nav"><span class="dot"></span>插件</div>
+    <div class="nav"><span class="dot"></span>插件市场</div>
+    <div class="nav on"><span class="dot"></span>播客</div>
+    <div class="nav"><span class="dot"></span>八段锦播放器</div>
+    <div class="nav"><span class="dot"></span>自动化任务</div>
+  </aside>
+
+  <section class="main">
+    <header class="top">
+      <h1>播客</h1>
+      <div class="tools">
+        <button class="tool live"><span class="pulse"></span>实时字幕</button>
+        <button class="tool">返回媒体库</button>
+      </div>
+    </header>
+
+    <div class="console">
+      <div class="left">
+        <div>
+          <div class="microlabel">已听</div>
+          <div class="elapsed">00:42</div>
+        </div>
+        <div>
+          <div class="microlabel" style="margin-bottom:8px">输入电平</div>
+          <div class="bars">
+            <i style="height:22%"></i><i class="on" style="height:54%"></i><i class="on" style="height:74%"></i><i class="on" style="height:46%"></i>
+            <i class="on" style="height:82%"></i><i class="on" style="height:61%"></i><i class="on" style="height:38%"></i><i style="height:18%"></i>
+            <i class="on" style="height:44%"></i><i class="on" style="height:66%"></i><i style="height:26%"></i><i style="height:14%"></i>
+          </div>
+        </div>
+        <div class="kv"><span>来源</span><b>系统音频</b></div>
+        <div class="kv"><span>语言</span><b>日语 → 中文</b></div>
+        <div class="kv"><span>识别</span><b>DeepSeek 云端</b></div>
+        <div class="kv"><span>本次花费</span><b>≈ ¥0.01</b></div>
+      </div>
+
+      <div class="right">
+        <div class="head"><h2>刚才说了什么</h2><span>面板里只放回顾；屏幕上是当前这句</span></div>
+        <div class="line"><time>00:31</time><div><p>当日来てくれた先生は、演劇を知る実態に体験してもらうのでね。</p><p class="tr">当天来的老师们，是想让真正懂戏剧的人亲自体验一下。</p></div></div>
+        <div class="line"><time>00:36</time><div><p>その時に、私に、なるほどな公務を選んでお願いしてたの、と。</p><p class="tr">那时候，对方还拜托我挑一些「有道理的公事」。</p></div></div>
+        <div class="line fresh"><time>00:42</time><div><p>はい、それで全部お願いします。</p><p class="tr">是的，那就全都拜托你了。</p></div></div>
+
+        <div class="actions">
+          <button class="btn ghost">保存字幕</button>
+          <button class="btn danger">停止</button>
+          <div class="sliders">
+            <label class="slider"><span>不透明度 78%</span><div class="track"><i style="left:64%"></i></div></label>
+            <label class="slider"><span>字号 22</span><div class="track"><i style="left:52%"></i></div></label>
+            <label class="slider"><span>宽度 720</span><div class="track"><i style="left:58%"></i></div></label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="cap">
+    <p class="now">はい、それで全部お願いします。</p>
+    <p class="tr">是的，那就全都拜托你了。</p>
+  </div>
+</div>
+</body></html>

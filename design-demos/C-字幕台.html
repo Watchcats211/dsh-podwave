@@ -1,0 +1,80 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>方向 C · 字幕台</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #08080a; }
+  body { font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; }
+  .dsh { width: 1280px; height: 800px; display: grid; grid-template-columns: 232px 1fr; background: #0a0a0c; color: #ececef; }
+  .side { background: #09090c; border-right: 1px solid #1a1a21; padding: 22px 14px; display: flex; flex-direction: column; gap: 4px; }
+  .brand { display: flex; align-items: center; gap: 8px; padding: 0 8px 18px; font-weight: 600; }
+  .brand i { width: 20px; height: 20px; border-radius: 6px; background: linear-gradient(140deg, #e6a54a, #b26a12); display: block; }
+  .nav { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; color: #a9a9b3; font-size: 13.5px; }
+  .nav.on { background: #16161c; color: #f2f2f5; }
+  .nav .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .5; }
+
+  .stage { display: flex; flex-direction: column; min-width: 0; }
+  .stage-top { display: flex; align-items: center; gap: 16px; padding: 18px 34px; border-bottom: 1px solid #17171d; }
+  .stage-top .kicker { font-family: "Songti SC", "STSong", serif; font-size: 15px; letter-spacing: .3em; color: #7c7c88; }
+  .stage-top .meta { margin-left: auto; display: flex; align-items: center; gap: 12px; font-size: 12px; color: #6d6d78; }
+  .dotpulse { width: 7px; height: 7px; border-radius: 50%; background: #e6a54a; box-shadow: 0 0 0 4px rgba(230,165,74,.15); }
+  .meter { width: 90px; height: 3px; border-radius: 99px; background: #22222a; overflow: hidden; }
+  .meter i { display: block; height: 100%; width: 58%; background: #e6a54a; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* 正文：一块很大的字 */
+  .reader { flex: 1; padding: 24px 56px; display: flex; flex-direction: column; justify-content: center; max-width: 1010px; }
+  .ghostline { margin: 0 0 16px; font-size: 15px; line-height: 1.6; color: rgba(236,236,239,.22); }
+  .ghostline:nth-child(2) { color: rgba(236,236,239,.12); }
+  .ghostline:nth-child(3) { color: rgba(236,236,239,.07); }
+  .now { margin: 14px 0 10px; font-size: 36px; line-height: 1.42; color: #fff; letter-spacing: .01em; }
+  .tr { margin: 0; font-size: 22px; line-height: 1.6; color: rgba(230,184,119,.92); }
+
+  .stager-bar { display: flex; align-items: center; gap: 14px; height: 68px; padding: 0 34px; border-top: 1px solid #17171d; }
+  .stager-bar .note { font-size: 12px; color: #5f5f6a; }
+  .stager-bar .actions { margin-left: auto; display: flex; gap: 10px; }
+  .btn { height: 34px; padding: 0 16px; border-radius: 8px; font-size: 13px; border: 1px solid #2c2c35; background: #14141a; color: #d6d6dd; }
+  .btn.ghost { background: none; color: #9d9da7; }
+  .btn.danger { color: #f0b3a8; border-color: #4a2a26; background: #1d1210; }
+</style></head>
+<body>
+<div class="dsh">
+  <aside class="side">
+    <div class="brand"><i></i>deepseek harness</div>
+    <div class="nav"><span class="dot"></span>插件</div>
+    <div class="nav"><span class="dot"></span>插件市场</div>
+    <div class="nav on"><span class="dot"></span>播客</div>
+    <div class="nav"><span class="dot"></span>八段锦播放器</div>
+    <div class="nav"><span class="dot"></span>自动化任务</div>
+  </aside>
+
+  <section class="stage">
+    <header class="stage-top">
+      <div class="kicker">实时字幕</div>
+      <div class="dotpulse"></div>
+      <span style="font-size:12px;color:#8b8b95">正在听</span>
+      <div class="meta">
+        <span>日语 → 中文</span>
+        <div class="meter"><i></i></div>
+        <span class="num">00:42</span>
+        <span>DeepSeek 云端</span>
+      </div>
+    </header>
+
+    <div class="reader">
+      <p class="ghostline">先生は、演劇を知る実態に体験してもらうのでね。</p>
+      <p class="ghostline">その時に、私に、なるほどな公務を選んでお願いしてたの、と。</p>
+      <p class="now">はい、それで全部お願いします。</p>
+      <p class="tr">是的，那就全都拜托你了。</p>
+    </div>
+
+    <div class="stager-bar">
+      <span class="note">字幕只在这个页面里，不会再弹出第二个窗口 · 保存后可在历史记录里回看</span>
+      <div class="actions">
+        <button class="btn ghost">字号 − / +</button>
+        <button class="btn ghost">保存字幕</button>
+        <button class="btn danger">停止</button>
+      </div>
+    </div>
+  </section>
+</div>
+</body></html>

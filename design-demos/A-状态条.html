@@ -1,0 +1,108 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<title>方向 A · 一条线</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #08080a; }
+  body { font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif; }
+  .dsh { width: 1280px; height: 800px; display: grid; grid-template-columns: 232px 1fr; background: #0c0c0f; color: #ececef; }
+
+  /* 左侧：DSH 侧栏（只做视觉参照，不是这次要改的东西） */
+  .side { background: #09090c; border-right: 1px solid #1a1a21; padding: 22px 14px; display: flex; flex-direction: column; gap: 4px; }
+  .brand { display: flex; align-items: center; gap: 8px; padding: 0 8px 18px; font-weight: 600; letter-spacing: .01em; }
+  .brand i { width: 20px; height: 20px; border-radius: 6px; background: linear-gradient(140deg, #e6a54a, #b26a12); display: block; }
+  .nav { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 8px; color: #a9a9b3; font-size: 13.5px; }
+  .nav.on { background: #16161c; color: #f2f2f5; }
+  .nav .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .5; }
+  .side .sep { margin: 14px 8px 6px; font-size: 11px; letter-spacing: .12em; color: #5d5d68; }
+
+  /* 主区 */
+  .main { display: flex; flex-direction: column; min-width: 0; }
+  .top { display: flex; align-items: center; gap: 14px; padding: 20px 26px 14px; }
+  .top h1 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: .01em; }
+  .top .sub { color: #6f6f7a; font-size: 12.5px; margin-top: 3px; }
+  .top .tools { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .tool { display: flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid #26262e; color: #b9b9c3; font-size: 13px; background: none; }
+  .tool.live { border-color: #4a3818; background: #1f170c; color: #f0b566; }
+  .tool.live .pulse { width: 7px; height: 7px; border-radius: 50%; background: #e6a54a; box-shadow: 0 0 0 4px rgba(230,165,74,.16); }
+  .search { height: 32px; width: 190px; border-radius: 8px; border: 1px solid #26262e; background: #101015; color: #6f6f7a; font-size: 12.5px; display: flex; align-items: center; padding: 0 10px; }
+
+  /* 关键的一件东西：一条状态线 */
+  .strip { display: flex; align-items: center; gap: 16px; margin: 0 26px; padding: 0 16px; height: 56px; border: 1px solid #2a2a31; border-radius: 10px; background: #101016; }
+  .strip .state { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
+  .strip .state b { font-size: 13.5px; font-weight: 600; color: #f2f2f5; }
+  .strip .state span { font-size: 12.5px; color: #7d7d88; }
+  .meter { width: 132px; height: 4px; border-radius: 99px; background: #22222a; overflow: hidden; }
+  .meter i { display: block; height: 100%; width: 62%; background: #e6a54a; }
+  .time { font-variant-numeric: tabular-nums; font-size: 12.5px; color: #8f8f9a; letter-spacing: .02em; }
+  .strip .actions { margin-left: auto; display: flex; gap: 8px; }
+  .btn { height: 30px; padding: 0 13px; border-radius: 7px; font-size: 12.5px; border: 1px solid #303039; background: #17171d; color: #d6d6dd; }
+  .btn.ghost { background: none; color: #9d9da7; }
+  .btn.danger { color: #f0b3a8; border-color: #4a2a26; background: #1d1210; }
+
+  /* 列表 */
+  .list { margin: 18px 26px 0; display: flex; flex-direction: column; gap: 2px; opacity: .55; }
+  .row { display: grid; grid-template-columns: 30px 1fr auto auto; align-items: center; gap: 14px; padding: 12px 10px; border-radius: 8px; }
+  .row.play { background: #12121a; opacity: 1; }
+  .row .cover { width: 30px; height: 30px; border-radius: 6px; background: #23232b; }
+  .row .t { font-size: 13.5px; color: #d9d9df; }
+  .row .m { font-size: 12px; color: #6d6d78; font-variant-numeric: tabular-nums; }
+
+  /* 屏幕上的那唯一一个字幕窗 */
+  .cap { position: absolute; left: 50%; transform: translateX(-50%); bottom: 42px; width: 720px; padding: 16px 22px; border-radius: 14px; background: rgba(6,6,8,.82); border: 1px solid rgba(255,255,255,.10); box-shadow: 0 18px 44px rgba(0,0,0,.5); backdrop-filter: blur(8px); }
+  .cap .prev { font-size: 12.5px; color: rgba(255,255,255,.34); margin: 0 0 8px; }
+  .cap .now { font-size: 22px; line-height: 1.35; margin: 0; color: #fff; }
+  .cap .tr { font-size: 16px; line-height: 1.5; margin: 6px 0 0; color: rgba(255,255,255,.72); }
+  .hint { position: absolute; left: 26px; bottom: 46px; font-size: 11.5px; color: #4e4e58; }
+</style></head>
+<body>
+<div class="dsh" style="position:relative">
+  <aside class="side">
+    <div class="brand"><i></i>deepseek harness</div>
+    <div class="nav"><span class="dot"></span>插件</div>
+    <div class="nav"><span class="dot"></span>插件市场</div>
+    <div class="nav on"><span class="dot"></span>播客</div>
+    <div class="nav"><span class="dot"></span>八段锦播放器</div>
+    <div class="nav"><span class="dot"></span>自动化任务</div>
+    <div class="side sep">工作区</div>
+    <div class="nav"><span class="dot"></span>Deepseek-Harness</div>
+  </aside>
+
+  <section class="main">
+    <header class="top">
+      <div>
+        <h1>播客</h1>
+        <div class="sub">3 个文件夹 · 1 集在播</div>
+      </div>
+      <div class="tools">
+        <button class="tool live"><span class="pulse"></span>实时字幕</button>
+        <button class="tool">任务</button>
+        <div class="search">搜索单集或节目</div>
+      </div>
+    </header>
+
+    <!-- 这一条就是全部控制：状态、电平、保存、停止 -->
+    <div class="strip">
+      <div class="state"><b>正在听</b><span>系统音频 · 日语→中文</span></div>
+      <div class="meter"><i></i></div>
+      <div class="time">00:42</div>
+      <div class="actions">
+        <button class="btn ghost">保存字幕</button>
+        <button class="btn danger">停止</button>
+      </div>
+    </div>
+
+    <div class="list">
+      <div class="row play"><span class="cover"></span><span class="t">EP84《Roar》：生酮、轻断食、168</span><span class="m">45:31</span><span class="m">播放中</span></div>
+      <div class="row"><span class="cover"></span><span class="t">英文｜是老美还是老中，永远的异乡人</span><span class="m">52:08</span><span class="m"></span></div>
+      <div class="row"><span class="cover"></span><span class="t">1-这个世界真的能有人准备好吗</span><span class="m">38:12</span><span class="m"></span></div>
+    </div>
+  </section>
+
+  <div class="cap">
+    <p class="prev">前一句：当日来てくれた先生は、演劇を知る実態に体験してもらうのでね。</p>
+    <p class="now">その時に、私に、なるほどな公務を選んでお願いしてたの、と。</p>
+    <p class="tr">那时候，对方还拜托我挑一些「有道理的公事」。</p>
+  </div>
+  <div class="hint">屏幕上只有这一块；不透明度与字号在设置里调</div>
+</div>
+</body></html>

@@ -21,6 +21,12 @@ let child = null
 let building = null
 let lastError = ''
 let lastFrame = null
+let eventHandler = null
+
+/** 窗口里的操作（拖滑块 / 点停止）通过 stdout 回给宿主，在这里注册处理函数。 */
+export function onCaptionWindowEvent(handler) {
+  eventHandler = typeof handler === 'function' ? handler : null
+}
 
 export function captionWindowSupport() {
   return { supported: isMac, reason: isMac ? '' : '独立字幕窗目前只支持 macOS（其它平台用内置浮层）' }
@@ -86,8 +92,27 @@ export async function openCaptionWindow() {
   child = spawn(BINARY, [], { stdio: ['pipe', 'pipe', 'pipe'] })
   const current = child
   current.stdout.on('data', (chunk) => {
-    const text = chunk.toString()
-    if (text.includes('"ready":true')) lastFrame = Date.now()
+    for (const line of chunk.toString().split('\n')) {
+      const trimmed = line.trim()
+      if (!trimmed.startsWith('{')) continue
+      let payload = null
+      try {
+        payload = JSON.parse(trimmed)
+      } catch {
+        continue
+      }
+      if (payload.ready) {
+        lastFrame = Date.now()
+        continue
+      }
+      if (payload.event && eventHandler) {
+        try {
+          eventHandler(payload)
+        } catch {
+          /* 事件处理失败不影响窗口 */
+        }
+      }
+    }
   })
   current.stderr.on('data', () => {})
   const forget = () => {

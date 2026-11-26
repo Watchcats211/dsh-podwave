@@ -274,6 +274,8 @@ export default function App() {
   // 采集来源：tap = 系统音频 helper（不用 BlackHole）；false = 浏览器 getUserMedia。
   const [liveTapMode, setLiveTapMode] = useState(false)
   const [liveTapInfo, setLiveTapInfo] = useState(null)
+  // 独立窗开着的时候不在页面里再画一块字幕；停止时按这个偏好直接存/丢，不再弹「保存吗」。
+  const [liveSaveOnStop, setLiveSaveOnStop] = useState(true)
   // 独立窗外观：不透明度（只作用于底板）、字号、宽度。都存在 config 的 live 段里。
   const [liveOpacity, setLiveOpacity] = useState(0.78)
   const [liveStyleSize, setLiveStyleSize] = useState(18)
@@ -302,6 +304,7 @@ export default function App() {
   // 最近一次「听到声音」的时刻：静音超过 6 秒就提示用户去检查系统输出。
   const liveLastSoundRef = useRef(0)
   const liveLastLineRef = useRef(0)
+  const liveSaveOnStopRef = useRef(true)
   const liveStyleTimerRef = useRef(0)
 
   useEffect(() => { setNotesOpen(false) }, [detailId])
@@ -641,8 +644,12 @@ export default function App() {
       } catch {
         /* ignore */
       }
-      if (liveLinesRef.current.length) setLiveStatus('asking')
-      else await finishLive(false)
+      if (liveLinesRef.current.length) {
+        // 有独立小窗时不在页面里弹「保存吗」——那会是第二个框。按设置直接存或丢。
+        await finishLive(liveSaveOnStop)
+      } else {
+        await finishLive(false)
+      }
       return
     }
     const capture = liveCaptureRef.current
@@ -653,9 +660,9 @@ export default function App() {
     while ((liveQueueRef.current.length || liveSendingRef.current) && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 150))
     }
-    if (liveLinesRef.current.length) setLiveStatus('asking')
-    else await finishLive(false)
-  }, [finishLive, liveTapMode])
+    if (liveLinesRef.current.length && !liveNative) setLiveStatus('asking')
+    else await finishLive(liveLinesRef.current.length ? liveSaveOnStop : false)
+  }, [finishLive, liveNative, liveSaveOnStop, liveTapMode])
 
   // 系统音频模式下，字幕是宿主生成的：每 600ms 取一次增量，喂给面板和（必要的）浮层。
   useEffect(() => {
@@ -675,6 +682,18 @@ export default function App() {
           if (Number(data.level) > 0.004) liveLastSoundRef.current = Date.now()
         }
         if (typeof data?.hint === 'string' && data.hint !== liveHint) setLiveHint(data.hint)
+        if (data?.alive === false) {
+          // 会话已经在宿主那边结束了（多半是用户在字幕框里点了 ✕）。这边跟着复位。
+          liveLastLineRef.current = 0
+          liveLinesRef.current = []
+          setLiveLines([])
+          setLiveNative(false)
+          setLiveTapMode(false)
+          setLiveStatus('idle')
+          setLiveDevice('')
+          setLiveStartedAt(0)
+          setLiveHint('')
+        }
       } catch {
         /* 宿主重启时拉取会失败，下一轮自动恢复 */
       }
@@ -704,6 +723,7 @@ export default function App() {
           opacity,
           fontSize: size,
           width,
+          saveOnStop: liveSaveOnStopRef.current,
         })
         return true
       }
@@ -723,6 +743,8 @@ export default function App() {
     setLiveStatus('starting')
     try {
       const info = await getJSON(`${API}/live`)
+      setLiveSaveOnStop(info.saveOnStop !== false)
+      liveSaveOnStopRef.current = info.saveOnStop !== false
       if (!info.ready) {
         throw new Error('还没有填 DeepSeek API key。设置 →「翻译」里填一个，转写和实时字幕都能用')
       }
@@ -2476,7 +2498,7 @@ export default function App() {
         />
       ) : null}
 
-      {liveStatus !== 'idle' ? (
+      {liveStatus !== 'idle' && !liveNative ? (
         <LiveCaptionOverlay
           lines={liveLines}
           status={liveStatus}
