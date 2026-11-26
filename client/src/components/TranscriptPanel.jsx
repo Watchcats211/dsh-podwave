@@ -4,6 +4,7 @@ import Icon from './Icon.jsx'
 import PopMenu, { MenuAction, MenuDownload } from './PopMenu.jsx'
 import SubtitleSize from './SubtitleSize.jsx'
 import { fmtTime } from '../lib/format.js'
+import { resolveSpeaker } from '../lib/speaker.js'
 
 export default function TranscriptPanel({ transcript, status, progress, stage, chunks, queued, elapsed, error, position, onSeek, onClose, onStart, onCancel, target, job, onChangeTarget, onTranslate, onRetranslate = null, onRetranslateLine = null, onOpenSettings, inline = false, editingId = null, draft = '', onDraftChange, onEditLine, onSaveLine, onCancelEdit, onSplitLine, onMergeLine, onValidate, onResegment, issues = [], fontSize = 15, onFontSize = null, width = null, height = null, onResize = null }) {
   const bodyRef = useRef(null)
@@ -116,9 +117,9 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
           </span>
         ) : null}
         <div className="transcript-actions">
-          <select className="tr-select" value={target} onChange={(event) => onChangeTarget(event.target.value)} title="字幕对照">
-            <option value="">对照</option>
-            <option value="zh">中文对照</option>
+          <select className="tr-select" value={target} onChange={(event) => onChangeTarget(event.target.value)} title="字幕显示模式">
+            <option value="">仅原文</option>
+            <option value="zh">中文双语</option>
             <option value="en">English</option>
           </select>
           {onFontSize ? (
@@ -155,7 +156,9 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
                 {transcript && target && onRetranslate ? (
                   <MenuAction hint="整篇覆盖重翻，会问一句" onSelect={() => { close(); onRetranslate() }}>重新翻译</MenuAction>
                 ) : null}
-                <MenuAction hint="转写与翻译" onSelect={() => { close(); onOpenSettings() }}>设置</MenuAction>
+                {onOpenSettings ? (
+                  <MenuAction hint="在 DSH 设置中调整" onSelect={() => { close(); onOpenSettings() }}>设置</MenuAction>
+                ) : null}
               </>
             )}
           </PopMenu>
@@ -163,10 +166,18 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
             <PopMenu className="tr-export" trigger="导出" title="导出字幕">
               {({ close }) => (
                 <>
-                  <MenuDownload hint="带时间轴，剪辑软件用" href={`${API}/episodes/${transcript.id}/transcript/export?format=srt`} onSelect={close}>
+                  <MenuDownload
+                    hint={target ? '含时间轴与双语译文' : '带时间轴，剪辑软件用'}
+                    href={`${API}/episodes/${transcript.id}/transcript/export?format=srt&target=${target || 'none'}`}
+                    onSelect={close}
+                  >
                     字幕文件 .srt
                   </MenuDownload>
-                  <MenuDownload hint="带时间戳的文稿" href={`${API}/episodes/${transcript.id}/transcript/export?format=md`} onSelect={close}>
+                  <MenuDownload
+                    hint={target ? '含时间戳与双语译文' : '带时间戳的文稿'}
+                    href={`${API}/episodes/${transcript.id}/transcript/export?format=md&target=${target || 'none'}`}
+                    onSelect={close}
+                  >
                     文稿 .md
                   </MenuDownload>
                   <MenuAction hint="纯文本，连译文一起" onSelect={copyAll}>{copied ? '已复制' : '复制全文'}</MenuAction>
@@ -174,16 +185,30 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
               )}
             </PopMenu>
           ) : null}
-          {inline ? null : <button className="transcript-close" onClick={onClose} title="收起">×</button>}
+          {onClose ? <button className="transcript-close" onClick={onClose} title="收起字幕面板">×</button> : null}
         </div>
       </header>
       <div className="transcript-body" ref={bodyRef}>
         {transcript && running ? (
           <div className="tr-strip">
             <span>
-              {status === 'queued' ? '排队中…' : stage === 'preparing' ? '正在准备音频…' : stage === 'downloading' ? '正在下载音频…' : stage === 'diarizing' ? '正在分离说话人…' : '正在转写…'}
+              {status === 'queued'
+                ? '排队中…'
+                : stage === 'preparing'
+                  ? '正在准备音频…'
+                  : stage === 'downloading'
+                    ? '正在下载音频…'
+                    : stage === 'diarizing'
+                      ? '正在分离说话人…'
+                      : stage === 'translating'
+                        ? '正在自动翻译…'
+                        : '正在转写…'}
               {progress?.percent != null ? ` ${progress.percent}%` : ''}
-              {chunks?.total ? ` · 第 ${Math.min((chunks.done || 0) + 1, chunks.total)}/${chunks.total} 块` : ''}
+              {stage === 'translating' && progress?.total
+                ? ` · ${progress.done || 0}/${progress.total} 行`
+                : chunks?.total
+                  ? ` · 第 ${Math.min((chunks.done || 0) + 1, chunks.total)}/${chunks.total} 块`
+                  : ''}
               {` · 已出 ${transcript.lines.length} 行`}
             </span>
             {onCancel ? <button className="seg-tool" onClick={onCancel}>取消</button> : null}
@@ -257,9 +282,10 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
                 </span>
               ) : (
                 <>
-                  {line.speaker != null ? (
-                    <span className={`seg-speaker spk-${line.speaker % 5}`}>{transcript.speakers?.[line.speaker]?.label || `说话人 ${line.speaker + 1}`}</span>
-                  ) : null}
+                  {(() => {
+                    const spk = resolveSpeaker(line.speaker, transcript.speakers)
+                    return spk ? <span className={`seg-speaker spk-${spk.index % 5}`}>{spk.label}</span> : null
+                  })()}
                   <span className="seg-text">
                     {line.text}
                     {line.translations?.[target] ? <span className="seg-trans">{line.translations[target]}</span> : null}
@@ -276,7 +302,17 @@ export default function TranscriptPanel({ transcript, status, progress, stage, c
           ))
         ) : running ? (
           <div className="transcript-status">
-            {status === 'queued' ? '排队中…' : stage === 'merging' ? '正在合并字幕…' : stage === 'preparing' ? '正在准备音频…' : stage === 'downloading' ? '正在下载音频…' : '正在转写…'}
+            {status === 'queued'
+              ? '排队中…'
+              : stage === 'translating'
+                ? '正在自动翻译…'
+                : stage === 'merging'
+                  ? '正在合并字幕…'
+                  : stage === 'preparing'
+                    ? '正在准备音频…'
+                    : stage === 'downloading'
+                      ? '正在下载音频…'
+                      : '正在转写…'}
             {progress?.percent != null ? ` ${progress.percent}%` : ''}
             {chunks?.total ? ` · 第 ${Math.min(chunks.done + 1, chunks.total)}/${chunks.total} 块` : ''}
             {' · 已用 ' + Math.round((elapsed || 0) / 1000) + ' 秒'}

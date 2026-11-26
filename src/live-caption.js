@@ -15,10 +15,12 @@ import { DATA_DIR } from './state.js'
 import { asrApiConfig, buildApiLines, transcribeChunk } from './asr-api.js'
 import { needsTranslation, translateItems } from './translate.js'
 
-const LIVE_DIR = path.join(DATA_DIR, 'live')
+export const LIVE_DIR = path.join(DATA_DIR, 'live')
 const WORK_DIR = path.join(LIVE_DIR, '.work')
-// 单段音频上限：VAD 最多切 12 秒，这里留足余量兜住别的调用方。
+// 单段音频上限：VAD 最多切 6 秒，这里留足余量兜住别的调用方。
 const MAX_SEGMENT_BYTES = 12 * 1024 * 1024
+// 待处理队列最多积压 2 段：网络卡顿时丢弃过时积压，保证实时字幕不会越拖越慢。
+const MAX_QUEUED_SEGMENTS = 2
 
 const sessions = new Map()
 let counter = 0
@@ -37,6 +39,7 @@ export function publicLiveSession(session) {
   return {
     id: session.id,
     target: session.target,
+    displayMode: session.displayMode || 'bilingual',
     startedAt: session.startedAt,
     count: session.lines.length,
     closed: session.closed,
@@ -44,14 +47,17 @@ export function publicLiveSession(session) {
     lastError: session.lastError || null,
     level: Number(session.level) || 0,
     hint: session.hint || '',
+    draft: session.draft || '',
   }
 }
 
-export function startLiveSession({ target = 'zh' } = {}) {
+export function startLiveSession({ target = 'zh', displayMode = 'bilingual' } = {}) {
   counter += 1
+  const mode = ['original', 'bilingual', 'translation'].includes(displayMode) ? displayMode : 'bilingual'
   const session = {
     id: `live-${Date.now().toString(36)}-${counter}`,
     target,
+    displayMode: mode,
     startedAt: Date.now(),
     lines: [],
     closed: false,
@@ -60,6 +66,8 @@ export function startLiveSession({ target = 'zh' } = {}) {
     index: 0,
     level: 0,
     hint: '',
+    draft: '',
+    queued: [],
     chain: Promise.resolve(),
   }
   sessions.set(session.id, session)
@@ -90,11 +98,25 @@ export function resetLiveSessions() {
 }
 
 /**
- * 串行排队：前端可以不等待上一次结果就继续发（网络抖动时更稳），
- * 但识别与翻译仍然一次只跑一个，保证行序和编号不会错。
+ * 串行排队 + 防积压泄洪：前端/tap 可以不等待上一次结果就继续送，
+ * 识别与翻译一次只跑一个保证行序不错；但若上游卡顿导致队列积压超过 2 段，
+ * 自动跳过最老的未开始段，确保字幕紧跟当下而不是延迟十几秒。
  */
 export function queueLiveSegment(session, buffer, options = {}) {
-  const job = session.chain.then(() => feedLiveSegment(session, buffer, options))
+  const entry = { dropped: false }
+  if (!Array.isArray(session.queued)) session.queued = []
+  session.queued.push(entry)
+  while (session.queued.length > MAX_QUEUED_SEGMENTS + 1) {
+    // 索引 0 往往已在执行中，丢弃索引 1（最老的排队段）。
+    const victim = session.queued.splice(1, 1)[0]
+    if (victim) victim.dropped = true
+  }
+  const job = session.chain.then(() => {
+    const pos = session.queued.indexOf(entry)
+    if (pos >= 0) session.queued.splice(pos, 1)
+    if (entry.dropped) return { lines: [], count: session.lines.length, text: '', dropped: true }
+    return feedLiveSegment(session, buffer, options)
+  })
   // 一段失败不能把后面的整条链带死：吞掉异常，但把错误留给调用方的那次 promise。
   session.chain = job.then(
     () => undefined,
@@ -107,14 +129,15 @@ export function queueLiveSegment(session, buffer, options = {}) {
  * 处理一段音频。
  * @param {object} session startLiveSession() 的返回值
  * @param {Buffer|Uint8Array} buffer WAV 字节
- * @param {{start?:number,end?:number,recognize?:Function,translate?:Function}} options
+ * @param {{start?:number,end?:number,recognize?:Function,translate?:Function,onOriginal?:Function}} options
  *   start/end 是这段音频在整次会话里的起止秒数（前端按采集起点算好的）；
- *   recognize / translate 可注入，单测用它替掉真实网络调用。
+ *   recognize / translate 可注入，单测用它替掉真实网络调用；
+ *   onOriginal 在 ASR 返回后、翻译开始前立刻触发，让界面和悬浮窗零阻塞先出原文。
  */
 export async function feedLiveSegment(
   session,
   buffer,
-  { start = 0, end = 0, recognize = transcribeChunk, translate = translateItems } = {},
+  { start = 0, end = 0, recognize = transcribeChunk, translate = translateItems, onOriginal = null } = {},
 ) {
   if (!session || session.closed) throw Object.assign(new Error('这次实时字幕已经结束了'), { status: 409 })
   if (!buffer || !buffer.length) return { lines: [], count: session.lines.length, text: '' }
@@ -146,13 +169,22 @@ export async function feedLiveSegment(
       end: round2(piece.end),
       text: piece.text,
     }))
+    // 先取翻译上下文（不含刚识别出的 fresh），再把 fresh 立刻放进 session.lines 并通知界面展示原文！
+    const context = session.lines.slice(-2).map((line) => ({ id: line.id, text: line.text }))
+    session.draft = ''
+    for (const line of fresh) session.lines.push(line)
+    try {
+      onOriginal?.(fresh)
+    } catch {
+      /* 回调异常不影响翻译 */
+    }
 
-    // 已经说中文的时候不再花一次钱；要翻的才进模型。
-    const need = fresh.filter((line) => needsTranslation(line, session.target))
+    // 仅原文模式跳过翻译调用（更省时省费）；其它模式只翻与目标语言不同的行。
+    const need = session.displayMode === 'original'
+      ? []
+      : fresh.filter((line) => needsTranslation(line, session.target))
     let translations = new Map()
     if (need.length) {
-      // 带上前两句当上下文（代词、简称常常跨句），结果只取新句。
-      const context = session.lines.slice(-2).map((line) => ({ id: line.id, text: line.text }))
       try {
         translations = await translate([...context, ...need], session.target)
         session.lastError = null
@@ -166,7 +198,6 @@ export async function feedLiveSegment(
     for (const line of fresh) {
       const value = translations instanceof Map ? translations.get(line.id) : null
       if (value) line.translations = { [session.target]: value }
-      session.lines.push(line)
     }
     return { lines: fresh, count: session.lines.length, text, lastError: session.lastError }
   } finally {
@@ -187,9 +218,13 @@ function srtTime(seconds) {
   return `${pad2(hours)}:${pad2(minutes)}:${pad2(secs)},${String(ms).padStart(3, '0')}`
 }
 
-export function liveToSrt(lines) {
+export function liveToSrt(lines, target = '') {
   return (lines || [])
-    .map((line, index) => `${index + 1}\n${srtTime(line.start)} --> ${srtTime(line.end)}\n${line.text}\n`)
+    .map((line, index) => {
+      const tr = target ? String(line.translations?.[target] || '').trim() : ''
+      const body = tr ? `${line.text}\n${tr}` : line.text
+      return `${index + 1}\n${srtTime(line.start)} --> ${srtTime(line.end)}\n${body}\n`
+    })
     .join('\n')
 }
 
@@ -224,9 +259,68 @@ async function writeLiveFiles(transcript) {
   const base = path.join(LIVE_DIR, transcript.id)
   const files = { json: `${base}.json`, srt: `${base}.srt`, md: `${base}.md` }
   await fs.promises.writeFile(files.json, JSON.stringify({ ...transcript, updatedAt: Date.now() }, null, 2), 'utf8')
-  await fs.promises.writeFile(files.srt, liveToSrt(transcript.lines), 'utf8')
+  await fs.promises.writeFile(files.srt, liveToSrt(transcript.lines, transcript.target), 'utf8')
   await fs.promises.writeFile(files.md, liveToMarkdown(transcript), 'utf8')
   return { dir: LIVE_DIR, ...files }
+}
+
+function safeLiveId(id) {
+  const value = String(id || '').trim()
+  return /^[A-Za-z0-9_-]+$/.test(value) ? value : ''
+}
+
+export async function listLiveHistory() {
+  let names = []
+  try {
+    names = await fs.promises.readdir(LIVE_DIR)
+  } catch {
+    return []
+  }
+  const items = []
+  for (const name of names) {
+    if (!name.endsWith('.json') || name.startsWith('.') || name === 'window-pos.json') continue
+    const file = path.join(LIVE_DIR, name)
+    try {
+      const raw = JSON.parse(await fs.promises.readFile(file, 'utf8'))
+      if (!raw || !Array.isArray(raw.lines)) continue
+      const info = await fs.promises.stat(file).catch(() => null)
+      const lastEnd = raw.lines.length ? Number(raw.lines[raw.lines.length - 1]?.end) || 0 : 0
+      items.push({
+        id: String(raw.id || name.replace(/\.json$/, '')),
+        title: String(raw.title || name.replace(/\.json$/, '')),
+        target: String(raw.target || 'zh'),
+        createdAt: Number(raw.createdAt) || info?.mtimeMs || 0,
+        updatedAt: Number(raw.updatedAt) || info?.mtimeMs || 0,
+        durationSec: round2(lastEnd),
+        lines: raw.lines.length,
+        preview: raw.lines.slice(0, 2).map((l) => l.text).join(' ').slice(0, 120),
+      })
+    } catch {
+      /* 忽略损坏文件 */
+    }
+  }
+  items.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+  return items
+}
+
+export async function readLiveHistory(id) {
+  const clean = safeLiveId(id)
+  if (!clean) return null
+  try {
+    const raw = JSON.parse(await fs.promises.readFile(path.join(LIVE_DIR, `${clean}.json`), 'utf8'))
+    return raw && Array.isArray(raw.lines) ? raw : null
+  } catch {
+    return null
+  }
+}
+
+export async function deleteLiveHistory(id) {
+  const clean = safeLiveId(id)
+  if (!clean) return false
+  for (const ext of ['json', 'srt', 'md']) {
+    await fs.promises.rm(path.join(LIVE_DIR, `${clean}.${ext}`), { force: true }).catch(() => {})
+  }
+  return true
 }
 
 /**
@@ -235,8 +329,19 @@ async function writeLiveFiles(transcript) {
  */
 export async function stopLiveSession(session, { save = false } = {}) {
   if (!session) throw Object.assign(new Error('没有正在进行的实时字幕'), { status: 404 })
-  await session.chain
   session.closed = true
+  if (Array.isArray(session.queued)) {
+    for (const item of session.queued) {
+      if (item) item.dropped = true
+    }
+  }
+  await Promise.race([
+    session.chain,
+    new Promise((resolve) => {
+      const timer = setTimeout(resolve, 2500)
+      timer.unref?.()
+    }),
+  ])
   sessions.delete(session.id)
   const transcript = buildTranscript(session)
   let files = null

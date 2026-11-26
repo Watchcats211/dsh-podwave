@@ -103,6 +103,47 @@ export default function Icon({ name, size = 18 }) {
           <path d="M6 6l12 12M18 6L6 18" />
         </svg>
       )
+    case 'sun':
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2.5v2M12 19.5v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2.5 12h2M19.5 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+        </svg>
+      )
+    case 'moon':
+      return (
+        <svg {...common}>
+          <path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11Z" />
+        </svg>
+      )
+    case 'monitor':
+      return (
+        <svg {...common}>
+          <rect x="3" y="4" width="18" height="12" rx="2" />
+          <path d="M8 20h8M12 16v4" />
+        </svg>
+      )
+    case 'folder-plus':
+      return (
+        <svg {...common}>
+          <path d="M3.5 7.5c0-1 .8-1.8 1.8-1.8h4l2 2h7.4c1 0 1.8.8 1.8 1.8v7.7c0 1-.8 1.8-1.8 1.8H5.3c-1 0-1.8-.8-1.8-1.8V7.5Z" />
+          <path d="M12 10.5v4.5M9.75 12.75h4.5" />
+        </svg>
+      )
+    case 'refresh':
+      return (
+        <svg {...common}>
+          <path d="M20 11a8 8 0 0 0-14.5-4.5M4 4v3.5h3.5" />
+          <path d="M4 13a8 8 0 0 0 14.5 4.5M20 20v-3.5h-3.5" />
+        </svg>
+      )
+    case 'trash':
+      return (
+        <svg {...common}>
+          <path d="M4 7h16M9.5 4h5M10 11v6M14 11v6" />
+          <path d="M6.5 7l.8 11.2c.1 1 .9 1.8 1.9 1.8h5.6c1 0 1.8-.8 1.9-1.8L17.5 7" />
+        </svg>
+      )
     default:
       return null
   }

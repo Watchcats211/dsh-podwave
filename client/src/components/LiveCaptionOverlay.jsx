@@ -2,25 +2,27 @@ import React, { useEffect, useRef, useState } from 'react'
 import Icon from './Icon.jsx'
 import { fmtTime } from '../lib/format.js'
 
-// 实时字幕的悬浮窗：听系统正在播放的声音，把「这句话」和中文逐句滚出来。
-//
-// 和「悬浮字幕」（CaptionOverlay）不是一回事：那个跟着播客播放进度走，
-// 这个跟播放器无关，听的是系统输出（YouTube、直播、会议都能用）。
+const MODES = [
+  ['original', '仅原文'],
+  ['bilingual', '原文 + 译文'],
+  ['translation', '仅译文'],
+]
+
+// 实时字幕内置浮层（非 macOS 或原生字幕窗未开启时的降级方案）：
+// 支持拖动标题栏挪位置、拖动右下角改大小、随时切换仅原文 / 原文+译文 / 仅译文。
 export default function LiveCaptionOverlay({
   lines = [],
+  draft = '',
+  displayMode = 'bilingual',
+  onDisplayMode,
   status = 'listening',
   error = '',
   device = '',
   count = 0,
   elapsed = 0,
   fontSize = 15,
-  native = false,
   level = 0,
   hint = '',
-  opacity = 0.78,
-  styleSize = 18,
-  width = 780,
-  onStyle,
   onStop,
   onSave,
   onClose,
@@ -28,16 +30,16 @@ export default function LiveCaptionOverlay({
   const bodyRef = useRef(null)
   const boxRef = useRef(null)
   const dragRef = useRef(null)
-  // 没拖动时贴底居中（样式里定）；拖动过一次就改 left/top，并记住这一次的位置。
+  const resizeRef = useRef(null)
   const [pos, setPos] = useState(null)
+  const [size, setSize] = useState(null)
 
   const visible = lines.slice(-6)
 
-  // 新的一句出来就滚到底：读字幕的人不该自己去追滚动条。
   useEffect(() => {
     const box = bodyRef.current
     if (box) box.scrollTop = box.scrollHeight
-  }, [lines.length])
+  }, [lines.length, draft, displayMode])
 
   const clamp = (x, y) => {
     const box = boxRef.current
@@ -51,6 +53,7 @@ export default function LiveCaptionOverlay({
 
   const onPointerDown = (event) => {
     if (event.button !== undefined && event.button !== 0) return
+    if (event.target instanceof Element && event.target.closest('button, input, select, a, [role="button"]')) return
     const box = boxRef.current
     if (!box) return
     const rect = box.getBoundingClientRect()
@@ -70,13 +73,42 @@ export default function LiveCaptionOverlay({
     event.currentTarget.releasePointerCapture?.(event.pointerId)
   }
 
+  const onResizeDown = (event) => {
+    if (event.button !== undefined && event.button !== 0) return
+    event.stopPropagation()
+    const box = boxRef.current
+    if (!box) return
+    const rect = box.getBoundingClientRect()
+    resizeRef.current = { startX: event.clientX, startY: event.clientY, width: rect.width, height: rect.height }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  const onResizeMove = (event) => {
+    const start = resizeRef.current
+    if (!start) return
+    event.stopPropagation()
+    const width = Math.round(Math.min(window.innerWidth - 24, Math.max(360, start.width + (event.clientX - start.startX))))
+    const height = Math.round(Math.min(window.innerHeight - 24, Math.max(140, start.height + (event.clientY - start.startY))))
+    setSize({ width, height })
+  }
+
+  const onResizeUp = (event) => {
+    if (!resizeRef.current) return
+    event.stopPropagation()
+    resizeRef.current = null
+    event.currentTarget.releasePointerCapture?.(event.pointerId)
+  }
+
   const asking = status === 'asking'
 
   return (
     <div
       ref={boxRef}
       className="live-caption"
-      style={pos ? { left: pos.x, top: pos.y, bottom: 'auto', transform: 'none' } : undefined}
+      style={{
+        ...(pos ? { left: pos.x, top: pos.y, bottom: 'auto', transform: 'none' } : {}),
+        ...(size ? { width: `${size.width}px`, height: `${size.height}px`, maxHeight: 'none' } : {}),
+      }}
     >
       <div
         className="live-caption-head"
@@ -93,38 +125,50 @@ export default function LiveCaptionOverlay({
           {status === 'saving' ? '正在保存…' : null}
           {asking ? `已停止 · 共 ${count} 句` : null}
         </span>
-        <button className="icon-btn live-caption-close" title={asking ? '关掉' : '停止并关闭'} onClick={asking ? onClose : onStop}>
+        <button
+          type="button"
+          className="icon-btn live-caption-close"
+          title={asking ? '关掉' : '停止并关闭'}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={asking ? onClose : onStop}
+        >
           <Icon name="close" size={14} />
         </button>
       </div>
 
-      {/* 电平条：判断「到底有没有声音进来」最直接的东西。
-          实时字幕没出字，九成是系统输出没走虚拟声卡，这时候电平是死的。 */}
       <div className={`live-meter ${level > 0.004 ? 'is-live' : ''}`} title="输入电平（说话时会跳）">
         <span style={{ width: `${Math.min(100, Math.max(2, level * 400))}%` }} />
       </div>
 
       <div className="live-caption-body" ref={bodyRef}>
-        {native ? (
-          <p className="live-caption-note">
-            字幕画在屏幕上的独立小窗里（置顶，不会被别的应用挡住）。这里留着控制：拖动标题栏可以挪这个面板，点「停止」结束。
-          </p>
-        ) : visible.length ? (
-          visible.map((line) => {
-            const translation = line.translations?.zh || line.translations?.en || ''
-            return (
-              <div key={line.id} className="live-line">
-                <p className="live-line-text" style={{ fontSize }}>
-                  {line.text}
-                </p>
-                {translation ? (
-                  <p className="live-line-tr" style={{ fontSize: Math.round(fontSize * 0.84) }}>
-                    {translation}
+        {visible.length || draft ? (
+          <>
+            {visible.map((line) => {
+              const translation = line.translations?.zh || line.translations?.en || ''
+              const showOriginal = displayMode !== 'translation' || !translation
+              const showTranslation = displayMode !== 'original' && Boolean(translation)
+              const primaryText = displayMode === 'translation' && translation ? translation : line.text
+              return (
+                <div key={line.id} className="live-line">
+                  <p className="live-line-text" style={{ fontSize }}>
+                    {primaryText}
                   </p>
-                ) : null}
+                  {showOriginal && showTranslation ? (
+                    <p className="live-line-tr" style={{ fontSize: Math.round(fontSize * 0.84) }}>
+                      {translation}
+                    </p>
+                  ) : null}
+                </div>
+              )
+            })}
+            {draft ? (
+              <div className="live-line is-draft">
+                <p className="live-line-text" style={{ fontSize, opacity: 0.72 }}>
+                  {draft} …
+                </p>
               </div>
-            )
-          })
+            ) : null}
+          </>
         ) : (
           <p className="live-caption-empty">
             {status === 'starting' ? '正在打开音频设备…' : '等着听…'}
@@ -132,47 +176,6 @@ export default function LiveCaptionOverlay({
           </p>
         )}
       </div>
-
-      {native ? (
-        <div className="live-style">
-          <label title="只改底板透明度，文字始终清晰">
-            <span>不透明度</span>
-            <input
-              type="range"
-              min="15"
-              max="100"
-              step="1"
-              value={Math.round(opacity * 100)}
-              onChange={(event) => onStyle?.({ opacity: Number(event.target.value) / 100 })}
-            />
-            <span className="live-style-value">{Math.round(opacity * 100)}%</span>
-          </label>
-          <label>
-            <span>字号</span>
-            <input
-              type="range"
-              min="12"
-              max="42"
-              step="1"
-              value={styleSize}
-              onChange={(event) => onStyle?.({ fontSize: Number(event.target.value) })}
-            />
-            <span className="live-style-value">{styleSize}</span>
-          </label>
-          <label>
-            <span>宽度</span>
-            <input
-              type="range"
-              min="380"
-              max="1200"
-              step="10"
-              value={width}
-              onChange={(event) => onStyle?.({ width: Number(event.target.value) })}
-            />
-            <span className="live-style-value">{width}</span>
-          </label>
-        </div>
-      ) : null}
 
       {hint && !error ? <p className="live-caption-note">{hint}</p> : null}
       {error ? <p className="live-caption-error">{error}</p> : null}
@@ -190,13 +193,34 @@ export default function LiveCaptionOverlay({
           </>
         ) : (
           <>
-            <span className="live-caption-tip">识别走 DeepSeek 云端，约 ¥0.4/小时</span>
+            <span className="live-mode-switch" role="group" aria-label="显示内容">
+              {MODES.map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={displayMode === id ? 'is-on' : ''}
+                  onClick={() => onDisplayMode?.(id)}
+                >
+                  {label}
+                </button>
+              ))}
+            </span>
             <button className="btn ghost" onClick={onStop} disabled={status === 'saving'}>
               停止
             </button>
           </>
         )}
       </div>
+
+      <span
+        className="caption-resize"
+        onPointerDown={onResizeDown}
+        onPointerMove={onResizeMove}
+        onPointerUp={onResizeUp}
+        onPointerCancel={onResizeUp}
+        onDoubleClick={() => setSize(null)}
+        title="拖动调整大小（双击恢复默认）"
+      />
     </div>
   )
 }

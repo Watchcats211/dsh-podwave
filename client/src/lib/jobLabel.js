@@ -12,13 +12,17 @@ export function jobLabel(job) {
   if (job.status === 'cancelled') return job.error || '已取消'
   if (job.status === 'queued') return '排队中'
   const stage =
-    job.stage === 'merging'
-      ? '合并字幕'
-      : job.stage === 'preparing'
-        ? '准备音频'
-        : job.stage === 'cancelling'
-          ? '正在取消'
-          : '转写中'
+    job.stage === 'translating'
+      ? '自动翻译中'
+      : job.stage === 'diarizing'
+        ? '识别说话人'
+        : job.stage === 'merging'
+          ? '合并字幕'
+          : job.stage === 'preparing'
+            ? '准备音频'
+            : job.stage === 'cancelling'
+              ? '正在取消'
+              : '转写中'
   return `${stage}${pct != null ? ` ${pct}%` : ''}${chunk}`
 }
 

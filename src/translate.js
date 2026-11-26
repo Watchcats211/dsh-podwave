@@ -17,6 +17,10 @@ import { artifactByDir } from './catalog.js'
 // Windows 的虚拟环境是 .venv\Scripts\python.exe，不是 .venv/bin/python。
 const PYTHON = venvPython()
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'translate_local.py')
+const SERVER_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'translate_server.py')
+const DSH_BATCH_SIZE = 20
+const LOCAL_BATCH_SIZE = 15
+const LOCAL_WORKER_IDLE_MS = 120_000
 
 // API 地址/密钥/对话模型统一放在 config.api，转写和翻译共用，用户只填一次。
 // 这里把 api 段叠加到 translate 段上，下游代码照旧读 config.apiBase / apiModel / apiKey。
@@ -82,20 +86,17 @@ export function dshSelection() {
   }
 }
 
-export async function translateWithDsh(items, target) {
-  const llm = dshContext?.get?.('llm')
-  const route = dshSelection()
-  if (!llm || !route) throw Object.assign(new Error('当前没有可用的 DSH 模型，先在 DSH 里选一个模型'), { status: 503 })
+async function requestDshBatch(llm, route, batch, target) {
   const call = await llm.prepareCall({
     provider: route.provider,
     model: route.model,
-    maxTokens: Math.min(4096, items.length * 80 + 200),
+    maxTokens: Math.min(4096, batch.length * 100 + 256),
   })
   let text = ''
   for await (const chunk of call.stream({
     ...call.config,
     messages: [
-      { role: 'user', content: [{ type: 'text', text: buildUserPrompt(items, target) }], source: { kind: 'dsh-podwave' } },
+      { role: 'user', content: [{ type: 'text', text: buildUserPrompt(batch, target) }], source: { kind: 'dsh-podwave' } },
     ],
     sessionId: DSH_SESSION,
   })) {
@@ -104,13 +105,39 @@ export async function translateWithDsh(items, target) {
       throw new Error(chunk.reason.failure?.message || '模型调用失败')
     }
   }
-  // 这里的 parseNumbered 返回 Map<编号(从 1 起), 译文>，和本地 llama 那条路径的数组不同。
-  const parsed = parseNumbered(text, items.length)
+  const parsed = parseNumbered(text, batch.length)
+  if (parsed.size === batch.length) return parsed
+  // 长段落或短行合并导致编号错位/截断时对半降批重试，保证一行对一行。
+  if (batch.length > 1) {
+    const mid = Math.ceil(batch.length / 2)
+    const merged = new Map()
+    for (const [index, value] of await requestDshBatch(llm, route, batch.slice(0, mid), target)) merged.set(index, value)
+    for (const [index, value] of await requestDshBatch(llm, route, batch.slice(mid), target)) merged.set(index + mid, value)
+    return merged
+  }
+  const single = String(parsed.get(1) || text.trim().replace(/^\d+[.、)]\s*/, '')).trim()
+  return single ? new Map([[1, single]]) : new Map()
+}
+
+export async function translateWithDsh(items, target, { onBatch, shouldContinue = () => true } = {}) {
+  const llm = dshContext?.get?.('llm')
+  const route = dshSelection()
+  if (!llm || !route) throw Object.assign(new Error('当前没有可用的 DSH 模型，先在 DSH 里选一个模型'), { status: 503 })
   const result = new Map()
-  items.forEach((line, index) => {
-    const value = parsed.get(index + 1)
-    if (value) result.set(line.id, value)
-  })
+  for (let start = 0; start < items.length; start += DSH_BATCH_SIZE) {
+    if (!shouldContinue()) throw new Error('翻译已取消')
+    const batch = items.slice(start, start + DSH_BATCH_SIZE)
+    const parsed = await requestDshBatch(llm, route, batch, target)
+    const batchMap = new Map()
+    batch.forEach((line, index) => {
+      const value = parsed.get(index + 1)
+      if (value) {
+        result.set(line.id, value)
+        batchMap.set(line.id, value)
+      }
+    })
+    if (batchMap.size) await onBatch?.(batchMap, batch)
+  }
   if (!result.size) throw new Error('模型没有返回可解析的译文')
   return result
 }
@@ -126,6 +153,14 @@ export function currentLocalModel() {
   return { name, dir, ready: Boolean(mlx || gguf), engine }
 }
 
+export function canTranslate(provider) {
+  const config = loadConfig()
+  const useProvider = provider || config.provider
+  if (useProvider === 'api') return Boolean(config.apiKey)
+  if (useProvider === 'local') return currentLocalModel().ready
+  return Boolean(dshSelection())
+}
+
 export function publicConfig() {
   const config = loadConfig()
   const local = currentLocalModel()
@@ -133,6 +168,7 @@ export function publicConfig() {
   return {
     provider: config.provider,
     target: config.target,
+    autoAfterTranscribe: config.autoAfterTranscribe !== false,
     dshProvider: dsh?.provider || '',
     dshModel: dsh?.model || '',
     dshLabel: dsh?.label || '',
@@ -367,24 +403,126 @@ async function translateWithLlamaAligned(items, target) {
   return [...left, ...right.map((entry) => ({ index: entry.index + mid, text: entry.text }))]
 }
 
-async function translateWithLocal(items, target) {
-  const model = currentLocalModel()
-  if (model.engine === 'llama') {
-    const parsed = await translateWithLlamaAligned(items, target)
-    const result = new Map()
-    for (const entry of parsed) {
-      const line = items[entry.index]
-      if (line && entry.text) result.set(line.id, entry.text)
-    }
-    return result
+// 常驻本地 MLX 翻译进程：实时字幕或分批翻译不再每句冷启动重载 1GB 模型。
+// 空闲超过 2 分钟自动退出释放统一内存；插件重载/禁用时由 closeLocalTranslator() 显式关闭。
+let localWorker = null
+
+function touchLocalWorkerIdle(worker) {
+  if (worker.idleTimer) clearTimeout(worker.idleTimer)
+  worker.idleTimer = setTimeout(() => {
+    if (localWorker === worker) closeLocalTranslator()
+  }, LOCAL_WORKER_IDLE_MS)
+  worker.idleTimer.unref?.()
+}
+
+export function closeLocalTranslator() {
+  const worker = localWorker
+  localWorker = null
+  if (!worker) return
+  if (worker.idleTimer) clearTimeout(worker.idleTimer)
+  worker.dead = true
+  for (const [, waiter] of worker.pending) {
+    waiter.reject(new Error('本地翻译进程已关闭'))
   }
+  worker.pending.clear()
+  try {
+    worker.child.stdin?.write('{"cmd":"quit"}\n')
+    worker.child.stdin?.end()
+  } catch {
+    /* ignore */
+  }
+  try {
+    worker.child.kill('SIGTERM')
+  } catch {
+    /* ignore */
+  }
+}
+
+function ensureLocalWorker(dir) {
+  if (localWorker && localWorker.modelDir === dir && !localWorker.dead) {
+    touchLocalWorkerIdle(localWorker)
+    return localWorker
+  }
+  closeLocalTranslator()
+  const child = spawn(PYTHON, [SERVER_SCRIPT, '--model-dir', dir], {
+    env: { ...process.env, HF_HUB_OFFLINE: '1', TOKENIZERS_PARALLELISM: 'false', PYTHONUNBUFFERED: '1' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  })
+  const worker = {
+    child,
+    modelDir: dir,
+    dead: false,
+    ready: false,
+    stderr: '',
+    buf: '',
+    seq: 0,
+    pending: new Map(),
+    idleTimer: null,
+    readyPromise: null,
+  }
+  let resolveReady
+  let rejectReady
+  worker.readyPromise = new Promise((resolve, reject) => {
+    resolveReady = resolve
+    rejectReady = reject
+  })
+
+  child.stdout.on('data', (chunk) => {
+    worker.buf += chunk.toString('utf8')
+    for (;;) {
+      const idx = worker.buf.indexOf('\n')
+      if (idx < 0) break
+      const line = worker.buf.slice(0, idx).trim()
+      worker.buf = worker.buf.slice(idx + 1)
+      if (!line) continue
+      let msg
+      try {
+        msg = JSON.parse(line)
+      } catch {
+        continue
+      }
+      if (msg.ready) {
+        worker.ready = true
+        resolveReady()
+        continue
+      }
+      const waiter = worker.pending.get(msg.id)
+      if (!waiter) continue
+      worker.pending.delete(msg.id)
+      if (msg.error) waiter.reject(new Error(String(msg.error)))
+      else waiter.resolve(msg.results || {})
+    }
+  })
+  child.stderr.on('data', (chunk) => {
+    worker.stderr = (worker.stderr + chunk.toString('utf8')).slice(-4000)
+  })
+  const failAll = (reason) => {
+    if (worker.dead) return
+    worker.dead = true
+    if (worker.idleTimer) clearTimeout(worker.idleTimer)
+    if (localWorker === worker) localWorker = null
+    if (!worker.ready) rejectReady(reason)
+    for (const [, waiter] of worker.pending) waiter.reject(reason)
+    worker.pending.clear()
+  }
+  child.on('error', (err) => failAll(new Error(`本地翻译启动失败：${err.message}`)))
+  child.on('close', (code) => {
+    const tail = worker.stderr.trim().split('\n').slice(-4).join('\n')
+    failAll(new Error(`本地翻译进程退出（code=${code}）${tail ? `\n${tail}` : ''}`))
+  })
+  touchLocalWorkerIdle(worker)
+  localWorker = worker
+  return worker
+}
+
+async function runOneShotLocal(dir, items, target) {
   const work = path.join(DATA_DIR, 'transcripts', '.work')
   await mkdir(work, { recursive: true })
-  const input = path.join(work, `translate-${Date.now()}.json`)
+  const input = path.join(work, `translate-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`)
   await writeFile(
     input,
     JSON.stringify({
-      model_dir: currentLocalModel().dir,
+      model_dir: dir,
       target,
       items: items.map((line) => ({ id: line.id, text: line.text })),
     }),
@@ -404,36 +542,96 @@ async function translateWithLocal(items, target) {
       child.on('close', resolve)
     })
     if (code !== 0) throw new Error(`本地翻译退出码 ${code}${stderr ? `\n${stderr.split('\n').slice(-4).join('\n')}` : ''}`)
-    const parsed = JSON.parse(stdout)
-    const result = new Map()
-    for (const line of items) {
-      const text = String(parsed[line.id] || '')
-      if (text) result.set(line.id, text)
-    }
-    return result
+    return JSON.parse(stdout)
   } finally {
     rm(input, { force: true }).catch(() => {})
   }
 }
 
+async function requestLocalMlxBatch(dir, batch, target) {
+  if (fs.existsSync(SERVER_SCRIPT)) {
+    const worker = ensureLocalWorker(dir)
+    await worker.readyPromise
+    touchLocalWorkerIdle(worker)
+    const id = ++worker.seq
+    const payload = { id, target, items: batch.map((line) => ({ id: line.id, text: line.text })) }
+    return new Promise((resolve, reject) => {
+      worker.pending.set(id, { resolve, reject })
+      try {
+        worker.child.stdin.write(`${JSON.stringify(payload)}\n`)
+      } catch (err) {
+        worker.pending.delete(id)
+        reject(err)
+      }
+    })
+  }
+  return runOneShotLocal(dir, batch, target)
+}
+
+async function translateWithLocal(items, target, { onBatch, shouldContinue = () => true } = {}) {
+  const model = currentLocalModel()
+  const result = new Map()
+  if (model.engine === 'llama') {
+    for (let start = 0; start < items.length; start += LOCAL_BATCH_SIZE) {
+      if (!shouldContinue()) throw new Error('翻译已取消')
+      const batch = items.slice(start, start + LOCAL_BATCH_SIZE)
+      const parsed = await translateWithLlamaAligned(batch, target)
+      const batchMap = new Map()
+      for (const entry of parsed) {
+        const line = batch[entry.index]
+        if (line && entry.text) {
+          result.set(line.id, entry.text)
+          batchMap.set(line.id, entry.text)
+        }
+      }
+      if (batchMap.size) await onBatch?.(batchMap, batch)
+    }
+    return result
+  }
+  for (let start = 0; start < items.length; start += LOCAL_BATCH_SIZE) {
+    if (!shouldContinue()) throw new Error('翻译已取消')
+    const batch = items.slice(start, start + LOCAL_BATCH_SIZE)
+    const parsed = await requestLocalMlxBatch(model.dir, batch, target)
+    const batchMap = new Map()
+    for (const line of batch) {
+      const text = String(parsed?.[String(line.id)] ?? parsed?.[line.id] ?? '').trim()
+      if (text) {
+        result.set(line.id, text)
+        batchMap.set(line.id, text)
+      }
+    }
+    if (batchMap.size) await onBatch?.(batchMap, batch)
+  }
+  return result
+}
+
 /**
  * 按当前配置把一批 `{ id, text }` 翻成 target，返回 Map<id, 译文>。
  *
- * 实时字幕用它：那边是「来一句翻一句」，不需要 episode、不需要任务队列，
- * 但「走哪条通道」的规则必须和整集翻译完全一致（否则同一个用户在两个地方
- * 会用到不同的模型）。provider 显式传入时以传入的为准。
+ * 实时字幕和自动翻译共用它：确保「走哪条通道」与整集翻译完全一致。
+ * provider 显式传入时以传入的为准；onBatch 统一收到 `(batchMap, batch)`。
  */
-export async function translateItems(items, target = 'zh', { provider } = {}) {
+export async function translateItems(items, target = 'zh', { provider, onBatch, shouldContinue } = {}) {
   const list = (items || []).filter((item) => item && item.id !== undefined && String(item.text || '').trim())
   if (!list.length) return new Map()
   const config = loadConfig()
   const useProvider = provider || config.provider
   if (useProvider === 'api') {
     if (!config.apiKey) throw Object.assign(new Error('还没有填 DeepSeek API key，去设置里填一个'), { status: 400 })
-    return translateWithApi(list, target, config)
+    const apiOnBatch = onBatch
+      ? async (parsed, batch) => {
+          const translated = new Map()
+          batch.forEach((line, index) => {
+            const text = parsed.get(index + 1)
+            if (text) translated.set(line.id, text)
+          })
+          if (translated.size) await onBatch(translated, batch)
+        }
+      : undefined
+    return translateWithApi(list, target, config, { onBatch: apiOnBatch, shouldContinue })
   }
-  if (useProvider === 'local') return translateWithLocal(list, target)
-  return translateWithDsh(list, target)
+  if (useProvider === 'local') return translateWithLocal(list, target, { onBatch, shouldContinue })
+  return translateWithDsh(list, target, { onBatch, shouldContinue })
 }
 
 function translationKey(episodeId, target) {
@@ -496,21 +694,10 @@ export async function startTranslation(episodeId, { target = 'zh', provider, for
     }
     try {
       const items = pending.map((line) => ({ id: line.id, text: line.text }))
-      const mapping = useProvider === 'dsh'
-        ? await translateWithDsh(items, target)
-        : useProvider === 'api'
-        ? await translateWithApi(items, target, config, {
-            onBatch: async (parsed, batch) => {
-              const translated = new Map()
-              batch.forEach((line, index) => {
-                const text = parsed.get(index + 1)
-                if (text) translated.set(line.id, text)
-              })
-              await saveBatch(translated)
-            },
-          })
-        : await translateWithLocal(items, target)
-      if (useProvider !== 'api') await saveBatch(mapping)
+      await translateItems(items, target, {
+        provider: useProvider,
+        onBatch: async (translated) => saveBatch(translated),
+      })
       upsertJob({ key, status: 'done', finishedAt: Date.now(), progress: { done: saved, total: pending.length }, error: null })
     } catch (error) {
       const message = error.message || String(error)
@@ -528,7 +715,7 @@ export async function translateLine(episodeId, lineId, { target = 'zh', provider
   const useProvider = provider || config.provider
   const transcript = await readTranscript(episodeId)
   if (!transcript) throw Object.assign(new Error('先转写这一集'), { status: 409 })
-  const line = transcript.lines.find((item) => item.id === lineId)
+  const line = transcript.lines.find((item) => String(item.id) === String(lineId))
   if (!line) throw Object.assign(new Error('找不到这一行'), { status: 404 })
   if (useProvider === 'api' && !config.apiKey) throw Object.assign(new Error('还没有填 DeepSeek API key'), { status: 400 })
   if (useProvider === 'dsh' && !dshSelection()) {
@@ -538,17 +725,12 @@ export async function translateLine(episodeId, lineId, { target = 'zh', provider
     throw Object.assign(new Error('本地翻译模型还没下载好'), { status: 503 })
   }
   const items = [{ id: line.id, text: line.text }]
-  const mapping =
-    useProvider === 'dsh'
-      ? await translateWithDsh(items, target)
-      : useProvider === 'api'
-        ? await translateWithApi(items, target, config)
-        : await translateWithLocal(items, target)
+  const mapping = await translateItems(items, target, { provider: useProvider })
   const text = mapping?.get?.(line.id)
   if (!text) throw Object.assign(new Error('这一行没有拿到译文，可以稍后再试'), { status: 502 })
   // 重新读一遍再写，避免把翻译期间用户手动编辑的内容盖掉。
   const fresh = await readTranscript(episodeId)
-  const target2 = fresh?.lines?.find((item) => item.id === lineId)
+  const target2 = fresh?.lines?.find((item) => String(item.id) === String(lineId))
   if (!target2) throw Object.assign(new Error('这一行已经不在字幕里了'), { status: 409 })
   target2.translations = { ...(target2.translations || {}), [target]: text }
   fresh.providers = { ...(fresh.providers || {}), [target]: useProvider }

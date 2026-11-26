@@ -54,12 +54,17 @@ const title = `${tag} ${descLine.replace(/^[-*]\s*/, '').replace(/\*\*/g, '').sl
 write('package.json', read('package.json').replace(/"version": "[^"]+"/, `"version": "${version}"`))
 let host = read('src/host.js')
 // host.js 里有 api/setup 和 api/health 两处 version，漏掉一处就会出现「设置页显示一个版本、
-// 接口报另一个版本」的鬼现象，所以必须全局替换。
+// 接口报另一个版本」的鬼现象，所以必须全局替换；若已改为动态读取 PKG_VERSION 则校验存在即可。
 const hostVersions = host.match(/version: '\d+\.\d+\.\d+'/g) || []
-if (!hostVersions.length) throw new Error('host.js 里找不到 version 字面量')
-host = host.replace(/version: '\d+\.\d+\.\d+'/g, `version: '${version}'`)
-write('src/host.js', host)
-console.log(`host.js 里替换了 ${hostVersions.length} 处版本号`)
+if (hostVersions.length) {
+  host = host.replace(/version: '\d+\.\d+\.\d+'/g, `version: '${version}'`)
+  write('src/host.js', host)
+  console.log(`host.js 里替换了 ${hostVersions.length} 处版本号`)
+} else if (host.includes('PKG_VERSION')) {
+  console.log('host.js 动态读取 package.json 版本（PKG_VERSION）')
+} else {
+  throw new Error('host.js 里找不到 version 字面量或 PKG_VERSION')
+}
 let app = read('client/src/App.jsx')
 if (!/<span className="brand-version">[\d.]+<\/span>/.test(app)) throw new Error('App.jsx 里找不到 brand-version')
 app = app.replace(/<span className="brand-version">[\d.]+<\/span>/, `<span className="brand-version">${major}.${minor}</span>`)
@@ -81,6 +86,7 @@ const hostAfter = read('src/host.js')
 const badHost = (hostAfter.match(/version: '(\d+\.\d+\.\d+)'/g) || []).filter((item) => item !== `version: '${version}'`)
 if (pkgVersion !== version) throw new Error(`package.json 版本是 ${pkgVersion}，不是 ${version}`)
 if (badHost.length) throw new Error(`host.js 里还有别的版本号：${badHost.join(', ')}`)
+if (!hostVersions.length && !hostAfter.includes('PKG_VERSION')) throw new Error('host.js 未引用 PKG_VERSION')
 if (!new RegExp(`^## ${version.replace(/\./g, '\\.')} — `, 'm').test(read('CHANGELOG.md'))) {
   throw new Error(`CHANGELOG.md 顶部没有 ${version} 的小节`)
 }

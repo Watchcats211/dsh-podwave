@@ -1,15 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Icon from './components/Icon.jsx'
 import Cover from './components/Cover.jsx'
+import AddFolderModal from './components/AddFolderModal.jsx'
 import TranscriptPanel from './components/TranscriptPanel.jsx'
-import CaptionOverlay from './components/CaptionOverlay.jsx'
 import LiveCaptionOverlay from './components/LiveCaptionOverlay.jsx'
 import { listInputDevices, pickCaptureDevice, startLiveCapture } from './lib/audioCapture.js'
 import PopMenu, { MenuAction } from './components/PopMenu.jsx'
 import XyzPanel from './components/XyzPanel.jsx'
+import LiveHistoryPanel from './components/LiveHistoryPanel.jsx'
+import { useThemeControl } from './lib/theme.js'
 import { fmtTime, fmtDuration, fmtDate, initialOf, shortPath } from './lib/format.js'
 import { childDirs as buildChildDirs, crumbsFor } from './lib/tree.js'
 import { jobLabel } from './lib/jobLabel.js'
+import { stripHtml } from './lib/speaker.js'
 
 const API = '/podwave/api'
 
@@ -59,145 +62,8 @@ async function coverBlob(file, longest = 1200) {
 }
 
 
-function AddFolderDialog({ onSubmit, onPick, onClose }) {
-  const [value, setValue] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [busyPick, setBusyPick] = useState(false)
-  const [error, setError] = useState('')
-  const inputRef = useRef(null)
-
-  useEffect(() => {
-    inputRef.current?.focus()
-    const onKey = (event) => {
-      if (event.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
-  const pick = async () => {
-    if (busyPick) return
-    setBusyPick(true)
-    setError('')
-    try {
-      const result = await onPick()
-      if (result?.canceled) return
-      if (result?.error) throw new Error(result.error)
-      if (result?.path) {
-        await onSubmit(result.path)
-        onClose()
-      }
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setBusyPick(false)
-    }
-  }
-
-  const submit = async (event) => {
-    event.preventDefault()
-    if (!value.trim() || busy) return
-    setBusy(true)
-    setError('')
-    try {
-      await onSubmit(value.trim())
-      onClose()
-    } catch (err) {
-      setError(err.message)
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <form className="dialog" onSubmit={submit}>
-        <h2>添加文件夹</h2>
-        <p className="dialog-hint">
-          Podwave 只读取音频文件，不会移动或修改它们。也可以直接把音频文件拖进面板。
-        </p>
-        <div className="dialog-actions">
-          <button type="button" className="btn ghost" onClick={onClose}>取消</button>
-          <button type="button" className="btn primary" onClick={pick} disabled={busyPick} autoFocus>
-            {busyPick ? '打开选择器…' : '选择文件夹…'}
-          </button>
-        </div>
-        <div className="path-row">
-          <input
-            ref={inputRef}
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-            placeholder="或手动输入路径，例如 ~/Music/播客"
-            spellCheck={false}
-          />
-          <button type="submit" className="btn ghost" disabled={busy || !value.trim()}>
-            {busy ? '读取中…' : '添加'}
-          </button>
-        </div>
-        {error ? <div className="dialog-error">{error}</div> : null}
-      </form>
-    </div>
-  )
-}
-
-function TranslateSettingsDialog({ config, onClose, onSave }) {
-  const [provider, setProvider] = useState(config?.provider || 'api')
-  const [apiKey, setApiKey] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-
-  const submit = async (event) => {
-    event.preventDefault()
-    setBusy(true)
-    setError('')
-    try {
-      await onSave({ provider, apiKey: apiKey || undefined })
-    } catch (err) {
-      setError(err.message)
-      setBusy(false)
-    }
-  }
-
-  return (
-    <div className="overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <form className="dialog" onSubmit={submit}>
-        <h2>翻译设置</h2>
-        <p className="dialog-hint">
-          目标语言在字幕面板里选。API 走 DeepSeek，本地模型是 {config?.localModel || 'Qwen3-8B-4bit'}。
-        </p>
-        <label className="field">
-          <span>翻译引擎</span>
-          <select value={provider} onChange={(event) => setProvider(event.target.value)}>
-            <option value="api">DeepSeek API</option>
-            <option value="local">本地模型</option>
-          </select>
-        </label>
-        {provider === 'api' ? (
-          <label className="field">
-            <span>API Key</span>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-              placeholder={config?.apiKeyMasked || 'sk-...'}
-              spellCheck={false}
-            />
-          </label>
-        ) : (
-          <p className="dialog-hint">
-            {config?.localReady ? '本地模型已就绪。' : '本地模型还在下载或未安装，完成后可用。'}
-          </p>
-        )}
-        {error ? <div className="dialog-error">{error}</div> : null}
-        <div className="dialog-actions">
-          <button type="button" className="btn ghost" onClick={onClose}>取消</button>
-          <button type="submit" className="btn primary" disabled={busy}>保存</button>
-        </div>
-      </form>
-    </div>
-  )
-}
-
 export default function App() {
+  const { mode: themeMode, setMode: setThemeMode } = useThemeControl()
   const [items, setItems] = useState([])
   const [folders, setFolders] = useState([])
   const [progress, setProgress] = useState({})
@@ -229,13 +95,11 @@ export default function App() {
   const [toast, setToast] = useState('')
   const [transcript, setTranscript] = useState(null)
   const [txStatus, setTxStatus] = useState('none')
+  const [txLoadedId, setTxLoadedId] = useState(null)
   const [txSettings, setTxSettings] = useState(null)
   const realtimeTried = useRef(new Set())
-  // 字幕字号（面板 + 悬浮字幕共用）与悬浮字幕的开关/位置，都存在 ui 设置里。
+  // 字幕字号（面板共用）与面板尺寸，都存在 ui 设置里。
   const [subtitleSize, setSubtitleSize] = useState(15)
-  const [captionOpen, setCaptionOpen] = useState(false)
-  const [captionPos, setCaptionPos] = useState({ x: null, y: null })
-  const [captionSize, setCaptionSize] = useState({ width: null, height: null })
   // 字幕面板自己的大小（null = 用样式里的默认值）。
   const [panelSize, setPanelSize] = useState({ width: null, height: null })
   // 详情页左栏宽度（封面 + 简介那一栏），null = 默认 240px。
@@ -245,10 +109,13 @@ export default function App() {
   const [txElapsed, setTxElapsed] = useState(0)
   const [txError, setTxError] = useState('')
   const [subsOpen, setSubsOpen] = useState(false)
+  const [detailSubsOpen, setDetailSubsOpen] = useState(true)
   const [trConfig, setTrConfig] = useState(null)
-  const [trTarget, setTrTarget] = useState('')
+  const [trTarget, setTrTarget] = useState('zh')
+  const [autoShowTranslation, setAutoShowTranslation] = useState(true)
   const [trJob, setTrJob] = useState({ status: 'none' })
-  const [trSettingsOpen, setTrSettingsOpen] = useState(false)
+  const [liveHistory, setLiveHistory] = useState([])
+  const [liveDraft, setLiveDraft] = useState('')
   const [navCollapsed, setNavCollapsed] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [txInfo, setTxInfo] = useState(null)
@@ -283,6 +150,7 @@ export default function App() {
   const [liveOpacity, setLiveOpacity] = useState(0.78)
   const [liveStyleSize, setLiveStyleSize] = useState(18)
   const [liveWidth, setLiveWidth] = useState(780)
+  const [liveDisplayMode, setLiveDisplayMode] = useState('bilingual')
 
   const audioRef = useRef(null)
   const mediaBaseRef = useRef('')
@@ -309,12 +177,32 @@ export default function App() {
   const liveLastLineRef = useRef(0)
   const liveSaveOnStopRef = useRef(true)
   const liveStyleTimerRef = useRef(0)
+  const trTargetRef = useRef(trTarget)
+  const autoShowTranslationRef = useRef(autoShowTranslation)
 
-  useEffect(() => { setNotesOpen(false) }, [detailId])
+  useEffect(() => {
+    setNotesOpen(false)
+    if (detailId) setDetailSubsOpen(true)
+  }, [detailId])
   useEffect(() => { settingsRef.current = settings }, [settings])
   useEffect(() => { currentRef.current = current }, [current])
   useEffect(() => { transcriptRef.current = transcript }, [transcript])
   useEffect(() => { durationRef.current = duration }, [duration])
+  useEffect(() => { trTargetRef.current = trTarget }, [trTarget])
+  useEffect(() => { autoShowTranslationRef.current = autoShowTranslation }, [autoShowTranslation])
+
+  const loadLiveHistory = useCallback(async () => {
+    try {
+      const data = await getJSON(`${API}/live/history`)
+      setLiveHistory(Array.isArray(data?.items) ? data.items : [])
+    } catch {
+      /* 忽略旧宿主无此接口 */
+    }
+  }, [])
+
+  useEffect(() => {
+    loadLiveHistory()
+  }, [loadLiveHistory])
 
   useEffect(() => {
     let cancelled = false
@@ -332,17 +220,15 @@ export default function App() {
         if (!cancelled && cfg) {
           setNavCollapsed(Boolean(cfg.sidebarCollapsed))
           if (Number.isFinite(Number(cfg.subtitleSize))) setSubtitleSize(Number(cfg.subtitleSize))
-          if (typeof cfg.captionOpen === 'boolean') setCaptionOpen(cfg.captionOpen)
-          setCaptionPos({ x: Number.isFinite(Number(cfg.captionX)) ? Number(cfg.captionX) : null, y: Number.isFinite(Number(cfg.captionY)) ? Number(cfg.captionY) : null })
-          setCaptionSize({
-            width: Number.isFinite(Number(cfg.captionW)) && cfg.captionW !== null ? Number(cfg.captionW) : null,
-            height: Number.isFinite(Number(cfg.captionH)) && cfg.captionH !== null ? Number(cfg.captionH) : null,
-          })
           setPanelSize({
             width: Number.isFinite(Number(cfg.transcriptW)) && cfg.transcriptW !== null ? Number(cfg.transcriptW) : null,
             height: Number.isFinite(Number(cfg.transcriptH)) && cfg.transcriptH !== null ? Number(cfg.transcriptH) : null,
           })
           if (Number.isFinite(Number(cfg.episodeLeftW)) && cfg.episodeLeftW !== null) setLeftWidth(Number(cfg.episodeLeftW))
+          if (typeof cfg.autoShowTranslation === 'boolean') setAutoShowTranslation(cfg.autoShowTranslation)
+          if (cfg.translateTarget === '' || cfg.translateTarget === 'zh' || cfg.translateTarget === 'en') {
+            setTrTarget(cfg.translateTarget)
+          }
         }
       } catch {
         /* 旧版本没有这个接口时保持默认展开 */
@@ -363,18 +249,6 @@ export default function App() {
     const next = Math.max(12, Math.min(42, Math.round(Number(value) || 15)))
     setSubtitleSize(next)
     saveUi({ subtitleSize: next })
-  }, [saveUi])
-
-  const moveCaption = useCallback((x, y, commit) => {
-    setCaptionPos({ x, y })
-    if (commit) saveUi({ captionX: x, captionY: y })
-  }, [saveUi])
-
-  // 拖右下角改大小：null = 回到自适应；松手时才写盘。
-  const resizeCaption = useCallback((width, height, commit) => {
-    const next = { width: width ?? null, height: height ?? null }
-    setCaptionSize(next)
-    if (commit) saveUi({ captionW: next.width, captionH: next.height })
   }, [saveUi])
 
   // 拖字幕面板改大小：null = 回到默认；松手时才写盘。
@@ -464,29 +338,6 @@ export default function App() {
     }
   }
 
-  const toggleCaption = useCallback(() => {
-    setCaptionOpen((prev) => {
-      const next = !prev
-      saveUi({ captionOpen: next })
-      return next
-    })
-  }, [saveUi])
-
-  const closeCaption = useCallback(() => {
-    setCaptionOpen(false)
-    saveUi({ captionOpen: false })
-  }, [saveUi])
-
-  const captionLine = useMemo(() => {
-    const lines = transcript?.lines
-    if (!lines?.length) return null
-    return lines.find((line) => position >= line.start && position < line.end) || null
-  }, [transcript, position])
-
-  const captionSpeaker = captionLine && captionLine.speaker != null
-    ? (transcript?.speakers?.[captionLine.speaker]?.label || `说话人 ${captionLine.speaker + 1}`)
-    : ''
-
   const toggleNav = useCallback(() => {
     setNavCollapsed((prev) => {
       const next = !prev
@@ -520,10 +371,9 @@ export default function App() {
     return () => window.clearInterval(timer)
   }, [liveStatus])
 
-  // 静音看门狗：开了实时字幕却一直没声音，是「系统输出没走虚拟声卡」的典型表现。
-  // 不解释清楚的话，用户只会看到「一直在等着听」。
+  // 静音看门狗：只在浏览器虚拟声卡模式下生效；macOS 系统音频直采模式有自己的静音提示，别覆盖它。
   useEffect(() => {
-    if (liveStatus !== 'listening') return undefined
+    if (liveStatus !== 'listening' || liveTapMode) return undefined
     const timer = window.setInterval(() => {
       const silent = Date.now() - (liveLastSoundRef.current || 0)
       if (silent > 6000 && liveLinesRef.current.length === 0) {
@@ -533,7 +383,7 @@ export default function App() {
       }
     }, 1200)
     return () => window.clearInterval(timer)
-  }, [liveStatus])
+  }, [liveStatus, liveTapMode])
 
   // 往「独立置顶窗」推一屏内容；窗口没开时宿主会静默忽略。
   const pushLiveWindow = useCallback((payload) => {
@@ -602,10 +452,19 @@ export default function App() {
     setLiveStatus('saving')
     const session = liveSessionRef.current
     liveSessionRef.current = ''
+    fetch(`${API}/live/window`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'close' }),
+    }).catch(() => {})
     try {
       const result = await sendJSON(`${API}/live/stop`, 'POST', { session, save: Boolean(save) })
-      if (result.saved) flash(`字幕已保存：${result.files.md}`)
-      else flash('实时字幕已结束')
+      if (result.saved) {
+        loadLiveHistory()
+        flash('实时字幕已保存，可在左侧「实时记录」查看')
+      } else {
+        flash('实时字幕已结束')
+      }
     } catch (err) {
       flash(`结束实时字幕失败：${err.message || err}`)
     } finally {
@@ -623,11 +482,12 @@ export default function App() {
       liveLinesRef.current = []
       setLiveStatus('idle')
       setLiveLines([])
+      setLiveDraft('')
       setLiveError('')
       setLiveDevice('')
       setLiveStartedAt(0)
     }
-  }, [flash])
+  }, [flash, loadLiveHistory])
 
   const stopLive = useCallback(async () => {
     if (liveTapMode) {
@@ -668,45 +528,86 @@ export default function App() {
     else await finishLive(liveLinesRef.current.length ? liveSaveOnStop : false)
   }, [finishLive, liveNative, liveSaveOnStop, liveTapMode])
 
-  // 系统音频模式下，字幕是宿主生成的：每 600ms 取一次增量，喂给面板和（必要的）浮层。
+  // 轮询宿主实时会话状态：tap 模式拉增量字幕 + 滚字草稿；
+  // 浏览器采集 + 原生窗口模式也要轮询，否则用户在原生窗点 ✕ 时浏览器采集不会自动停掉。
   useEffect(() => {
-    if (!liveTapMode || liveStatus !== 'listening') return undefined
+    if ((!liveTapMode && !liveNative) || liveStatus !== 'listening') return undefined
     let cancelled = false
     const timer = window.setInterval(async () => {
       try {
         const data = await getJSON(`${API}/live/lines?since=${liveLastLineRef.current}`)
         if (cancelled) return
-        if (Array.isArray(data?.lines) && data.lines.length) {
-          liveLinesRef.current = [...liveLinesRef.current, ...data.lines]
-          setLiveLines(liveLinesRef.current)
-          liveLastLineRef.current = liveLinesRef.current[liveLinesRef.current.length - 1]?.id || liveLastLineRef.current
+        if (liveTapMode) {
+          let changed = false
+          const next = [...liveLinesRef.current]
+          if (Array.isArray(data?.lines) && data.lines.length) {
+            for (const line of data.lines) {
+              if (!next.some((item) => item.id === line.id)) next.push(line)
+            }
+            changed = true
+          }
+          // 异步翻译后补回来的译文通过 recent 同步进已有行。
+          if (Array.isArray(data?.recent) && data.recent.length) {
+            for (const item of data.recent) {
+              const idx = next.findIndex((existing) => existing.id === item.id)
+              if (idx >= 0 && item.translations && JSON.stringify(next[idx].translations) !== JSON.stringify(item.translations)) {
+                next[idx] = { ...next[idx], translations: item.translations }
+                changed = true
+              }
+            }
+          }
+          if (changed) {
+            liveLinesRef.current = next
+            setLiveLines(next)
+            liveLastLineRef.current = next[next.length - 1]?.id || liveLastLineRef.current
+          }
+          setLiveDraft(typeof data?.draft === 'string' ? data.draft : '')
+          if (['original', 'bilingual', 'translation'].includes(data?.displayMode)) {
+            setLiveDisplayMode(data.displayMode)
+          }
+          if (Number.isFinite(Number(data?.level))) {
+            liveLevelRef.current = Number(data.level)
+            if (Number(data.level) > 0.004) liveLastSoundRef.current = Date.now()
+          }
+          if (typeof data?.hint === 'string' && data.hint !== liveHint) setLiveHint(data.hint)
+          if (data?.lastError) setLiveError(String(data.lastError))
         }
-        if (Number.isFinite(Number(data?.level))) {
-          liveLevelRef.current = Number(data.level)
-          if (Number(data.level) > 0.004) liveLastSoundRef.current = Date.now()
-        }
-        if (typeof data?.hint === 'string' && data.hint !== liveHint) setLiveHint(data.hint)
         if (data?.alive === false) {
-          // 会话已经在宿主那边结束了（多半是用户在字幕框里点了 ✕）。这边跟着复位。
+          // 会话已经在宿主那边结束了（例如在独立字幕窗里点了 ✕）：同时停掉浏览器采集与复位状态。
+          const capture = liveCaptureRef.current
+          liveCaptureRef.current = null
+          if (capture) capture.stop().catch(() => {})
+          liveSessionRef.current = ''
+          liveQueueRef.current = []
           liveLastLineRef.current = 0
           liveLinesRef.current = []
           setLiveLines([])
+          setLiveDraft('')
           setLiveNative(false)
           setLiveTapMode(false)
+          setLiveExpectNative(false)
           setLiveStatus('idle')
           setLiveDevice('')
           setLiveStartedAt(0)
           setLiveHint('')
+          loadLiveHistory()
         }
       } catch {
         /* 宿主重启时拉取会失败，下一轮自动恢复 */
       }
-    }, 600)
+    }, 500)
     return () => {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [liveTapMode, liveStatus, liveHint])
+  }, [liveTapMode, liveNative, liveStatus, liveHint, loadLiveHistory])
+
+  const changeLiveDisplayMode = useCallback((mode) => {
+    if (!['original', 'bilingual', 'translation'].includes(mode)) return
+    setLiveDisplayMode(mode)
+    pushLiveWindow({ displayMode: mode })
+    sendJSON(`${API}/live/settings`, 'PUT', { displayMode: mode }).catch(() => {})
+  }, [pushLiveWindow])
 
   // 打开独立置顶窗（两条采集路径共用）。打不开就留在页面浮层里，并说明原因。
   const openNativeWindow = useCallback(async (info = {}) => {
@@ -714,9 +615,12 @@ export default function App() {
       const opacity = Number.isFinite(Number(info.opacity)) ? Number(info.opacity) : 0.78
       const size = Number.isFinite(Number(info.fontSize)) ? Number(info.fontSize) : 18
       const width = Number.isFinite(Number(info.width)) ? Number(info.width) : 780
+      const height = Number.isFinite(Number(info.height)) && Number(info.height) >= 88 ? Number(info.height) : 0
+      const mode = ['original', 'bilingual', 'translation'].includes(info.displayMode) ? info.displayMode : 'bilingual'
       setLiveOpacity(opacity)
       setLiveStyleSize(size)
       setLiveWidth(width)
+      setLiveDisplayMode(mode)
       const opened = await sendJSON(`${API}/live/window`, 'POST', { action: 'open' })
       if (opened?.ok) {
         setLiveNative(true)
@@ -727,6 +631,8 @@ export default function App() {
           opacity,
           fontSize: size,
           width,
+          height,
+          displayMode: mode,
           saveOnStop: liveSaveOnStopRef.current,
         })
         return true
@@ -749,6 +655,8 @@ export default function App() {
       const info = await getJSON(`${API}/live`)
       setLiveSaveOnStop(info.saveOnStop !== false)
       liveSaveOnStopRef.current = info.saveOnStop !== false
+      const displayMode = ['original', 'bilingual', 'translation'].includes(info.displayMode) ? info.displayMode : 'bilingual'
+      setLiveDisplayMode(displayMode)
       if (!info.ready) {
         throw new Error('还没有填 DeepSeek API key。设置 →「翻译」里填一个，转写和实时字幕都能用')
       }
@@ -769,7 +677,7 @@ export default function App() {
       if (wantTap) {
         setLiveExpectNative(true)
         try {
-          const tapped = await sendJSON(`${API}/live/tap`, 'POST', { target: info.target || 'zh', chunkMs: 500 })
+          const tapped = await sendJSON(`${API}/live/tap`, 'POST', { target: info.target || 'zh', displayMode, chunkMs: 200 })
           if (tapped?.ok) {
             setLiveTapInfo(tapped)
             setLiveTapMode(true)
@@ -792,7 +700,7 @@ export default function App() {
       }
       setLiveTapMode(false)
 
-      const started = await sendJSON(`${API}/live/start`, 'POST', { target: info.target || 'zh' })
+      const started = await sendJSON(`${API}/live/start`, 'POST', { target: info.target || 'zh', displayMode })
       if (!started?.session?.id) throw new Error('宿主没给出会话 id')
       liveSessionRef.current = started.session.id
       const capture = await startLiveCapture({
@@ -850,6 +758,13 @@ export default function App() {
         if (cancelled) return
         setSettings(state.settings)
         setFolders(state.folders || [])
+        const live = await getJSON(`${API}/live/lines?since=0`).catch(() => null)
+        if (!cancelled && (live?.alive || live?.windowOpen || live?.running)) {
+          setLiveTapMode(Boolean(live?.running))
+          setLiveNative(Boolean(live?.windowOpen))
+          setLiveStartedAt(Date.now())
+          setLiveStatus('listening')
+        }
         const data = await loadLibrary()
         if (cancelled) return
         const lastId = state.settings?.lastEpisodeId
@@ -891,28 +806,40 @@ export default function App() {
   useEffect(() => {
     let cancelled = false
     setTranscript(null)
+    setTxLoadedId(null)
     setTxError('')
     setTxElapsed(0)
     if (!current?.id) {
       setTxStatus('none')
       return () => { cancelled = true }
     }
+    const targetId = current.id
     ;(async () => {
       try {
-        const state = await getJSON(`${API}/episodes/${current.id}/transcript`)
+        const state = await getJSON(`${API}/episodes/${targetId}/transcript`)
         if (cancelled) return
         setTxStatus(state.status)
         setTxInfo(state.status === 'queued' || state.status === 'running' ? state : null)
         if (state.status === 'done' && state.transcript) {
           setTranscript(state.transcript)
+          // 打开已有译文的单集时默认展示双语（除非用户关掉了 autoShowTranslation）。
+          if (autoShowTranslationRef.current && !trTargetRef.current) {
+            const avail = Object.keys(state.transcript.providers || {}).filter((k) => k && k !== '_provider')[0]
+              || (state.transcript.lines?.some((l) => l.translations?.zh) ? 'zh' : state.transcript.lines?.some((l) => l.translations?.en) ? 'en' : '')
+            if (avail) setTrTarget(avail)
+          }
         } else if (state.status === 'queued' || state.status === 'running') {
           setTxElapsed(state.elapsedMs || 0)
           if (state.transcript) setTranscript(state.transcript)
         } else if (state.status === 'error') {
           setTxError(state.error || '转写失败')
         }
+        setTxLoadedId(targetId)
       } catch (err) {
-        if (!cancelled) setTxError(err.message)
+        if (!cancelled) {
+          setTxError(err.message)
+          setTxLoadedId(targetId)
+        }
       }
     })()
     return () => { cancelled = true }
@@ -958,6 +885,7 @@ export default function App() {
         } else if (state.status === 'done' && state.transcript) {
           setTranscript(state.transcript)
           setSubsOpen(true)
+          loadLibrary().catch(() => {})
           flash('转写完成')
         } else if (state.status === 'error') {
           setTxError(state.error || '转写失败')
@@ -977,7 +905,10 @@ export default function App() {
       const state = await getJSON(`${API}/episodes/${id}/translate?target=${trTarget}`)
       if (cancelled) return
       setTrJob(state)
-      if (state.status === 'done') flash('翻译完成')
+      if (state.status === 'done') {
+        loadLibrary().catch(() => {})
+        flash('翻译完成')
+      }
       try {
         const fresh = await getJSON(`${API}/episodes/${id}/transcript`)
         if (!cancelled && fresh.transcript) setTranscript(fresh.transcript)
@@ -1022,13 +953,14 @@ export default function App() {
     sendJSON(`${API}/settings`, 'PATCH', patch).catch(() => {})
   }, [])
 
-  // 边播边出字幕：开始播放时如果这集还没有完整字幕、也没在转写，就自动起一个实时任务。
-  // 只对云端 API 生效（本地模型是整段批量跑的，不适合边播边算）。
+  // 边播边出字幕：必须等当前单集的已有字幕加载完（txLoadedId === current.id）再判断，
+  // 彻底杜绝「播放触发早于 GET /transcript 返回」导致的误重转！
   useEffect(() => {
     if (!playing || !current) return
+    if (txLoadedId !== current.id) return
     if (txSettings?.realtime === false || txSettings?.provider === 'local') return
+    if (txStatus === 'done' || txStatus === 'queued' || txStatus === 'running') return
     if (transcript && !transcript.partial) return
-    if (txStatus === 'queued' || txStatus === 'running') return
     const id = current.id
     if (realtimeTried.current.has(id)) return
     realtimeTried.current.add(id)
@@ -1037,7 +969,7 @@ export default function App() {
         if (res?.status === 'queued') setTxStatus('queued')
       })
       .catch(() => { /* 没 key 之类的原因起不来就静默放弃，用户手动点转写时会给提示 */ })
-  }, [playing, current, transcript, txStatus, txSettings])
+  }, [playing, current, txLoadedId, transcript, txStatus, txSettings])
 
   const startTranscript = useCallback(async () => {
     const episode = currentRef.current
@@ -1068,16 +1000,20 @@ export default function App() {
   }, [flash, txSettings])
 
   const toggleSubs = useCallback(() => {
-    if (transcript) {
-      setSubsOpen((value) => !value)
+    if (detailId) {
+      setDetailSubsOpen((value) => !value)
       return
     }
-    if (txStatus === 'queued' || txStatus === 'running') {
+    if (subsOpen) {
+      setSubsOpen(false)
+      return
+    }
+    if (transcript || txStatus === 'queued' || txStatus === 'running') {
       setSubsOpen(true)
       return
     }
     startTranscript()
-  }, [transcript, txStatus, startTranscript])
+  }, [detailId, subsOpen, transcript, txStatus, startTranscript])
 
   const cancelTranscript = useCallback(async () => {
     if (!currentRef.current) return
@@ -1234,10 +1170,12 @@ export default function App() {
     }
   }, [trTarget, refreshTranscript, flash])
 
-  // 切换对照语言只换显示目标并读取后端持久状态，绝不自动触发翻译。
+  // 切换对照语言：记住选择（刷新后仍保持），绝不自动发起额外付费请求。
   const changeTarget = useCallback((value) => {
-    setTrTarget(value || '')
-  }, [])
+    const next = value || ''
+    setTrTarget(next)
+    saveUi({ translateTarget: next })
+  }, [saveUi])
 
   const openEpisodeWeb = async () => {
     if (!detailItem?.eid) return
@@ -1320,7 +1258,7 @@ export default function App() {
   const activeJobs = useMemo(() => jobs.filter((job) => job.status === 'queued' || job.status === 'running'), [jobs])
   const unTranscribed = useMemo(() => visible.filter((item) => !item.hasTranscript), [visible])
 
-  const continueList = useMemo(() => {
+  const inProgressItems = useMemo(() => {
     return items
       .filter((item) => {
         const saved = progress[item.id]
@@ -1328,8 +1266,9 @@ export default function App() {
         return item.duration ? saved.position / item.duration < 0.97 : true
       })
       .sort((a, b) => (progress[b.id]?.updatedAt || 0) - (progress[a.id]?.updatedAt || 0))
-      .slice(0, 4)
   }, [items, progress])
+
+  const continueList = useMemo(() => inProgressItems.slice(0, 4), [inProgressItems])
 
   const totalSeconds = useMemo(() => items.reduce((sum, item) => sum + (item.duration || 0), 0), [items])
   const totalHours = Math.round((totalSeconds / 3600) * 10) / 10
@@ -1342,15 +1281,25 @@ export default function App() {
 
   const viewTitle = folderView
     ? crumbs.length > 1 ? crumbs[crumbs.length - 1].label : shortPath(folderView)
-    : view === 'inprogress' ? '继续收听' : view === 'finished' ? '已播完' : view === 'xyz' ? '小宇宙' : '全部单集'
+    : view === 'inprogress'
+      ? '继续收听'
+      : view === 'finished'
+        ? '已播完'
+        : view === 'xyz'
+          ? '小宇宙'
+          : view === 'live'
+            ? '实时记录'
+            : '全部单集'
   const detailItem = detailId ? (items.find((item) => item.id === detailId) || (current?.id === detailId ? current : null)) : null
   const subline = loading
     ? '正在读取媒体库…'
-    : scan.running
-      ? '正在扫描文件夹…'
-      : folderView
-        ? `${visible.length} 集${childDirs.length ? ` · ${childDirs.length} 个子文件夹` : ''} · 只看这一层`
-        : `${visible.length} 集 · 共 ${totalHours} 小时 · ${folders.length} 个文件夹`
+    : view === 'live'
+      ? `${liveHistory.length} 条已保存的实时字幕`
+      : scan.running
+        ? '正在扫描文件夹…'
+        : folderView
+          ? `${visible.length} 集${childDirs.length ? ` · ${childDirs.length} 个子文件夹` : ''} · 只看这一层`
+          : `${visible.length} 集 · 共 ${totalHours} 小时 · ${folders.length} 个文件夹`
 
   const currentIndex = useMemo(() => {
     if (!current) return -1
@@ -1658,6 +1607,21 @@ export default function App() {
     stepEpisode(1)
   }
 
+  const folderCounts = useMemo(() => {
+    const map = new Map()
+    for (const item of items) {
+      if (!item?.root) continue
+      map.set(item.root, (map.get(item.root) || 0) + 1)
+    }
+    return map
+  }, [items])
+
+  const rescanLibrary = async () => {
+    await sendJSON(`${API}/scan`, 'POST', {})
+    await loadLibrary()
+    flash('正在重新扫描媒体库')
+  }
+
   const addFolder = async (folderPath) => {
     await sendJSON(`${API}/folders`, 'POST', { path: folderPath })
     await loadLibrary()
@@ -1682,10 +1646,7 @@ export default function App() {
     setDragging(false)
   }
 
-  const onDrop = async (event) => {
-    event.preventDefault()
-    setDragging(false)
-    const dataTransfer = event.dataTransfer
+  const handleDropFiles = async (dataTransfer) => {
     const files = [...(dataTransfer?.files || [])]
     const paths = files.map((file) => file.path).filter((item) => typeof item === 'string' && item)
     const uriPaths = String(dataTransfer?.getData('text/uri-list') || '')
@@ -1735,8 +1696,14 @@ export default function App() {
     flash(ok ? `已导入 ${ok} 个音频` : '导入失败，请重试')
   }
 
-  const removeFolder = async (folderPath) => {
-    if (!window.confirm(`从媒体库移除这个文件夹？\n${folderPath}\n\n不会删除你的文件。`)) return
+  const onDrop = async (event) => {
+    event.preventDefault()
+    setDragging(false)
+    await handleDropFiles(event.dataTransfer)
+  }
+
+  const removeFolder = async (folderPath, opts = {}) => {
+    if (!opts?.skipConfirm && !window.confirm(`从媒体库移除这个文件夹？\n${folderPath}\n\n不会删除你的文件。`)) return
     try {
       await sendJSON(`${API}/folders`, 'DELETE', { path: folderPath })
       setFolderView((prev) => (prev === folderPath ? '' : prev))
@@ -1797,9 +1764,9 @@ export default function App() {
       ) : null}
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand-mark"><Icon name="wave" size={20} /></span>
+          <span className="brand-mark"><Icon name="wave" size={16} /></span>
           <span className="brand-name">Podwave</span>
-          <span className="brand-version">0.11</span>
+          <span className="brand-version">0.12</span>
           <button className="icon-btn brand-collapse" title="收起侧边栏" onClick={toggleNav}>
             <Icon name="chevron-left" size={16} />
           </button>
@@ -1808,19 +1775,26 @@ export default function App() {
         <nav className="nav">
           {[
             ['all', '全部单集', items.length],
-            ['inprogress', '继续收听', continueList.length],
+            ['inprogress', '继续收听', inProgressItems.length],
             ['finished', '已播完', items.filter(isFinished).length],
             ['xyz', '小宇宙', ''],
+            ['live', '实时记录', liveHistory.length],
           ].map(([key, label, count]) => (
             <button
               key={key}
               className={`nav-item ${view === key && !folderView ? 'active' : ''}`}
               onClick={() => {
+                setDetailId(null)
                 setFolderView('')
+                setSubDir('')
                 setView(key)
+                if (key === 'live') loadLiveHistory()
               }}
             >
-              <span>{label}</span>
+              <span className="nav-label">
+                <span className="nav-led" aria-hidden="true" />
+                <span>{label}</span>
+              </span>
               <span className="nav-count">{count || ''}</span>
             </button>
           ))}
@@ -1828,56 +1802,90 @@ export default function App() {
 
         <div className="side-section">
           <div className="side-head">
-            <span>文件夹</span>
-            <button className="icon-btn" title="添加文件夹" onClick={() => setAddOpen(true)}>
-              <Icon name="plus" size={16} />
+            <span>音频目录</span>
+            <button className="rack-add-btn" title="添加与管理文件夹" onClick={() => setAddOpen(true)}>
+              <Icon name="plus" size={13} />
+              <span>添加</span>
             </button>
           </div>
           {folders.length === 0 ? (
-            <p className="side-empty">还没有文件夹。<br />添加一个播客所在目录开始。</p>
+            <div className="side-empty-card">
+              <p className="side-empty">还没有添加播客目录</p>
+              <button type="button" className="btn primary side-empty-cta" onClick={() => setAddOpen(true)}>
+                <Icon name="folder-plus" size={14} />
+                <span>选择文件夹</span>
+              </button>
+            </div>
           ) : (
             <ul className="folder-list">
-              {folders.map((folder) => (
-                <li
-                  key={folder}
-                  title={folder}
-                  className={folderView === folder ? 'is-active' : ''}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => {
-                    setView('all')
-                    setFilter('all')
-                    setQuery('')
-                    setFolderView((prev) => (prev === folder ? '' : folder))
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== 'Enter' && event.key !== ' ') return
-                    event.preventDefault()
-                    setView('all')
-                    setFilter('all')
-                    setQuery('')
-                    setFolderView((prev) => (prev === folder ? '' : folder))
-                  }}
-                >
-                  <Icon name="folder" size={16} />
-                  <span className="folder-name">{shortPath(folder)}</span>
-                  <button
-                    className="folder-remove"
-                    title="移除"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      removeFolder(folder)
+              {folders.map((folder) => {
+                const count = folderCounts.get(folder) || 0
+                return (
+                  <li
+                    key={folder}
+                    title={folder}
+                    className={folderView === folder ? 'is-active' : ''}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      setDetailId(null)
+                      setView('all')
+                      setFilter('all')
+                      setQuery('')
+                      setSubDir('')
+                      setFolderView((prev) => (prev === folder ? '' : folder))
                     }}
-                  >×</button>
-                </li>
-              ))}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return
+                      event.preventDefault()
+                      setDetailId(null)
+                      setView('all')
+                      setFilter('all')
+                      setQuery('')
+                      setSubDir('')
+                      setFolderView((prev) => (prev === folder ? '' : folder))
+                    }}
+                  >
+                    <span className="slot-dot" aria-hidden="true" />
+                    <span className="slot-info">
+                      <span className="folder-name">{shortPath(folder)}</span>
+                      <span className="slot-path">{count} 集</span>
+                    </span>
+                    <button
+                      className="folder-remove"
+                      title="移除"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        removeFolder(folder)
+                      }}
+                    >×</button>
+                  </li>
+                )
+              })}
             </ul>
           )}
         </div>
 
         <div className="side-foot">
-          <strong>本地播放</strong>
-          <span>音频只从你的硬盘读取，不会上传。</span>
+          <div className="theme-switch" role="group" aria-label="外观模式">
+            {[
+              ['light', '浅色'],
+              ['dark', '深色'],
+              ['system', '系统'],
+            ].map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={`theme-seg ${themeMode === id ? 'is-on' : ''}`}
+                aria-pressed={themeMode === id}
+                onClick={() => setThemeMode(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <strong>本地只读播放</strong>
+          <span>音频仅从硬盘读取，不会上传。</span>
         </div>
       </aside>
 
@@ -1889,16 +1897,25 @@ export default function App() {
           </div>
           <div className="tools">
             <button
-              className={`tool-btn ${liveStatus !== 'idle' ? 'is-on' : ''}`}
+              className="tool-btn"
+              onClick={() => setAddOpen(true)}
+              title="添加与管理本地播客文件夹"
+            >
+              <Icon name="folder-plus" size={15} />
+              <span>管理文件夹</span>
+            </button>
+            <button
+              className={`tool-btn ${liveStatus !== 'idle' ? 'is-on is-live' : ''}`}
               onClick={() => {
                 if (liveStatus === 'idle') startLive()
                 else if (liveStatus === 'listening') stopLive()
+                else if (liveStatus === 'asking') finishLive(false)
               }}
               disabled={liveStatus === 'starting' || liveStatus === 'saving'}
-              title="实时字幕：听系统正在播放的声音（YouTube、直播、会议都能用）"
+              title={liveStatus === 'idle' ? '实时字幕：听系统正在播放的声音（YouTube、直播、会议都能用）' : '停止并关闭实时字幕'}
             >
-              <Icon name="wave" size={16} />
-              <span>{liveStatus === 'starting' ? '打开字幕窗…' : '实时字幕'}</span>
+              <span className="live-dot" aria-hidden="true" />
+              <span>{liveStatus === 'starting' ? '打开字幕窗…' : liveStatus === 'saving' ? '正在停止…' : liveStatus !== 'idle' ? '停止字幕' : '实时字幕'}</span>
             </button>
             <button className={`tool-btn ${jobsOpen ? 'is-on' : ''}`} onClick={() => setJobsOpen((value) => !value)} title="转写任务">
               <Icon name="tasks" size={16} />
@@ -2002,7 +2019,7 @@ export default function App() {
                     <button className="notes-head" onClick={() => setNotesOpen((prev) => !prev)}>
                       单集介绍 {notesOpen ? '收起' : '展开'}
                     </button>
-                    <p className="notes-body">{detailItem.shownotes}</p>
+                    <p className="notes-body">{stripHtml(detailItem.shownotes)}</p>
                   </div>
                 ) : null}
                 <div className="episode-actions">
@@ -2035,6 +2052,7 @@ export default function App() {
                   </PopMenu>
                 </div>
               </div>
+              {detailSubsOpen ? (
               <div className="episode-right">
                 {/* 分隔条挂在字幕这一栏里：高度跟面板走，不会在面板下面多出一截悬空的线。 */}
                 <span
@@ -2075,7 +2093,7 @@ export default function App() {
                   height={panelSize.height}
                   onResize={resizeTranscript}
                   onSeek={seekTo}
-                  onClose={() => setDetailId(null)}
+                  onClose={() => setDetailSubsOpen(false)}
                   onStart={startTranscript}
                   target={trTarget}
                   job={trJob}
@@ -2083,13 +2101,16 @@ export default function App() {
                   onTranslate={startTranslate}
                   onRetranslate={retranslateAll}
                   onRetranslateLine={retranslateLine}
-                  onOpenSettings={() => setTrSettingsOpen(true)}
+                  onOpenSettings={() => flash('请在 DSH 左侧「设置 → 播客」中一键调整方案与选项')}
                 />
               </div>
+              ) : null}
             </div>
           </>
         ) : view === 'xyz' ? (
           <XyzPanel onPlay={playXyz} currentId={current?.id} />
+        ) : view === 'live' ? (
+          <LiveHistoryPanel items={liveHistory} onRefresh={loadLiveHistory} onFlash={flash} />
         ) : (
           <>
         <div className="filter-chips">
@@ -2163,6 +2184,7 @@ export default function App() {
             <span className="col-index">#</span>
             <span>单集</span>
             <span className="col-duration">时长</span>
+            <span className="col-star" aria-hidden="true" />
             <span className="col-progress">进度</span>
           </div>
 
@@ -2178,6 +2200,8 @@ export default function App() {
                     </span>
                   </span>
                   <span className="col-duration row-duration">›</span>
+                  <span className="col-star" aria-hidden="true" />
+                  <span className="col-progress" aria-hidden="true" />
                 </button>
               ))}
             </div>
@@ -2220,8 +2244,9 @@ export default function App() {
                       <span className="row-text">
                         <span className="row-title">{item.title}</span>
                         <span className="row-meta">
-                          {item.artist}{item.album ? ` · ${item.album}` : ''} · {fmtDate(item.mtime)}
+                          <span className="row-meta-text">{item.artist}{item.album ? ` · ${item.album}` : ''} · {fmtDate(item.mtime)}</span>
                           {item.hasTranscript ? <span className="row-badge">字幕</span> : null}
+                          {item.hasTranslation ? <span className="row-badge is-bilingual">双语</span> : null}
                         </span>
                       </span>
                     </span>
@@ -2287,7 +2312,7 @@ export default function App() {
           onTranslate={startTranslate}
           onRetranslate={retranslateAll}
           onRetranslateLine={retranslateLine}
-          onOpenSettings={() => setTrSettingsOpen(true)}
+          onOpenSettings={() => flash('请在 DSH 左侧「设置 → 播客」中一键调整方案与选项')}
         />
       ) : null}
 
@@ -2345,6 +2370,7 @@ export default function App() {
           onPointerCancel={onSeekPointerUp}
           onKeyDown={onSeekKeyDown}
         >
+          <div className="seek-ticks" aria-hidden="true" />
           <div className="seek-track">
             <div className="seek-fill" style={{ width: `${duration ? Math.min(100, Math.max(0, (position / duration) * 100)) : 0}%` }} />
           </div>
@@ -2376,38 +2402,15 @@ export default function App() {
           </div>
 
           <div className="player-right">
-            <PopMenu
-              className={`player-subs ${subsOpen || captionOpen ? 'is-active' : ''}`}
-              buttonClassName={`subs-btn ${subsOpen || captionOpen ? 'active' : ''}`}
-              placement="up"
+            <button
+              className={`subs-btn ${(detailItem ? detailSubsOpen : subsOpen) ? 'active' : ''}`}
               disabled={!current}
-              title="字幕"
-              trigger={(
-                <>
-                  <Icon name="wave" size={15} />
-                  <span>{transcript ? '字幕' : txStatus === 'queued' || txStatus === 'running' ? '转写中' : '转写'}</span>
-                </>
-              )}
+              onClick={toggleSubs}
+              title={(detailItem ? detailSubsOpen : subsOpen) ? '收起字幕面板' : '展开字幕面板'}
             >
-              {({ close }) => (
-                <>
-                  <MenuAction
-                    checked={subsOpen}
-                    hint={transcript ? `${transcript.lines.length} 行` : '还没转写'}
-                    onSelect={() => { close(); toggleSubs() }}
-                  >
-                    字幕面板
-                  </MenuAction>
-                  <MenuAction
-                    checked={captionOpen}
-                    hint="浮在屏幕上"
-                    onSelect={() => { close(); toggleCaption() }}
-                  >
-                    悬浮字幕窗
-                  </MenuAction>
-                </>
-              )}
-            </PopMenu>
+              <Icon name="wave" size={15} />
+              <span>{transcript ? '字幕' : txStatus === 'queued' || txStatus === 'running' ? '转写中' : '转写'}</span>
+            </button>
             <span className="time">{fmtTime(position)} / {fmtTime(duration)}</span>
             <span className="rate-wrap">
               <button
@@ -2474,56 +2477,34 @@ export default function App() {
         </div>
       </footer>
 
-      {addOpen ? <AddFolderDialog onClose={() => setAddOpen(false)} onSubmit={addFolder} onPick={pickFolder} /> : null}
-      {trSettingsOpen ? (
-        <TranslateSettingsDialog
-          config={trConfig}
-          onClose={() => setTrSettingsOpen(false)}
-          onSave={async (patch) => {
-            const config = await sendJSON(`${API}/translate/settings`, 'PUT', patch)
-            setTrConfig(config)
-            setTrSettingsOpen(false)
-            flash('翻译设置已保存')
-          }}
+      {addOpen ? (
+        <AddFolderModal
+          folders={folders}
+          items={items}
+          onClose={() => setAddOpen(false)}
+          onSubmit={addFolder}
+          onPick={pickFolder}
+          onRemoveFolder={removeFolder}
+          onRescan={rescanLibrary}
+          onDropFiles={handleDropFiles}
         />
       ) : null}
       {toast ? <div className="toast">{toast}</div> : null}
 
-      {captionOpen ? (
-        <CaptionOverlay
-          line={captionLine}
-          speakerLabel={captionSpeaker}
-          target={trTarget}
-          status={txStatus}
-          fontSize={subtitleSize}
-          onFontSize={changeSubtitleSize}
-          x={captionPos.x}
-          y={captionPos.y}
-          width={captionSize.width}
-          height={captionSize.height}
-          onMove={moveCaption}
-          onResize={resizeCaption}
-          onClose={closeCaption}
-          onSeek={seekTo}
-        />
-      ) : null}
-
       {liveStatus !== 'idle' && !liveNative && !liveExpectNative ? (
         <LiveCaptionOverlay
           lines={liveLines}
+          draft={liveDraft}
+          displayMode={liveDisplayMode}
+          onDisplayMode={changeLiveDisplayMode}
           status={liveStatus}
           error={liveError}
           device={liveDevice}
           count={liveLines.length}
           elapsed={liveStartedAt ? Math.max(0, Math.round((liveNow - liveStartedAt) / 1000)) : 0}
           fontSize={subtitleSize}
-          native={liveNative}
           level={liveLevel}
           hint={liveHint}
-          opacity={liveOpacity}
-          styleSize={liveStyleSize}
-          width={liveWidth}
-          onStyle={changeLiveStyle}
           onStop={stopLive}
           onSave={finishLive}
           onClose={() => finishLive(false)}

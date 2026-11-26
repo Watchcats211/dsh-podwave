@@ -120,7 +120,7 @@ export default function CaptionOverlay({ line, target, fontSize, onFontSize, x, 
         title="拖动可以换位置"
       >
         <Icon name="wave" size={13} />
-        <span className="caption-title">实时字幕</span>
+        <span className="caption-title">悬浮字幕</span>
         <SubtitleSize value={fontSize} onChange={onFontSize} compact />
         <button className="caption-close" onClick={onClose} title="关闭（Esc）">×</button>
       </div>

@@ -52,6 +52,14 @@ export const CONFIG_DEFAULTS = {
     // 「环境与模型」「模型」两张诊断卡也默认收起：走云端时它们本来就不该占版面。
     envOpen: false,
     modelsOpen: false,
+    // 记住用户上次选的字幕译文语言（'' = 仅原文，'zh' = 中文对照，'en' = English）。
+    translateTarget: 'zh',
+    // 打开已翻译单集时默认展示双语对照，省得每次都要手动切下拉框。
+    autoShowTranslation: true,
+    // 设置页「高级设置」默认折叠，只把核心的一键配置留在一屏里。
+    advancedOpen: false,
+    // 外观模式：system（跟随 DSH/系统）、light（浅色）、dark（深色）。
+    themeMode: 'system',
   },
   // DeepSeek API 的地址 / 密钥 / 对话模型：转写和翻译共用这一份，用户只填一次。
   // 老版本把这三项存在 translate 段里，读到时由 migrateApiSection() 挪过来。
@@ -67,6 +75,8 @@ export const CONFIG_DEFAULTS = {
     provider: 'dsh',
     providerPinned: false,
     target: 'zh',
+    // 外语单集转写完成后自动翻译（中文内容自动跳过，无需用户再点一次翻译）。
+    autoAfterTranscribe: true,
   },
   // 默认模型绝不能写死 MLX：那套模型 platform 是 darwin-arm64，Windows 装不了。
   // dir 为空表示用默认目录（<数据目录>/models）；用户改过则存绝对路径。
@@ -92,10 +102,13 @@ export const CONFIG_DEFAULTS = {
     deviceId: '',
     deviceLabel: '',
     saveOnStop: true,
-    // 独立字幕窗的外观：不透明度只管底板（文字始终不透明），宽度和字号决定「大小」。
+    // 独立字幕窗的外观：不透明度只管底板（文字始终不透明），宽度/高度和字号决定「大小」。
     opacity: 0.78,
     fontSize: 18,
     width: 780,
+    height: null,
+    // 实时字幕显示内容：bilingual（原文 + 译文）/ original（仅原文）/ translation（仅译文）。
+    displayMode: 'bilingual',
     // 采集来源：auto = 能用系统音频就去掉虚拟声卡，否则退回浏览器采集；
     // tap = 只用系统音频；browser = 只用 BlackHole/麦克风。
     source: 'auto',

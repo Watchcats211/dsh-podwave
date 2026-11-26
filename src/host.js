@@ -8,6 +8,7 @@ import path from 'node:path'
 import { createReadStream, createWriteStream } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { pipeline } from 'node:stream/promises'
+import { fileURLToPath } from 'node:url'
 import { DATA_DIR, COVERS_DIR } from './state.js'
 import {
   addFolderState,
@@ -43,6 +44,7 @@ import {
 } from './xyz.js'
 import {
   addFolder,
+  displayPath,
   expandHome,
   forgetEpisode,
   forgetEpisodesUnder,
@@ -51,8 +53,10 @@ import {
   getEpisodePaths,
   getEpisodes,
   getScanState,
+  inspectFolderCandidate,
   scanLibrary,
   setEpisodeCover,
+  suggestFolders,
 } from './library.js'
 import {
   deleteTranscript,
@@ -80,27 +84,44 @@ import { closeLiveSpeakers } from './live-speaker.js'
 import { captionWindowState, closeCaptionWindow, onCaptionWindowEvent, openCaptionWindow, pushCaption } from './caption-window.js'
 import { startTap, stopTap, tapState, tapSupport } from './live-tap.js'
 import {
+  deleteLiveHistory,
   getLiveSession,
+  listLiveHistory,
+  LIVE_DIR,
   liveReady,
+  liveToMarkdown,
+  liveToSrt,
   openLiveSession,
   publicLiveSession,
   queueLiveSegment,
+  readLiveHistory,
   resetLiveSessions,
   startLiveSession,
   stopLiveSession,
 } from './live-caption.js'
+import { draftSupport, stopDraftWorker } from './live-draft.js'
+import { transcriptBadges } from './fingerprint.js'
 import { isLinux, isMac, isWindows } from './platform.js'
 import { listJobs, removeJob, upsertJob, getJob } from './jobs.js'
 import { scan as scanSetup, plan as planSetup, install as installSetup, cancelSetup, setupJob, llamaBinary, verify as verifySetup } from './setup.js'
-import { getSection, updateSection } from './config.js'
+import { getSection, platformDefaults, updateSection } from './config.js'
 import { diarizeInfo } from './diarize.js'
-import { getTranslationState, listApiModels, publicConfig, saveConfig, setDshContext, startTranslation, translateLine } from './translate.js'
+import { closeLocalTranslator, getTranslationState, listApiModels, publicConfig, saveConfig, setDshContext, startTranslation, translateLine } from './translate.js'
 import { listModels, loadModelConfig, modelsDir, modelsMoveState, modelsSummary, removeModel, saveModelConfig, setModelsDir, setWorkspaceRoots, getWorkspaceRoot } from './models.js'
 import { findEpisode, getProviderById, listAllEpisodes } from './providers.js'
 // 设置页每次打开都会拉 /api/update；漏了这个 import 会让整页 500（v0.11.10 起就漏了）。
 import { checkUpdate } from './update.js'
 
 export const name = 'dsh-podwave'
+
+const PKG_VERSION = (() => {
+  try {
+    const pkgPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json')
+    return JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version || '0.0.0'
+  } catch {
+    return '0.0.0'
+  }
+})()
 
 const IMPORTS_DIR = path.join(DATA_DIR, 'imports')
 
@@ -497,9 +518,13 @@ async function addFolderByPath(rawPath) {
   return folder
 }
 
-async function startXyzDownloadAndTranscribe(id) {
+async function startXyzDownloadAndTranscribe(id, { force = false, resume = false, realtime = false } = {}) {
   const item = getXyzItem(id)
   if (!item) throw new Error('单集不存在')
+  if (!force && !resume) {
+    const existing = await readTranscript(id)
+    if (existing && !existing.partial) return { status: 'done', lines: existing.lines.length }
+  }
   const key = `download:${id}`
   upsertJob({ key, type: 'download', episodeId: id, status: 'running', stage: 'downloading', progress: 0, startedAt: Date.now() })
   try {
@@ -508,11 +533,26 @@ async function startXyzDownloadAndTranscribe(id) {
     })
     if (getJob(key)?.status === 'cancelled') return
     upsertJob({ key, stage: 'transcribing', progress: 99 })
-    await startTranscription({ id, file, title: item.title, duration: item.duration }, { force: true })
+    await startTranscription({ id, eid: item.eid, file, title: item.title, duration: item.duration }, { force, resume, realtime })
     upsertJob({ key, status: 'done', stage: 'done', progress: 100 })
   } catch (error) {
     upsertJob({ key, status: 'error', error: error.message })
   }
+}
+
+function annotateXyzEpisodes(list) {
+  const items = Array.isArray(list) ? list : []
+  if (!items.length) return items
+  const badges = transcriptBadges(items.map((ep) => ({ id: `xyz${ep.eid}`, eid: ep.eid, title: ep.title, duration: ep.duration })))
+  return items.map((ep) => {
+    const badge = badges.get(`xyz${ep.eid}`)
+    return {
+      ...ep,
+      hasTranscript: Boolean(badge?.hasTranscript),
+      hasTranslation: Boolean(badge?.hasTranslation),
+      translations: badge?.translations || [],
+    }
+  })
 }
 
 async function route(ctx, req, res) {
@@ -521,7 +561,7 @@ async function route(ctx, req, res) {
   const method = req.method || 'GET'
 
   if (routePath === 'api/setup') {
-    return json(res, 200, { ...scanSetup(), job: setupJob() })
+    return json(res, 200, { ...scanSetup(), version: PKG_VERSION, job: setupJob() })
   }
   if (routePath === 'api/setup/plan' && method === 'GET') {
     const source = url.searchParams.get('source') || 'auto'
@@ -545,7 +585,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.65',
+      version: PKG_VERSION,
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -575,7 +615,45 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.65', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: PKG_VERSION, mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+  }
+  if (method === 'POST' && routePath === 'api/preset') {
+    const body = await readJson(req)
+    const preset = String(body?.preset || '').trim()
+    if (!['cloud', 'offline', 'hybrid'].includes(preset)) {
+      return json(res, 400, { error: '不支持的配置方案，可选 cloud / offline / hybrid' })
+    }
+    const asrProviderNext = preset === 'cloud' ? 'api' : 'local'
+    const translateProviderNext = preset === 'offline' ? 'local' : 'dsh'
+    updateSection('transcribe', { provider: asrProviderNext })
+    saveConfig({ provider: translateProviderNext, autoAfterTranscribe: true })
+    // 切到本地相关方案时，如果当前选中的模型不可用，自动挑一个已就绪的推荐本地模型。
+    if (asrProviderNext === 'local' || translateProviderNext === 'local') {
+      const currentModels = loadModelConfig()
+      const installed = listModels().filter((m) => m.ready)
+      const defaults = platformDefaults().models || {}
+      const patch = {}
+      if (asrProviderNext === 'local') {
+        const readyAsr = installed.filter((m) => m.kind === 'asr')
+        if (readyAsr.length && !readyAsr.some((m) => m.name === currentModels.asrModel)) {
+          patch.asrModel = readyAsr.find((m) => m.name === defaults.asrModel)?.name || readyAsr[0].name
+        }
+      }
+      if (translateProviderNext === 'local') {
+        const readyTr = installed.filter((m) => m.kind === 'translate')
+        if (readyTr.length && !readyTr.some((m) => m.name === currentModels.translateModel)) {
+          patch.translateModel = readyTr.find((m) => m.name === defaults.translateModel)?.name || readyTr[0].name
+        }
+      }
+      if (Object.keys(patch).length) saveModelConfig(patch)
+    }
+    const section = getSection('transcribe') || {}
+    return json(res, 200, {
+      preset,
+      transcribe: { ...section, runtime: runtimeInfo() },
+      translate: publicConfig(),
+      models: { config: loadModelConfig(), models: listModels(), storage: modelsSummary() },
+    })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -583,15 +661,10 @@ async function route(ctx, req, res) {
   }
   if (method === 'GET' && routePath === 'api/episodes') {
     const state = getState()
-    let transcriptIds = []
-    try {
-      transcriptIds = fs.readdirSync(TRANSCRIPTS_DIR).filter((file) => file.endsWith('.json')).map((file) => file.replace(/\.json$/, ''))
-    } catch {
-      transcriptIds = []
-    }
-    const withTranscript = new Set(transcriptIds)
     const favorites = new Set(state.favorites || [])
     const hidden = new Set(state.hidden || [])
+    const visible = listAllEpisodes().filter((episode) => !hidden.has(episode.id))
+    const badges = transcriptBadges(visible)
     // 每个本地单集归属到哪个「已添加的文件夹」：按路径前缀匹配，取最长的那个，
     // 这样嵌套添加（例如 Downloads 与 Downloads/播客）时算在最具体的文件夹下。
     const roots = [...(state.folders || [])].sort((a, b) => b.length - a.length)
@@ -601,14 +674,19 @@ async function route(ctx, req, res) {
       if (root) rootOf.set(id, root)
     }
     return json(res, 200, {
-      items: listAllEpisodes()
-        .filter((episode) => !hidden.has(episode.id))
-        .map((episode) => ({
-          ...episode,
-          hasTranscript: withTranscript.has(episode.id),
-          favorite: favorites.has(episode.id),
-          root: rootOf.get(episode.id) || null,
-        }))
+      items: visible
+        .map((episode) => {
+          const badge = badges.get(episode.id)
+          return {
+            ...episode,
+            hasTranscript: Boolean(badge?.hasTranscript),
+            hasTranslation: Boolean(badge?.hasTranslation),
+            translations: badge?.translations || [],
+            partialTranscript: Boolean(badge?.partial),
+            favorite: favorites.has(episode.id),
+            root: rootOf.get(episode.id) || null,
+          }
+        })
         .sort((a, b) => (b.mtime || 0) - (a.mtime || 0)),
       folders: state.folders,
       progress: state.progress,
@@ -686,7 +764,8 @@ async function route(ctx, req, res) {
     const loadMoreKeyRaw = url.searchParams.get('loadMoreKey')
     let loadMoreKey = null
     if (loadMoreKeyRaw) { try { loadMoreKey = JSON.parse(loadMoreKeyRaw) } catch { loadMoreKey = null } }
-    return json(res, 200, await getPodcastEpisodes(decodeURIComponent(xyzEpisodesMatch[1]), { limit, loadMoreKey }))
+    const data = await getPodcastEpisodes(decodeURIComponent(xyzEpisodesMatch[1]), { limit, loadMoreKey })
+    return json(res, 200, { ...data, items: annotateXyzEpisodes(data?.items) })
   }
   const xyzPlayMatch = /^api\/xyz\/episodes\/([^/]+)\/play$/.exec(routePath)
   if (xyzPlayMatch && method === 'POST') {
@@ -695,12 +774,13 @@ async function route(ctx, req, res) {
   if (method === 'GET' && routePath === 'api/xyz/public/podcast') {
     const url = new URL(req.url || '/', 'http://127.0.0.1')
     const data = await getPublicPodcast(url.searchParams.get('url') || url.searchParams.get('pid') || '')
-    return json(res, 200, { podcast: data })
+    return json(res, 200, { podcast: data ? { ...data, episodes: annotateXyzEpisodes(data.episodes) } : data })
   }
   if (method === 'GET' && routePath === 'api/xyz/public/episode') {
     const url = new URL(req.url || '/', 'http://127.0.0.1')
     const data = await getPublicEpisode(url.searchParams.get('url') || '')
-    return json(res, 200, data)
+    const ep = data?.episode ? annotateXyzEpisodes([data.episode])[0] : data?.episode
+    return json(res, 200, { ...data, episode: ep })
   }
   if (method === 'POST' && routePath === 'api/xyz/public/play') {
     const body = await readJson(req)
@@ -800,16 +880,20 @@ async function route(ctx, req, res) {
   if (hideMatch) {
     if (method !== 'DELETE') return json(res, 405, { error: 'Method not allowed' })
     const id = decodeURIComponent(hideMatch[1])
+    const purge = url.searchParams.get('purge') === '1'
     const hidden = new Set(getState().hidden || [])
     hidden.add(id)
-    await deleteTranscript(id).catch(() => {})
-    for (const ext of ['jpg', 'png']) await rm(path.join(COVERS_DIR, `${id}.${ext}`), { force: true }).catch(() => {})
+    // 默认只从播放列表移除，不销毁辛苦转写/翻译的字幕和封面；显式传 ?purge=1 才清理。
+    if (purge) {
+      await deleteTranscript(id).catch(() => {})
+      for (const ext of ['jpg', 'png', 'webp']) await rm(path.join(COVERS_DIR, `${id}.${ext}`), { force: true }).catch(() => {})
+    }
     const favorites = new Set(getState().favorites || [])
     favorites.delete(id)
     const progress = { ...(getState().progress || {}) }
     delete progress[id]
     updateState({ hidden: [...hidden], favorites: [...favorites], progress })
-    return json(res, 200, { id, hidden: true, purged: true })
+    return json(res, 200, { id, hidden: true, purged: purge })
   }
 
   if (routePath === 'api/search' && method === 'GET') {
@@ -820,13 +904,15 @@ async function route(ctx, req, res) {
     const items = []
     const names = await readdir(TRANSCRIPTS_DIR).catch(() => [])
     for (const name of names) {
-      if (!name.endsWith('.json') || items.length >= 80) continue
+      if (name.startsWith('.') || !name.endsWith('.json') || items.length >= 80) continue
       const id = name.slice(0, -5)
       const transcript = await readTranscript(id).catch(() => null)
       if (!transcript) continue
       for (const line of transcript.lines || []) {
         if (items.length >= 80) break
-        if (!String(line.text || '').toLowerCase().includes(needle)) continue
+        const trValues = Object.values(line.translations || {}).map((v) => String(v || '')).join(' ')
+        const matched = String(line.text || '').toLowerCase().includes(needle) || trValues.toLowerCase().includes(needle)
+        if (!matched) continue
         const episode = titles.get(id)
         items.push({
           episodeId: id,
@@ -834,6 +920,7 @@ async function route(ctx, req, res) {
           start: line.start,
           end: line.end,
           text: line.text,
+          translation: line.translations?.zh || line.translations?.en || '',
           title: episode?.title || transcript.title || '',
           episodeTitle: episode?.title || transcript.title || '',
         })
@@ -865,6 +952,32 @@ async function route(ctx, req, res) {
       return json(res, 200, { removed: batches.length })
     }
     return json(res, 405, { error: 'Method not allowed' })
+  }
+
+  if (routePath === 'api/folders/suggestions' && method === 'GET') {
+    const folders = getState().folders || []
+    const rootOf = new Map()
+    const sortedRoots = [...folders].sort((a, b) => b.length - a.length)
+    const counts = new Map(folders.map((f) => [f, 0]))
+    for (const { file } of getEpisodePaths()) {
+      const root = sortedRoots.find((folder) => file === folder || file.startsWith(folder.endsWith(path.sep) ? folder : `${folder}${path.sep}`))
+      if (root) counts.set(root, (counts.get(root) || 0) + 1)
+    }
+    const suggestions = await suggestFolders()
+    return json(res, 200, {
+      suggestions,
+      folders: folders.map((folder) => ({
+        path: folder,
+        displayPath: displayPath(folder),
+        name: path.basename(folder) || folder,
+        count: counts.get(folder) || 0,
+      })),
+    })
+  }
+
+  if (routePath === 'api/folders/preview' && method === 'POST') {
+    const body = await readJson(req)
+    return json(res, 200, await inspectFolderCandidate(body?.path || ''))
   }
 
   if (routePath === 'api/folders') {
@@ -989,20 +1102,25 @@ async function route(ctx, req, res) {
   const transcribeMatch = /^api\/episodes\/([^/]+)\/transcribe$/.exec(routePath)
   if (transcribeMatch && method === 'POST') {
     const transcribeId = decodeURIComponent(transcribeMatch[1])
+    const body = await readJson(req)
+    const force = Boolean(body?.force)
+    const resume = Boolean(body?.resume)
+    const realtime = Boolean(body?.realtime)
     let episode = getEpisode(transcribeId)
     if (!episode && isXyzId(transcribeId)) {
       const current = await getTranscriptionState(transcribeId)
       if (current.status === 'queued' || current.status === 'running') return json(res, 200, current)
+      // 已经有完整字幕且未要求重转时直接复用，绝不反复下载和重新识别！
+      if (current.status === 'done' && current.transcript && !current.transcript.partial && !force && !resume) {
+        return json(res, 200, { status: 'done', lines: current.transcript.lines?.length || 0 })
+      }
       const dl = getJob(`download:${transcribeId}`)
       if (dl && dl.status === 'running') return json(res, 200, { status: 'queued', stage: 'downloading', progress: dl.progress || 0 })
-      startXyzDownloadAndTranscribe(transcribeId).catch(() => {})
+      startXyzDownloadAndTranscribe(transcribeId, { force, resume, realtime }).catch(() => {})
       return json(res, 200, { status: 'queued', stage: 'downloading', progress: 0 })
     }
     if (!episode) return json(res, 404, { error: '单集不存在' })
-    const body = await readJson(req)
-    const force = Boolean(body?.force)
-    const realtime = Boolean(body?.realtime)
-    const result = await startTranscription(episode, { force, resume: Boolean(body?.resume), realtime })
+    const result = await startTranscription(episode, { force, resume, realtime })
     return json(res, 200, result)
   }
 
@@ -1128,12 +1246,15 @@ async function route(ctx, req, res) {
     const transcript = await readTranscript(id)
     if (!transcript) return json(res, 404, { error: '还没有转写' })
     const format = (url.searchParams.get('format') || 'srt').toLowerCase()
+    const targetParam = url.searchParams.get('target')
+    const target = targetParam === null ? 'auto' : targetParam
+    const includeSpeakers = url.searchParams.get('speakers') !== '0'
     const markdown = format === 'md' || format === 'markdown'
     res.statusCode = 200
     res.setHeader('content-type', 'text/plain; charset=utf-8')
     res.setHeader('content-disposition', `attachment; filename="podwave-${id}.${markdown ? 'md' : 'srt'}"`)
     res.setHeader('cache-control', 'no-store')
-    return res.end(markdown ? toMarkdown(transcript) : toSRT(transcript))
+    return res.end(markdown ? toMarkdown(transcript, { target, includeSpeakers }) : toSRT(transcript, { target, includeSpeakers }))
   }
 
   if (routePath === 'api/models') {
@@ -1204,7 +1325,7 @@ async function route(ctx, req, res) {
     const items = []
     let files = []
     try {
-      files = fs.readdirSync(TRANSCRIPTS_DIR).filter((file) => file.endsWith('.json'))
+      files = fs.readdirSync(TRANSCRIPTS_DIR).filter((file) => !file.startsWith('.') && file.endsWith('.json'))
     } catch {
       files = []
     }
@@ -1268,6 +1389,14 @@ async function route(ctx, req, res) {
       if (typeof body?.historyOpen === 'boolean') patch.historyOpen = body.historyOpen
       if (typeof body?.envOpen === 'boolean') patch.envOpen = body.envOpen
       if (typeof body?.modelsOpen === 'boolean') patch.modelsOpen = body.modelsOpen
+      if (typeof body?.advancedOpen === 'boolean') patch.advancedOpen = body.advancedOpen
+      if (typeof body?.autoShowTranslation === 'boolean') patch.autoShowTranslation = body.autoShowTranslation
+      if (body?.translateTarget === '' || body?.translateTarget === 'zh' || body?.translateTarget === 'en') {
+        patch.translateTarget = body.translateTarget
+      }
+      if (body?.themeMode === 'system' || body?.themeMode === 'light' || body?.themeMode === 'dark') {
+        patch.themeMode = body.themeMode
+      }
       // 悬浮字幕的位置：传 null / 空串表示回到默认位置（注意 Number(null) 是 0，不能直接判有限）。
       const coordinate = (value) => {
         if (value === null || value === undefined || value === '') return null
@@ -1302,6 +1431,7 @@ async function route(ctx, req, res) {
       const patch = {}
       if (body?.provider === 'dsh' || body?.provider === 'api' || body?.provider === 'local') patch.provider = body.provider
       if (body?.target === 'zh' || body?.target === 'en') patch.target = body.target
+      if (typeof body?.autoAfterTranscribe === 'boolean') patch.autoAfterTranscribe = body.autoAfterTranscribe
       if (typeof body?.apiKey === 'string') patch.apiKey = body.apiKey.trim()
       if (typeof body?.apiBase === 'string' && body.apiBase.trim()) patch.apiBase = body.apiBase.trim()
       if (typeof body?.apiModel === 'string' && body.apiModel.trim()) patch.apiModel = body.apiModel.trim()
@@ -1348,7 +1478,7 @@ async function route(ctx, req, res) {
     if (method === 'POST') {
       const body = await readJson(req)
       const target = body?.target === 'en' ? 'en' : 'zh'
-      const provider = body?.provider === 'local' ? 'local' : body?.provider === 'api' ? 'api' : undefined
+      const provider = body?.provider === 'local' || body?.provider === 'api' || body?.provider === 'dsh' ? body.provider : undefined
       const force = body?.force === true
       // force: 连已有的译文一起重翻（整篇重翻用），默认只补缺的。
       return json(res, 200, await startTranslation(id, { target, provider, force }))
@@ -1381,6 +1511,9 @@ async function route(ctx, req, res) {
   // 音频在前端采集与切句，这里只接「一句一段」的 WAV：识别 → 翻译 → 攒成会话。
   if (routePath === 'api/live' && method === 'GET') {
     const config = getSection('live') || {}
+    const rawHeight = config.height === null || config.height === undefined || config.height === '' || Number(config.height) <= 0
+      ? null
+      : clampNumber(config.height, 88, 600, null)
     return json(res, 200, {
       ...liveReady(),
       session: publicLiveSession(openLiveSession()),
@@ -1390,10 +1523,44 @@ async function route(ctx, req, res) {
       opacity: clampNumber(config.opacity, 0.15, 1, 0.78),
       fontSize: clampNumber(config.fontSize, 12, 42, 18),
       width: clampNumber(config.width, 380, 1600, 780),
+      height: rawHeight,
+      displayMode: ['original', 'bilingual', 'translation'].includes(config.displayMode) ? config.displayMode : 'bilingual',
       source: ['auto', 'tap', 'browser'].includes(config.source) ? config.source : 'auto',
       tap: tapSupport(),
+      draft: draftSupport(),
       target: (getSection('translate') || {}).target || 'zh',
     })
+  }
+
+  if (routePath === 'api/live/history' && method === 'GET') {
+    return json(res, 200, { items: await listLiveHistory(), dir: LIVE_DIR })
+  }
+
+  const liveHistoryExportMatch = /^api\/live\/history\/([^/]+)\/export$/.exec(routePath)
+  if (liveHistoryExportMatch && method === 'GET') {
+    const item = await readLiveHistory(decodeURIComponent(liveHistoryExportMatch[1]))
+    if (!item) return json(res, 404, { error: '找不到这条实时字幕记录' })
+    const format = (url.searchParams.get('format') || 'md').toLowerCase()
+    const srt = format === 'srt'
+    res.statusCode = 200
+    res.setHeader('content-type', 'text/plain; charset=utf-8')
+    res.setHeader('content-disposition', `attachment; filename="${item.id}.${srt ? 'srt' : 'md'}"`)
+    res.setHeader('cache-control', 'no-store')
+    return res.end(srt ? liveToSrt(item.lines, item.target || 'zh') : liveToMarkdown(item))
+  }
+
+  const liveHistoryItemMatch = /^api\/live\/history\/([^/]+)$/.exec(routePath)
+  if (liveHistoryItemMatch) {
+    const liveId = decodeURIComponent(liveHistoryItemMatch[1])
+    if (method === 'GET') {
+      const item = await readLiveHistory(liveId)
+      if (!item) return json(res, 404, { error: '找不到这条实时字幕记录' })
+      return json(res, 200, { item })
+    }
+    if (method === 'DELETE') {
+      const ok = await deleteLiveHistory(liveId)
+      return ok ? json(res, 200, { ok: true }) : json(res, 400, { error: '无效的记录编号' })
+    }
   }
 
   if (routePath === 'api/live/settings' && method === 'PUT') {
@@ -1405,14 +1572,26 @@ async function route(ctx, req, res) {
     if (Number.isFinite(Number(body?.opacity))) patch.opacity = clampNumber(body.opacity, 0.15, 1, 0.78)
     if (Number.isFinite(Number(body?.fontSize))) patch.fontSize = clampNumber(body.fontSize, 12, 42, 18)
     if (Number.isFinite(Number(body?.width))) patch.width = clampNumber(body.width, 380, 1600, 780)
+    if (body && 'height' in body) {
+      if (body.height === null || body.height === '' || Number(body.height) <= 0) patch.height = null
+      else if (Number.isFinite(Number(body.height))) patch.height = clampNumber(body.height, 88, 600, null)
+    }
+    if (['original', 'bilingual', 'translation'].includes(body?.displayMode)) {
+      patch.displayMode = body.displayMode
+      const activeSession = openLiveSession()
+      if (activeSession) activeSession.displayMode = body.displayMode
+    }
     if (['auto', 'tap', 'browser'].includes(body?.source)) patch.source = body.source
     const next = updateSection('live', patch)
-    // 正在显示的字幕框要立刻用上新外观（设置页拖滑块就能看到变化）。
+    // 正在显示的字幕框要立刻用上新外观与显示模式。
     if (captionWindowState().open) {
       const payload = {}
       if (patch.opacity !== undefined) payload.opacity = next?.opacity
       if (patch.fontSize !== undefined) payload.fontSize = next?.fontSize
       if (patch.width !== undefined) payload.width = next?.width
+      if ('height' in patch) payload.height = next?.height || 0
+      if (patch.displayMode !== undefined) payload.displayMode = next?.displayMode
+      if (patch.saveOnStop !== undefined) payload.saveOnStop = next?.saveOnStop !== false
       if (Object.keys(payload).length) pushCaption(payload)
     }
     return json(res, 200, next || {})
@@ -1428,7 +1607,8 @@ async function route(ctx, req, res) {
     if (existing) return json(res, 200, { session: existing })
     const body = await readJson(req).catch(() => ({}))
     const target = String(body?.target || (getSection('translate') || {}).target || 'zh')
-    return json(res, 200, { session: publicLiveSession(startLiveSession({ target })) })
+    const displayMode = String(body?.displayMode || (getSection('live') || {}).displayMode || 'bilingual')
+    return json(res, 200, { session: publicLiveSession(startLiveSession({ target, displayMode })) })
   }
 
   if (routePath === 'api/live/segment' && method === 'POST') {
@@ -1443,9 +1623,12 @@ async function route(ctx, req, res) {
 
   if (routePath === 'api/live/stop' && method === 'POST') {
     const body = await readJson(req).catch(() => ({}))
+    stopTap()
     const session = getLiveSession(body?.session || '') || openLiveSession()
-    if (!session) return json(res, 409, { error: '实时字幕还没开始' })
-    const result = await stopLiveSession(session, { save: body?.save === true })
+    const result = session
+      ? await stopLiveSession(session, { save: body?.save === true })
+      : { ok: true, count: 0, saved: false }
+    closeCaptionWindow()
     return json(res, 200, result)
   }
 
@@ -1456,11 +1639,26 @@ async function route(ctx, req, res) {
     if (action === 'start') {
       if (!liveReady().ready) return json(res, 400, { ok: false, error: '还没有填 DeepSeek API key，实时字幕用云端识别' })
       const existing = openLiveSession()
-      const session = existing || startLiveSession({ target: String(body?.target || 'zh') })
-      const target = Number(body?.chunkMs) || 500
+      const displayMode = String(body?.displayMode || (getSection('live') || {}).displayMode || 'bilingual')
+      const session = existing || startLiveSession({ target: String(body?.target || (getSection('translate') || {}).target || 'zh'), displayMode })
+      const targetChunkMs = Number(body?.chunkMs) || 200
+      const pushLatestLines = (all) => {
+        const last = all[all.length - 1]
+        const prev = all[all.length - 2]
+        if (!last) return
+        pushCaption({
+          text: last.text || '',
+          translation: last.translations?.[session.target] || last.translations?.zh || last.translations?.en || '',
+          draft: '',
+          previous: prev?.text || '',
+          previousTranslation: prev?.translations?.[session.target] || prev?.translations?.zh || prev?.translations?.en || '',
+          status: 'listening',
+          hint: session.lastError || '',
+        })
+      }
       try {
         const started = await startTap({
-          chunkMs: target,
+          chunkMs: targetChunkMs,
           onLevel: (value) => {
             session.level = value
           },
@@ -1468,24 +1666,31 @@ async function route(ctx, req, res) {
             session.hint = text || ''
             pushCaption({ hint: text || '' })
           },
+          onDraft: (draftText) => {
+            session.draft = draftText || ''
+            if (draftText) {
+              pushCaption({ draft: draftText, status: 'listening', hint: '' })
+            } else {
+              pushCaption({ draft: '' })
+            }
+          },
           onSegment: (segment) => {
-            queueLiveSegment(session, Buffer.from(segment.wav), { start: segment.start, end: segment.end })
+            queueLiveSegment(session, Buffer.from(segment.wav), {
+              start: segment.start,
+              end: segment.end,
+              // ASR 返回后立刻推送原文到置顶窗（零翻译等待），翻译完成再补上译文。
+              onOriginal: (fresh) => {
+                if (!fresh?.length) return
+                pushLatestLines(session.lines)
+              },
+            })
               .then((result) => {
                 if (!result?.lines?.length) return
-                const all = session.lines
-                const last = all[all.length - 1]
-                const prev = all[all.length - 2]
-                pushCaption({
-                  text: last?.text || '',
-                  translation: last?.translations?.zh || last?.translations?.en || '',
-                  previous: prev?.text || '',
-                  previousTranslation: prev?.translations?.zh || prev?.translations?.en || '',
-                  status: 'listening',
-                  hint: '',
-                })
+                pushLatestLines(session.lines)
               })
               .catch((error) => {
                 session.lastError = error?.message || String(error)
+                pushCaption({ hint: session.lastError })
               })
           },
         })
@@ -1511,15 +1716,22 @@ async function route(ctx, req, res) {
   }
 
   if (routePath === 'api/live/lines' && method === 'GET') {
+    const windowOpen = captionWindowState().open
     const session = getLiveSession(url.searchParams.get('session') || '') || openLiveSession()
-    if (!session) return json(res, 200, { lines: [], count: 0, alive: false, ...tapState() })
+    if (!session) return json(res, 200, { lines: [], recent: [], count: 0, alive: false, windowOpen, draft: '', lastError: null, ...tapState() })
     const since = Number(url.searchParams.get('since')) || 0
     return json(res, 200, {
       lines: session.lines.filter((line) => line.id > since),
+      // recent 让前端能拿到刚补齐译文的最近几句（即使 id 已经小于等于 since）。
+      recent: session.lines.slice(-4),
       count: session.lines.length,
       alive: true,
+      windowOpen,
       countDown: false,
+      displayMode: session.displayMode || 'bilingual',
+      draft: session.draft || '',
       ...tapState(),
+      lastError: session.lastError || tapState().lastError || null,
       level: Number(session.level) || tapState().level,
       hint: session.hint || tapState().hint,
     })
@@ -1534,6 +1746,16 @@ async function route(ctx, req, res) {
       if (action === 'open') {
         const result = await openCaptionWindow()
         if (!result.ok) return json(res, 200, { ok: false, error: result.error, ...captionWindowState() })
+        const liveCfg = getSection('live') || {}
+        const savedHeight = liveCfg.height && Number(liveCfg.height) > 0 ? clampNumber(liveCfg.height, 88, 600, null) : 0
+        pushCaption({
+          opacity: clampNumber(liveCfg.opacity, 0.15, 1, 0.78),
+          fontSize: clampNumber(liveCfg.fontSize, 12, 42, 18),
+          width: clampNumber(liveCfg.width, 380, 1600, 780),
+          height: savedHeight,
+          displayMode: ['original', 'bilingual', 'translation'].includes(liveCfg.displayMode) ? liveCfg.displayMode : 'bilingual',
+          saveOnStop: liveCfg.saveOnStop !== false,
+        })
         return json(res, 200, { ok: true, ...captionWindowState() })
       }
       if (action === 'update') return json(res, 200, { ok: pushCaption(body?.payload || {}) })
@@ -1558,7 +1780,20 @@ export default {
         if (Number.isFinite(Number(payload.opacity))) patch.opacity = clampNumber(payload.opacity, 0.15, 1, 0.78)
         if (Number.isFinite(Number(payload.fontSize))) patch.fontSize = clampNumber(payload.fontSize, 12, 42, 18)
         if (Number.isFinite(Number(payload.width))) patch.width = clampNumber(payload.width, 380, 1600, 780)
+        if ('height' in payload) {
+          if (payload.height === null || Number(payload.height) <= 0) patch.height = null
+          else if (Number.isFinite(Number(payload.height))) patch.height = clampNumber(payload.height, 88, 600, null)
+        }
         if (Object.keys(patch).length) updateSection('live', patch)
+        return
+      }
+      if (payload.event === 'displayMode') {
+        const mode = String(payload.value || '')
+        if (['original', 'bilingual', 'translation'].includes(mode)) {
+          updateSection('live', { displayMode: mode })
+          const session = openLiveSession()
+          if (session) session.displayMode = mode
+        }
         return
       }
       if (payload.event === 'saveOnStop') {
@@ -1644,6 +1879,8 @@ export default {
     ctx.effect(() => () => {
       stopAll()
       closeLiveSpeakers()
+      closeLocalTranslator()
+      stopDraftWorker()
       // 插件重载/禁用：实时字幕的会话是内存里的，直接丢掉，别让新实例接到一个半死的会话。
       resetLiveSessions()
       stopTap()

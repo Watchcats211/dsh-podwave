@@ -20,7 +20,7 @@ import Foundation
 
 struct Options {
   var outputDir: String = ""
-  var chunkMs: Int = 500
+  var chunkMs: Int = 200
   var sampleRate: Int = 16000
   var pid: pid_t? = nil
   var debug: Bool = false
@@ -238,7 +238,7 @@ final class CaptureEngine {
 
     let tapStatus = AudioHardwareCreateProcessTap(description, &tap)
     guard tapStatus == noErr, tap != kAudioObjectUnknown else {
-      fail("tap-denied", "系统拒绝了音频捕获（状态码 \(tapStatus)）。请在「系统设置 → 隐私与安全性 → 录屏与系统录音」里允许本 helpr")
+      fail("tap-denied", "系统拒绝了音频捕获（状态码 \(tapStatus)）。请在「系统设置 → 隐私与安全性 → 录屏与系统录音」里允许本采集组件")
     }
 
     var format = AudioStreamBasicDescription()
@@ -288,13 +288,6 @@ final class CaptureEngine {
     }
     if options.debug {
       FileHandle.standardError.write("{\"debug\":\"start-status\",\"status\":\(startStatus)}\n".data(using: .utf8)!)
-    }
-
-    // 关上下发的信号：宿主杀进程时要把设备和 tap 清掉，否则会留下一个静音的 tap。
-    for signalNumber in [SIGINT, SIGTERM] {
-      signal(signalNumber) { _ in
-        DispatchQueue.main.async { exit(0) }
-      }
     }
 
     if options.debug {
@@ -462,24 +455,33 @@ engine.start()
 
 // 宿主关掉管道（或进程被要求退出）时干净收尾：销毁 tap 和聚合设备，
 // 否则系统里会留下一个静音的采集端点，下次可能采集不到声音。
-let exitHandler: () -> Void = {
-  engine.stop()
-  exit(0)
-}
+private var gShouldStop: sig_atomic_t = 0
+
 for signalNumber in [SIGINT, SIGTERM, SIGHUP] {
-  signal(signalNumber) { _ in exit(0) }
+  signal(signalNumber) { _ in
+    gShouldStop = 1
+  }
 }
 DispatchQueue.global(qos: .utility).async {
   while readLine() != nil {}
-  DispatchQueue.main.async { exitHandler() }
+  gShouldStop = 1
 }
 
 // 注意：这里不能用 RunLoop.main.run()。
 // 实测在命令行工具里跑 RunLoop.main.run() 时，聚合设备的 IOProc 一次都不会被调用
 //（设备却在 running 状态），换成纯 sleep 循环就正常了。别改回去。
-while true {
-  Thread.sleep(forTimeInterval: 1)
-  if options.debug {
+var beatCounter = 0
+var warnedNoCallbacks = false
+while gShouldStop == 0 {
+  Thread.sleep(forTimeInterval: 0.1)
+  beatCounter += 1
+  if beatCounter >= 25 && !warnedNoCallbacks && engine.callbackCount == 0 {
+    warnedNoCallbacks = true
+    FileHandle.standardError.write("{\"warning\":\"no-audio-callbacks\"}\n".data(using: .utf8)!)
+  }
+  if options.debug && beatCounter % 10 == 0 {
     FileHandle.standardError.write("{\"debug\":\"beat\",\"io\":\(engine.callbackCount)}\n".data(using: .utf8)!)
   }
 }
+engine.stop()
+exit(0)

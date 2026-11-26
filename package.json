@@ -1,6 +1,6 @@
 {
   "name": "dsh-podwave",
-  "version": "0.11.65",
+  "version": "0.12.0",
   "description": "DeepSeek Harness 插件：本地优先的播客播放器 + 转写 + 双语字幕 + 字幕翻译。",
   "type": "module",
   "main": "./src/host.js",
@@ -69,6 +69,8 @@
     "docs/LIVE-CAPTION.md",
     "docs/screenshot-detail.png",
     "scripts/*.py",
+    "scripts/moss_pkg/*.py",
+    "scripts/moss_pkg/LICENSE*",
     "scripts/*.swift",
     "scripts/*.plist"
   ]

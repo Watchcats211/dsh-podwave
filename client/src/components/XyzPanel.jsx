@@ -405,7 +405,11 @@ export default function XyzPanel({ onPlay, currentId }) {
                   <div key={episode.eid} className={`xyz-ep ${currentId === `xyz${episode.eid}` ? 'is-current' : ''}`}>
                     <div className="xyz-ep-main">
                       <div className="xyz-ep-title">{episode.title}</div>
-                      <div className="xyz-ep-meta">{fmtDate(episode.pubDate)} · {fmtDuration(episode.duration)}</div>
+                      <div className="xyz-ep-meta">
+                        {fmtDate(episode.pubDate)} · {fmtDuration(episode.duration)}
+                        {episode.hasTranscript ? <span className="row-badge">字幕</span> : null}
+                        {episode.hasTranslation ? <span className="row-badge is-bilingual">双语</span> : null}
+                      </div>
                     </div>
                     <button className="btn primary" disabled={busy === `pplay:${episode.eid}`} onClick={() => playPublic(episode)}>
                       {busy === `pplay:${episode.eid}` ? '打开中…' : '播放'}
@@ -434,7 +438,11 @@ export default function XyzPanel({ onPlay, currentId }) {
             <div key={episode.eid} className={`xyz-ep ${currentId === `xyz${episode.eid}` ? 'is-current' : ''}`}>
               <div className="xyz-ep-main">
                 <div className="xyz-ep-title">{episode.title}</div>
-                <div className="xyz-ep-meta">{fmtDate(episode.pubDate)} · {fmtDuration(episode.duration)}</div>
+                <div className="xyz-ep-meta">
+                  {fmtDate(episode.pubDate)} · {fmtDuration(episode.duration)}
+                  {episode.hasTranscript ? <span className="row-badge">字幕</span> : null}
+                  {episode.hasTranslation ? <span className="row-badge is-bilingual">双语</span> : null}
+                </div>
               </div>
               <button className="btn primary" disabled={busy === `play:${episode.eid}`} onClick={() => play(episode)}>
                 {busy === `play:${episode.eid}` ? '打开中…' : '播放'}

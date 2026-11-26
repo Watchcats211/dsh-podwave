@@ -1,4 +1,30 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+
+export const THEME_STORAGE_KEY = 'podwave:themeMode'
+const VALID_MODES = new Set(['system', 'light', 'dark'])
+
+function normalizeMode(value) {
+  return VALID_MODES.has(value) ? value : 'system'
+}
+
+export function readStoredThemeMode() {
+  try {
+    const raw = window.localStorage?.getItem(THEME_STORAGE_KEY)
+    return raw ? normalizeMode(raw) : 'system'
+  } catch {
+    return 'system'
+  }
+}
+
+function writeStoredThemeMode(mode) {
+  try {
+    if (!window.localStorage) return
+    if (mode === 'system') window.localStorage.removeItem(THEME_STORAGE_KEY)
+    else window.localStorage.setItem(THEME_STORAGE_KEY, mode)
+  } catch {
+    /* localStorage 被禁用时不阻断外观切换 */
+  }
+}
 
 function luminance(color) {
   const match = String(color || '').match(/rgba?\(([^)]+)\)/)
@@ -14,6 +40,7 @@ function luminance(color) {
 }
 
 function sampleBackground() {
+  if (typeof document === 'undefined') return null
   for (const element of [document.body, document.documentElement]) {
     if (!element) continue
     const value = getComputedStyle(element).backgroundColor
@@ -23,7 +50,9 @@ function sampleBackground() {
   return null
 }
 
+// 探测当前 DSH / 宿主系统是浅色还是深色
 export function readTheme() {
+  if (typeof document === 'undefined') return 'dark'
   const lum = sampleBackground()
   if (lum !== null) return lum > 0.5 ? 'light' : 'dark'
   const text = [
@@ -35,26 +64,102 @@ export function readTheme() {
     .join(' ')
     .toLowerCase()
   if (/\blight\b/.test(text)) return 'light'
-  return 'dark'
+  if (/\bdark\b/.test(text)) return 'dark'
+  return window.matchMedia?.('(prefers-color-scheme: light)')?.matches ? 'light' : 'dark'
 }
 
-// 跟随 DSH 外观：直接采样页面背景亮度，主题切换时通过 MutationObserver 重新采样。
-export function useTheme() {
-  const [theme, setTheme] = useState(readTheme)
+export function setThemeModeGlobal(nextMode, { persistRemote = true } = {}) {
+  const mode = normalizeMode(nextMode)
+  writeStoredThemeMode(mode)
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('podwave:theme-mode', { detail: { mode } }))
+  }
+  if (persistRemote && typeof fetch === 'function') {
+    fetch('/podwave/api/ui-settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ themeMode: mode }),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('podwave:ui-settings', { detail: data }))
+        }
+      })
+      .catch(() => {})
+  }
+  return mode
+}
+
+// 提供完整外观控制：{ theme: 'light'|'dark', mode: 'system'|'light'|'dark', systemTheme: 'light'|'dark', setMode }
+export function useThemeControl() {
+  const [systemTheme, setSystemTheme] = useState(readTheme)
+  const [mode, setModeState] = useState(readStoredThemeMode)
+
   useEffect(() => {
-    const update = () => setTheme(readTheme())
-    update()
-    const observer = new MutationObserver(update)
+    const updateSystem = () => setSystemTheme(readTheme())
+    updateSystem()
+    const observer = new MutationObserver(updateSystem)
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] })
     if (document.body) {
       observer.observe(document.body, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] })
     }
-    const media = window.matchMedia('(prefers-color-scheme: light)')
-    media.addEventListener?.('change', update)
+    const mediaLight = window.matchMedia?.('(prefers-color-scheme: light)')
+    const mediaDark = window.matchMedia?.('(prefers-color-scheme: dark)')
+    mediaLight?.addEventListener?.('change', updateSystem)
+    mediaDark?.addEventListener?.('change', updateSystem)
+
+    const onCustom = (event) => {
+      const next = event?.detail?.mode
+      if (VALID_MODES.has(next)) setModeState(next)
+    }
+    const onUiSettings = (event) => {
+      const next = event?.detail?.themeMode
+      if (VALID_MODES.has(next)) {
+        writeStoredThemeMode(next)
+        setModeState(next)
+      }
+    }
+    const onStorage = (event) => {
+      if (event.key === THEME_STORAGE_KEY) setModeState(readStoredThemeMode())
+    }
+    window.addEventListener('podwave:theme-mode', onCustom)
+    window.addEventListener('podwave:ui-settings', onUiSettings)
+    window.addEventListener('storage', onStorage)
+
+    let cancelled = false
+    fetch('/podwave/api/ui-settings')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((cfg) => {
+        if (cancelled || !cfg) return
+        if (VALID_MODES.has(cfg.themeMode)) {
+          writeStoredThemeMode(cfg.themeMode)
+          setModeState(cfg.themeMode)
+        }
+      })
+      .catch(() => {})
+
     return () => {
+      cancelled = true
       observer.disconnect()
-      media.removeEventListener?.('change', update)
+      mediaLight?.removeEventListener?.('change', updateSystem)
+      mediaDark?.removeEventListener?.('change', updateSystem)
+      window.removeEventListener('podwave:theme-mode', onCustom)
+      window.removeEventListener('podwave:ui-settings', onUiSettings)
+      window.removeEventListener('storage', onStorage)
     }
   }, [])
-  return theme
+
+  const setMode = useCallback((nextMode) => {
+    const normalized = setThemeModeGlobal(nextMode)
+    setModeState(normalized)
+  }, [])
+
+  const theme = mode === 'system' ? systemTheme : mode
+  return { theme, mode, systemTheme, setMode }
+}
+
+// 兼容旧调用点：直接返回当前解析后的 'light' | 'dark'
+export function useTheme() {
+  return useThemeControl().theme
 }

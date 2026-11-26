@@ -55,6 +55,19 @@ test('host: ui 设置里能存字幕字号和悬浮字幕的位置', async () =>
     assert.equal(initial.historyOpen, false, '历史记录默认收起')
     assert.equal(initial.envOpen, false, '环境与模型默认收起')
     assert.equal(initial.modelsOpen, false, '模型卡片默认收起')
+    assert.equal(initial.themeMode, 'system', '外观模式默认跟随系统')
+
+    // 明 / 暗 / 跟随系统切换写入与非法值过滤
+    await put({ themeMode: 'light' })
+    let themeBody = await (await fetch(`${base}/podwave/api/ui-settings`)).json()
+    assert.equal(themeBody.themeMode, 'light')
+    await put({ themeMode: 'dark' })
+    themeBody = await (await fetch(`${base}/podwave/api/ui-settings`)).json()
+    assert.equal(themeBody.themeMode, 'dark')
+    assert.equal((await put({ themeMode: 'neon-invalid' })).status, 400, '无效 themeMode 应被拒绝')
+    await put({ themeMode: 'system' })
+    themeBody = await (await fetch(`${base}/podwave/api/ui-settings`)).json()
+    assert.equal(themeBody.themeMode, 'system')
 
     assert.equal((await put({ subtitleSize: 22 })).status, 200)
     let body = await (await fetch(`${base}/podwave/api/ui-settings`)).json()

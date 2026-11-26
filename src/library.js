@@ -5,6 +5,7 @@ import os from 'node:os'
 import crypto from 'node:crypto'
 import { parseFile } from 'music-metadata'
 import { COVERS_DIR, getState } from './state.js'
+import { audioFingerprint } from './fingerprint.js'
 
 export const AUDIO_EXTENSIONS = new Set([
   '.mp3', '.m4a', '.m4b', '.aac', '.wav', '.flac', '.ogg', '.oga', '.opus', '.weba', '.webm', '.wma',
@@ -112,6 +113,8 @@ async function readEpisode(file, root, realRoot = root) {
     }
   }
 
+  const fingerprint = await audioFingerprint(file)
+
   const data = {
     id,
     title,
@@ -126,6 +129,7 @@ async function readEpisode(file, root, realRoot = root) {
     // 相对根文件夹的路径（'' 表示就在根目录里），前端靠它逐层浏览目录树。
     rel: path.relative(realRoot || root || '', path.dirname(file)).split(path.sep).join('/'),
     file,
+    fingerprint,
   }
   metaCache.set(id, { key: cacheKey, data })
   return { ...data, size: stat.size, mtime: stat.mtimeMs }
@@ -295,4 +299,139 @@ export function forgetEpisodesUnder(folder) {
     if (episode.file === folder || isInside(folder, episode.file)) removed.add(episode.id)
   }
   return removed
+}
+
+// 仅用于前端展示：把家目录前缀折叠成 ~，不暴露硬编码路径。
+export function displayPath(absPath) {
+  const value = String(absPath || '')
+  if (!value) return ''
+  const rawHome = os.homedir()
+  let realHome = rawHome
+  try {
+    if (rawHome) realHome = fs.realpathSync(rawHome)
+  } catch {
+    realHome = rawHome
+  }
+  for (const home of [realHome, rawHome]) {
+    if (!home) continue
+    if (value === home) return '~'
+    const sep = home.endsWith(path.sep) ? home : `${home}${path.sep}`
+    if (value.startsWith(sep)) {
+      return `~/${value.slice(sep.length).split(path.sep).join('/')}`
+    }
+  }
+  return value
+}
+
+export async function quickCountAudio(dirPath, { maxDepth = 2, maxCount = 500 } = {}) {
+  let count = 0
+  let truncated = false
+  const walkCount = async (dir, depth) => {
+    if (count >= maxCount) {
+      truncated = true
+      return
+    }
+    let entries
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (count >= maxCount) {
+        truncated = true
+        return
+      }
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (depth < maxDepth) await walkCount(full, depth + 1)
+      } else if (entry.isFile() && AUDIO_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
+        count += 1
+      }
+    }
+  }
+  await walkCount(dirPath, 0)
+  return { count, truncated }
+}
+
+export async function inspectFolderCandidate(rawPath) {
+  const expanded = expandHome(rawPath)
+  if (!expanded) return { ok: false, error: '请输入文件夹路径' }
+  let real
+  try {
+    const stat = await fsp.stat(expanded)
+    if (!stat.isDirectory()) return { ok: false, error: '不是一个文件夹' }
+    real = await fsp.realpath(expanded)
+  } catch {
+    return { ok: false, error: '文件夹不存在或不可读' }
+  }
+
+  const folders = getState().folders || []
+  const alreadyAdded = folders.includes(real)
+  const overlap = alreadyAdded
+    ? null
+    : folders.find((entry) => entry !== real && (isInside(entry, real) || isInside(real, entry)))
+  const { count, truncated } = await quickCountAudio(real, { maxDepth: 3, maxCount: 999 })
+  return {
+    ok: !overlap,
+    path: real,
+    displayPath: displayPath(real),
+    name: path.basename(real) || real,
+    audioCount: count,
+    truncated,
+    alreadyAdded,
+    overlap: overlap ? displayPath(overlap) : null,
+    error: overlap ? `与已添加的文件夹重叠：${displayPath(overlap)}` : '',
+  }
+}
+
+export async function suggestFolders() {
+  const home = os.homedir()
+  if (!home) return []
+  const candidates = [
+    { path: path.join(home, 'Music', 'Podcasts'), label: 'Music / Podcasts' },
+    { path: path.join(home, 'Podcasts'), label: 'Podcasts' },
+    { path: path.join(home, 'Downloads'), label: '下载' },
+    { path: path.join(home, 'Music'), label: '音乐' },
+    { path: path.join(home, 'Documents'), label: '文稿' },
+    { path: path.join(home, 'Desktop'), label: '桌面' },
+  ]
+  const folders = getState().folders || []
+  const seen = new Set()
+  const results = []
+  for (const cand of candidates) {
+    let real
+    try {
+      const stat = await fsp.stat(cand.path)
+      if (!stat.isDirectory()) continue
+      real = await fsp.realpath(cand.path)
+    } catch {
+      continue
+    }
+    if (seen.has(real)) continue
+    seen.add(real)
+    const alreadyAdded = folders.includes(real)
+    const overlap = alreadyAdded
+      ? null
+      : folders.find((entry) => entry !== real && (isInside(entry, real) || isInside(real, entry)))
+    const { count, truncated } = await quickCountAudio(real, { maxDepth: 2, maxCount: 300 })
+    results.push({
+      path: real,
+      displayPath: displayPath(real),
+      label: cand.label,
+      name: path.basename(real) || cand.label,
+      audioCount: count,
+      truncated,
+      alreadyAdded,
+      overlap: overlap ? displayPath(overlap) : null,
+    })
+  }
+  results.sort((a, b) => {
+    const aHas = a.alreadyAdded || a.audioCount > 0 ? 1 : 0
+    const bHas = b.alreadyAdded || b.audioCount > 0 ? 1 : 0
+    if (aHas !== bHas) return bHas - aHas
+    return b.audioCount - a.audioCount
+  })
+  return results
 }

@@ -82,19 +82,28 @@ async function ensureBuilt() {
 /** 打开（或复用）独立字幕窗。首次调用会编译，约 9 秒。 */
 /** 上一次的窗口进程如果还在（插件重载、宿主崩溃），先杀掉——否则会出现两个框。 */
 function killStrayWindow() {
+  let killed = false
   try {
     const file = path.join(DATA_DIR, 'live', 'window.pid')
-    if (!fs.existsSync(file)) return
+    if (!fs.existsSync(file)) return false
     const pid = Number(fs.readFileSync(file, 'utf8').trim())
-    if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) return
+    if (Number.isInteger(pid) && pid > 1 && pid !== process.pid) {
+      try {
+        process.kill(pid, 'SIGTERM')
+        killed = true
+      } catch {
+        /* 已经没了 */
+      }
+    }
     try {
-      process.kill(pid, 'SIGTERM')
+      fs.rmSync(file, { force: true })
     } catch {
-      /* 已经没了 */
+      /* ignore */
     }
   } catch {
     /* pid 文件坏了不影响开窗 */
   }
+  return killed
 }
 
 export async function openCaptionWindow() {
@@ -158,17 +167,29 @@ export function pushCaption(payload) {
 }
 
 export function closeCaptionWindow() {
-  if (!child) return false
+  const current = child
+  child = null
+  if (!current) return killStrayWindow()
   try {
-    pushCaption({ action: 'close' })
-    const current = child
+    try {
+      if (current.exitCode === null && current.stdin?.writable) {
+        current.stdin.write(`${JSON.stringify({ action: 'close' })}\n`)
+        current.stdin.end()
+      }
+    } catch {
+      /* ignore */
+    }
     setTimeout(() => {
-      if (current.exitCode === null) current.kill('SIGTERM')
+      try {
+        if (current.exitCode === null) current.kill('SIGTERM')
+      } catch {
+        /* ignore */
+      }
     }, 400).unref?.()
   } catch {
     /* ignore */
   }
-  child = null
+  killStrayWindow()
   return true
 }
 

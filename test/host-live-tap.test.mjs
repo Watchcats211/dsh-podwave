@@ -111,12 +111,15 @@ test('host: 系统音频采集接口（开始 → 轮询 → 停止 → 保存�
 
     // 轮询：假 helper 2 块有声音 → VAD 切一句 → 假 ASR 出文本
     let line = null
+    let sawWindowOpen = false
     const deadline = Date.now() + 12000
     while (!line && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 400))
       const poll = await (await fetch(api('live/lines?since=0'))).json()
+      if (typeof poll.windowOpen === 'boolean') sawWindowOpen = true
       if (Array.isArray(poll.lines) && poll.lines.length) line = poll.lines[0]
     }
+    assert.equal(sawWindowOpen, true, '/live/lines 应返回 windowOpen 状态')
     assert.ok(line, '应该能从 /live/lines 取到字幕行')
     assert.match(line.text, /测试句子/)
     assert.ok(line.end > line.start)
@@ -142,6 +145,14 @@ test('host: 系统音频采集接口（开始 → 轮询 → 停止 → 保存�
     ).json()
     assert.equal(stopped.saved, true)
     assert.ok(fs.existsSync(stopped.files.srt))
+
+    // 无会话时再调用 live/stop 也应安全幂等返回 200（用于兜底关窗停采集）
+    const extraStop = await fetch(api('live/stop'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    })
+    assert.equal(extraStop.status, 200)
   } finally {
     await new Promise((resolve) => server.close(resolve))
     await new Promise((resolve) => upstream.close(resolve))

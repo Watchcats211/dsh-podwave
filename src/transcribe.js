@@ -16,8 +16,15 @@ import { artifactByDir } from './catalog.js'
 import { assignSpeakers, diarizeInfo, runDiarization } from './diarize.js'
 import { resegmentLines } from './segment.js'
 import { closeLiveSpeakers, createLiveSpeakers } from './live-speaker.js'
-import { loadConfig as loadTranslateConfig, needsTranslation, translateWithApi } from './translate.js'
+import { canTranslate, loadConfig as loadTranslateConfig, needsTranslation, translateItems } from './translate.js'
 import { flushJobs, getJob, getJobFresh, jobKey, removeJob, upsertJob } from './jobs.js'
+import {
+  audioFingerprint,
+  lookupTranscriptEntry,
+  recordTranscriptIndex,
+  removeTranscriptIndex,
+  syncTranscriptIndex,
+} from './fingerprint.js'
 
 export const TRANSCRIPTS_DIR = path.join(DATA_DIR, 'transcripts')
 const WORK_DIR = path.join(TRANSCRIPTS_DIR, '.work')
@@ -196,8 +203,19 @@ async function saveTranscript(transcript) {
   await mkdir(TRANSCRIPTS_DIR, { recursive: true })
   const target = transcriptPath(transcript.id)
   const tmp = `${target}.tmp`
-  await writeFile(tmp, JSON.stringify({ ...transcript, schemaVersion: 2, updatedAt: Date.now() }, null, 2), 'utf8')
+  let source = transcript.source && typeof transcript.source === 'object' ? { ...transcript.source } : null
+  if (source?.path && !source.fingerprint) {
+    const hash = await audioFingerprint(source.path)
+    if (hash) source.fingerprint = hash
+  }
+  const idStr = String(transcript.id || '')
+  if (idStr.startsWith('xyz') && idStr.length > 3) {
+    source = { ...(source || {}), xyzEid: source?.xyzEid || idStr.slice(3) }
+  }
+  const payload = { ...transcript, source, schemaVersion: 2, updatedAt: Date.now() }
+  await writeFile(tmp, JSON.stringify(payload, null, 2), 'utf8')
   await rename(tmp, target)
+  recordTranscriptIndex(payload, target)
 }
 
 export { saveTranscript }
@@ -221,6 +239,60 @@ async function claimOrphanTranscript(id) {
   } catch {
     return null
   }
+  // 1. 先按内容指纹 / 小宇宙 eid 精确认领：文件改名、移目录、重新拖入拷贝都能秒中。
+  let hash = String(episode?.fingerprint || '')
+  if (!hash && episode?.file) {
+    hash = await audioFingerprint(episode.file)
+  }
+  const xyzEid = String(episode?.eid || (String(id).startsWith('xyz') && String(id).length > 3 ? String(id).slice(3) : ''))
+  if (hash || xyzEid) {
+    const hit = lookupTranscriptEntry({ hash, xyzEid })
+    if (hit?.entry && hit.entry.id && hit.entry.id !== id) {
+      const matchedFile = transcriptPath(hit.entry.id)
+      try {
+        const raw = JSON.parse(await readFile(matchedFile, 'utf8'))
+        const claimed = normalizeTranscript(
+          {
+            ...raw,
+            id,
+            schemaVersion: 2,
+            source: episode?.file
+              ? {
+                  path: episode.file,
+                  size: episode.size || null,
+                  mtime: episode.mtime || null,
+                  fingerprint: hash || raw?.source?.fingerprint || '',
+                  ...(xyzEid ? { xyzEid } : {}),
+                }
+              : { ...(raw.source || {}), ...(hash ? { fingerprint: hash } : {}), ...(xyzEid ? { xyzEid } : {}) },
+            claimedFrom: raw.id || hit.entry.id,
+          },
+          id,
+        )
+        if (claimed) {
+          await saveTranscript(claimed)
+          console.warn(`[dsh-podwave] 字幕指纹认领：${hit.entry.id}.json → ${id}.json（${hit.matchBy}）`)
+          // 仅当旧字幕指向的音频已经不在原路径时才把旧文件移入 .claimed/；
+          // 如果用户是复制了一份音频（两份音频都在磁盘上），保留原字幕以免原条目失联。
+          const oldPath = String(raw?.source?.path || '')
+          if (oldPath && !fs.existsSync(oldPath)) {
+            const backupDir = path.join(TRANSCRIPTS_DIR, '.claimed')
+            try {
+              await mkdir(backupDir, { recursive: true })
+              await rename(matchedFile, path.join(backupDir, path.basename(matchedFile)))
+              removeTranscriptIndex(hit.entry.id)
+            } catch {
+              /* 挪不动就算了，不影响读取 */
+            }
+          }
+          return claimed
+        }
+      } catch {
+        /* 指纹命中的旧文件读失败，退回下面 title+duration 认领 */
+      }
+    }
+  }
+
   const title = normalizeTitle(episode?.title)
   const duration = Number(episode?.duration) || 0
   // 媒体库还没扫到这个单集时不要记失败，等下次扫描后再试。
@@ -236,7 +308,7 @@ async function claimOrphanTranscript(id) {
 
   const matches = []
   for (const name of names) {
-    if (!name.endsWith('.json') || name === `${id}.json`) continue
+    if (name.startsWith('.') || !name.endsWith('.json') || name === `${id}.json`) continue
     const file = path.join(TRANSCRIPTS_DIR, name)
     let raw
     try {
@@ -284,7 +356,7 @@ async function claimOrphanTranscript(id) {
       id,
       schemaVersion: 2,
       source: episode?.file
-        ? { path: episode.file, size: episode.size || null, mtime: episode.mtime || null }
+        ? { path: episode.file, size: episode.size || null, mtime: episode.mtime || null, ...(hash ? { fingerprint: hash } : {}) }
         : raw.source || null,
       claimedFrom: raw.id || path.basename(file, '.json'),
     },
@@ -306,6 +378,7 @@ async function claimOrphanTranscript(id) {
   try {
     await mkdir(backupDir, { recursive: true })
     await rename(file, path.join(backupDir, path.basename(file)))
+    removeTranscriptIndex(path.basename(file, '.json'))
   } catch {
     /* 挪不动就算了，不影响读取 */
   }
@@ -438,6 +511,7 @@ export async function migrateAllTranscripts() {
       /* ignore */
     }
   }
+  syncTranscriptIndex()
   return { migrated }
 }
 
@@ -449,6 +523,7 @@ export async function deleteTranscript(id) {
   } catch {
     /* ignore */
   }
+  removeTranscriptIndex(id)
   await rm(path.join(WORK_DIR, id), { recursive: true, force: true }).catch(() => {})
   removeJob(jobId(id))
   return true
@@ -846,34 +921,85 @@ function mergedFromResults(plan, resultsDir) {
   return { lines, language, texts }
 }
 
-// 实时跟播：每完成一块就把这一块的行立刻翻译出来，用户不用等整段转完。
-const LIVE_TARGET = 'zh'
+// 实时跟播：每完成一块就把这一块的外语行立刻翻译出来，走用户当前选定的翻译引擎（DSH / 本地 / API）。
+function preferredTranslateTarget() {
+  const target = loadTranslateConfig().target
+  return target === 'en' ? 'en' : 'zh'
+}
 
-async function translateLiveLines(lines, cache) {
+async function translateLiveLines(lines, cache, target = preferredTranslateTarget()) {
   const config = loadTranslateConfig()
-  if (!config.apiKey) return 0
+  if (config.autoAfterTranscribe === false || !canTranslate(config.provider)) return 0
   const batch = []
   const seen = new Set()
   for (const line of lines) {
     const text = String(line.text || '').trim()
     if (!text || cache.has(text) || seen.has(text)) continue
-    if (!needsTranslation(line, LIVE_TARGET)) continue
+    if (!needsTranslation(line, target)) continue
     seen.add(text)
     batch.push({ id: text, text })
   }
   if (!batch.length) return 0
-  const result = await translateWithApi(batch, LIVE_TARGET, config)
+  const result = await translateItems(batch, target, { provider: config.provider })
   for (const [key, value] of result) cache.set(key, value)
   return result.size
 }
 
 // 译文按「原文」缓存：断句重排会让行号变，但同一句原文的译文可以复用。
-function applyLiveTranslations(lines, cache) {
+function applyLiveTranslations(lines, cache, target = preferredTranslateTarget()) {
   if (!cache.size) return
   for (const line of lines) {
     const text = String(line.text || '').trim()
     const hit = cache.get(text)
-    if (hit) line.translations = { ...(line.translations || {}), [LIVE_TARGET]: hit }
+    if (hit) line.translations = { ...(line.translations || {}), [target]: hit }
+  }
+}
+
+// 转写完成后自动翻译外语行：中文播客（目标为中文时）0ms 跳过；外语播客无缝衔接到双语字幕。
+// 翻译失败不影响已落盘的原文转写结果，用户可以随时重试。
+async function autoTranslateTranscript(episodeId, transcript, key) {
+  const config = loadTranslateConfig()
+  if (config.autoAfterTranscribe === false) return { skipped: true }
+  const target = preferredTranslateTarget()
+  if (!canTranslate(config.provider)) return { skipped: true }
+  const pending = (transcript.lines || []).filter((line) => needsTranslation(line, target) && !line.translations?.[target])
+  if (!pending.length) return { skipped: true }
+
+  const useProvider = config.provider || 'dsh'
+  let done = 0
+  upsertJob({
+    key,
+    stage: 'translating',
+    progress: { done: 0, total: pending.length, percent: 97, unit: 'lines' },
+  })
+  try {
+    const items = pending.map((line) => ({ id: line.id, text: line.text }))
+    await translateItems(items, target, {
+      provider: useProvider,
+      shouldContinue: () => !cancelRequested.has(key),
+      onBatch: async (batchMap) => {
+        if (!batchMap.size) return
+        for (const line of transcript.lines) {
+          const text = batchMap.get(line.id)
+          if (text) {
+            line.translations = { ...(line.translations || {}), [target]: text }
+            done += 1
+          }
+        }
+        transcript.providers = { ...(transcript.providers || {}), [target]: useProvider }
+        await saveTranscript(transcript)
+        const pct = Math.min(99.5, 97 + (done / Math.max(1, pending.length)) * 2.5)
+        upsertJob({
+          key,
+          stage: 'translating',
+          progress: { done, total: pending.length, percent: Math.round(pct * 10) / 10, unit: 'lines' },
+        })
+      },
+    })
+    return { translated: done, target, provider: useProvider }
+  } catch (error) {
+    console.warn(`[dsh-podwave] 自动翻译未完成 (${episodeId}, ${target}): ${error?.message || error}`)
+    return { translated: done, target, error: error?.message || String(error) }
   }
 }
 
@@ -896,7 +1022,7 @@ function buildPreview(episode, plan, merged) {
     model: currentAsrModel().name,
     language: merged.language,
     duration: plan.duration,
-    text: merged.texts.join(' '),
+    text: merged.lines.map((line) => line.text).join(' ') || merged.texts.join(' '),
     source: { path: episode.file },
     lines: merged.lines,
     providers: {},
@@ -1096,11 +1222,12 @@ async function runJob(item) {
     }
 
     let source = null
+    const fingerprint = episode.fingerprint || (await audioFingerprint(episode.file))
     try {
       const info = fs.statSync(episode.file)
-      source = { path: episode.file, size: info.size, mtime: info.mtimeMs }
+      source = { path: episode.file, size: info.size, mtime: info.mtimeMs, ...(fingerprint ? { fingerprint } : {}) }
     } catch {
-      source = { path: episode.file }
+      source = { path: episode.file, ...(fingerprint ? { fingerprint } : {}) }
     }
 
     const transcript = {
@@ -1112,13 +1239,14 @@ async function runJob(item) {
       model: currentAsrModel().name,
       language: merged.language,
       duration: plan.duration || episode.duration || merged.lines[merged.lines.length - 1]?.end || 0,
-      text: merged.texts.join(' '),
+      text: merged.lines.map((line) => line.text).join(' ') || merged.texts.join(' '),
       source,
       lines: merged.lines,
       providers: {},
       speakers,
     }
     await saveTranscript(transcript)
+    await autoTranslateTranscript(episode.id, transcript, key)
     await rm(backup, { force: true }).catch(() => {})
     upsertJob({
       key,
@@ -1347,7 +1475,7 @@ function apiTranscript(episode, plan, merged, speakers, source) {
     model: 'deepseek-asr',
     language: merged.language,
     duration: plan.duration || episode.duration || merged.lines[merged.lines.length - 1]?.end || 0,
-    text: merged.texts.join(' '),
+    text: merged.lines.map((line) => line.text).join(' ') || merged.texts.join(' '),
     source,
     lines: merged.lines,
     providers: {},
@@ -1415,12 +1543,14 @@ async function runApiJob(item) {
       lastPreview = doneCount
       const preview = mergedFromResults(plan, resultsDir)
       if (!preview.lines.length) return
+      const liveTarget = preferredTranslateTarget()
+      const liveProvider = loadTranslateConfig().provider || 'dsh'
       if (live) await live.labelLines(preview.lines, plan.parts).catch(() => {})
-      await translateLiveLines(preview.lines, liveTranslations).catch(() => {})
-      applyLiveTranslations(preview.lines, liveTranslations)
+      await translateLiveLines(preview.lines, liveTranslations, liveTarget).catch(() => {})
+      applyLiveTranslations(preview.lines, liveTranslations, liveTarget)
       const built = buildPreview(episode, plan, preview)
       built.model = 'deepseek-asr'
-      if (liveTranslations.size) built.providers = { [LIVE_TARGET]: 'api' }
+      if (liveTranslations.size) built.providers = { [liveTarget]: liveProvider }
       if (live) built.speakers = live.speakers()
       await saveTranscript(built).catch(() => {})
       partialWritten = true
@@ -1510,9 +1640,11 @@ async function runApiJob(item) {
     upsertJob({ key, stage: 'merging' })
     const merged = mergedFromResults(plan, resultsDir)
     let speakers = []
+    const liveTarget = preferredTranslateTarget()
+    const liveProvider = loadTranslateConfig().provider || 'dsh'
     // 实时期间攒下的译文要带进最终字幕；整段说话人分离不可用时，保留在线标签。
     if (realtime) {
-      applyLiveTranslations(merged.lines, liveTranslations)
+      applyLiveTranslations(merged.lines, liveTranslations, liveTarget)
       if (live) speakers = live.speakers()
     }
     if (transcribeConfig().diarize && diarizeInfo().modelsReady) {
@@ -1527,16 +1659,18 @@ async function runApiJob(item) {
     }
 
     let source = null
+    const fingerprint = episode.fingerprint || (await audioFingerprint(episode.file))
     try {
       const info = fs.statSync(episode.file)
-      source = { path: episode.file, size: info.size, mtime: info.mtimeMs }
+      source = { path: episode.file, size: info.size, mtime: info.mtimeMs, ...(fingerprint ? { fingerprint } : {}) }
     } catch {
-      source = { path: episode.file }
+      source = { path: episode.file, ...(fingerprint ? { fingerprint } : {}) }
     }
 
     const final = apiTranscript(episode, plan, merged, speakers, source)
-    if (realtime && liveTranslations.size) final.providers = { [LIVE_TARGET]: 'api' }
+    if (realtime && liveTranslations.size) final.providers = { [liveTarget]: liveProvider }
     await saveTranscript(final)
+    await autoTranslateTranscript(episode.id, final, key)
     await rm(backup, { force: true }).catch(() => {})
     upsertJob({
       key,
@@ -1854,18 +1988,61 @@ export async function validateTranscript(id) {
   return { ok: issues.length === 0, issues }
 }
 
-export function toSRT(transcript) {
-  return transcript.lines
-    .map((line, index) => `${index + 1}\n${srtTime(line.start)} --> ${srtTime(line.end)}\n${line.text}\n`)
+export function formatSpeakerLabel(speaker, speakers = []) {
+  if (speaker === null || speaker === undefined || speaker === '') return ''
+  if (typeof speaker === 'number' && Number.isFinite(speaker)) {
+    const entry = Array.isArray(speakers) ? speakers[speaker] || speakers.find((item) => item && item.id === speaker) : null
+    if (entry && typeof entry === 'object' && entry.label) return entry.label
+    return `说话人 ${speaker + 1}`
+  }
+  const str = String(speaker).trim()
+  if (!str) return ''
+  if (Array.isArray(speakers)) {
+    const obj = speakers.find((item) => item && typeof item === 'object' && (String(item.id) === str || String(item.raw) === str))
+    if (obj?.label) return obj.label
+  }
+  const mossMatch = /^S0*(\d+)$/i.exec(str)
+  if (mossMatch) return `说话人 ${Number(mossMatch[1])}`
+  if (/^\d+$/.test(str)) return `说话人 ${Number(str) + 1}`
+  return str
+}
+
+function resolveExportTarget(transcript, target = 'auto') {
+  if (!target || target === 'none') return ''
+  if (target !== 'auto') return target
+  const providerKeys = Object.keys(transcript?.providers || {}).filter((k) => k && k !== '_provider')
+  if (providerKeys.length) return providerKeys[0]
+  for (const line of transcript?.lines || []) {
+    const keys = Object.keys(line?.translations || {}).filter((k) => String(line.translations[k] || '').trim())
+    if (keys.length) return keys[0]
+  }
+  return ''
+}
+
+export function toSRT(transcript, { target = 'auto', includeSpeakers = true } = {}) {
+  const lang = resolveExportTarget(transcript, target)
+  return (transcript.lines || [])
+    .map((line, index) => {
+      const spk = includeSpeakers ? formatSpeakerLabel(line.speaker, transcript.speakers) : ''
+      const main = spk ? `[${spk}] ${line.text}` : line.text
+      const tr = lang ? String(line.translations?.[lang] || '').trim() : ''
+      const body = tr ? `${main}\n${tr}` : main
+      return `${index + 1}\n${srtTime(line.start)} --> ${srtTime(line.end)}\n${body}\n`
+    })
     .join('\n')
 }
 
-export function toMarkdown(transcript) {
+export function toMarkdown(transcript, { target = 'auto', includeSpeakers = true } = {}) {
+  const lang = resolveExportTarget(transcript, target)
   const lines = [`# ${transcript.title || transcript.id}`, '', `> 模型 ${transcript.model}${transcript.language ? ` · 语言 ${transcript.language}` : ''}`, '']
-  for (const line of transcript.lines) {
+  for (const line of transcript.lines || []) {
     const minutes = Math.floor(line.start / 60)
     const seconds = Math.floor(line.start % 60)
-    lines.push(`**${minutes}:${String(seconds).padStart(2, '0')}** ${line.text}`)
+    const spk = includeSpeakers ? formatSpeakerLabel(line.speaker, transcript.speakers) : ''
+    const prefix = spk ? `[${spk}] ` : ''
+    lines.push(`**${minutes}:${String(seconds).padStart(2, '0')}** ${prefix}${line.text}`)
+    const tr = lang ? String(line.translations?.[lang] || '').trim() : ''
+    if (tr) lines.push(`　${tr}`)
   }
   return `${lines.join('\n')}\n`
 }

@@ -5,11 +5,10 @@
 // AudioWorklet）都留在 client/src/lib/audioCapture.js 里。
 
 export const LIVE_SAMPLE_RATE = 16000
-// 静音多久算一句结束。600ms 是「说话人换气」和「句子中间停顿」的分界：
-// 再短会把一句话切成两半，再长字幕就明显跟不上。
-export const LIVE_SILENCE_MS = 600
-// 单句上限。演讲式连说不停时没有静音点，必须硬切，否则等不到字幕。
-export const LIVE_MAX_MS = 12000
+// 静音多久算一句结束。450ms 响应更跟手，同时避开正常换气断句。
+export const LIVE_SILENCE_MS = 450
+// 单句上限 6 秒：演讲式连说不停时能尽快出字，避免憋十几秒才出第一句。
+export const LIVE_MAX_MS = 6000
 // 太短的「有声」多半是键盘声、椅子响，丢掉不送识别（省钱也省噪声字幕）。
 export const LIVE_MIN_MS = 400
 // 切句时往前多带一点，避免把第一个声母吃掉。
@@ -147,6 +146,33 @@ export class LiveSegmenter {
     if (!this.inSpeech) return []
     const piece = this.cut('flush')
     return piece ? [piece] : []
+  }
+
+  /** 读取当前正在说但尚未切句的音频，供本地瞬时草稿引擎做滚字预览。 */
+  peekSamples(maxSeconds = 6) {
+    if (!this.inSpeech || !this.segment.length) return null
+    const voicedMs = ((this.lastVoiced - this.firstVoiced) / this.sampleRate) * 1000
+    if (voicedMs < 350) return null
+    const captured = this.segment.reduce((sum, chunk) => sum + chunk.data.length, 0)
+    const maxLen = Math.round(maxSeconds * this.sampleRate)
+    const take = Math.min(captured, maxLen)
+    const skip = captured - take
+    const out = new Float32Array(take)
+    let seen = 0
+    let offset = 0
+    for (const chunk of this.segment) {
+      const len = chunk.data.length
+      if (seen + len <= skip) {
+        seen += len
+        continue
+      }
+      const from = Math.max(0, skip - seen)
+      const slice = from > 0 ? chunk.data.subarray(from) : chunk.data
+      out.set(slice, offset)
+      offset += slice.length
+      seen += len
+    }
+    return out
   }
 
   cut(reason) {

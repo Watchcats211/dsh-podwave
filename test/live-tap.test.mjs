@@ -97,6 +97,31 @@ test('startTap: 扫目录 → 解码 → 切句 → 交出 WAV，停止后清理
   await new Promise((resolve) => setTimeout(resolve, 300))
 })
 
+test('startTap: 零 WAV 输出时触发看门狗提示，且复用时更新回调', async () => {
+  const silentScript = path.join(home, 'silent-tap.mjs')
+  fs.writeFileSync(silentScript, 'process.stdout.write("{\\"ready\\":true}\\n"); setInterval(() => {}, 1000)\n', 'utf8')
+  const silentShim = path.join(home, 'silent-tap')
+  fs.writeFileSync(silentShim, `#!/bin/sh\nexec "${process.execPath}" "${silentScript}" "$@"\n`, 'utf8')
+  fs.chmodSync(silentShim, 0o755)
+  process.env.PODWAVE_AUDIO_TAP_BIN = silentShim
+  const hints = []
+  try {
+    await tap.startTap({ noAudioMs: 200, onHint: (text) => hints.push(text) })
+    const deadline = Date.now() + 2000
+    while (hints.length === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 80))
+    }
+    assert.ok(hints.some((h) => /未收到系统音频|权限/.test(h)), `应触发无音频看门狗提示，实际: ${hints.join(',')}`)
+
+    const reusedHints = []
+    const reused = await tap.startTap({ noAudioMs: 200, onHint: (text) => reusedHints.push(text) })
+    assert.equal(reused.reused, true)
+  } finally {
+    tap.stopTap()
+    process.env.PODWAVE_AUDIO_TAP_BIN = shim
+  }
+})
+
 test('startTap: 二进制不存在时给出可读错误', async () => {
   process.env.PODWAVE_AUDIO_TAP_BIN = path.join(home, 'missing-binary')
   try {
