@@ -2415,7 +2415,7 @@ export default function App() {
             <span className="rate-wrap">
               <button
                 className="rate-btn"
-                onClick={() => setRateOpen((value) => !value)}
+                onClick={() => { setSleepOpen(false); setRateOpen((value) => !value) }}
                 title="播放速度"
                 aria-haspopup="menu"
                 aria-expanded={rateOpen}
@@ -2442,7 +2442,7 @@ export default function App() {
             <span className="sleep-wrap">
               <button
                 className={`rate-btn sleep-btn ${sleepAt ? 'active' : ''}`}
-                onClick={() => setSleepOpen((value) => !value)}
+                onClick={() => { setRateOpen(false); setSleepOpen((value) => !value) }}
                 title="睡眠定时"
                 aria-haspopup="menu"
                 aria-expanded={sleepOpen}

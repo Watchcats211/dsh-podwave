@@ -34,6 +34,8 @@ export default function AddFolderModal({
 }) {
   const dialogRef = useRef(null)
   const inputRef = useRef(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
   const [busyPick, setBusyPick] = useState(false)
@@ -80,7 +82,7 @@ export default function AddFolderModal({
     if (!dialog.open) dialog.showModal?.()
     const handleClose = () => {
       dialog.returnValue = ''
-      onClose?.()
+      onCloseRef.current?.()
     }
     dialog.addEventListener('close', handleClose)
 
@@ -106,7 +108,7 @@ export default function AddFolderModal({
       cleanupFallback?.()
       if (dialog.open) dialog.close()
     }
-  }, [onClose])
+  }, [])
 
   // 手动输入路径的防抖实时探测
   useEffect(() => {
