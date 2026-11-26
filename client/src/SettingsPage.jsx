@@ -491,8 +491,20 @@ export default function SettingsPage() {
     }
   }
 
-  const asrOptions = allModels.filter((model) => /asr|sensevoice|sherpa/i.test(model.name) && model.ready !== false)
-  const translateOptions = allModels.filter((model) => !/asr|sensevoice|sherpa|diarization/i.test(model.name) && model.ready !== false)
+  // 以下拉框里的模型种类为准（服务端的 kind），不要用名字正则猜：
+  // MOSS 的目录名不带 asr/sensevoice，早先就被漏在转写列表外，用户只能选到翻译模型。
+  const kindOf = (model) =>
+    model.kind || (/asr|sensevoice|sherpa|moss/i.test(model.name) ? 'asr' : /^hy-mt/i.test(model.name) ? 'translate' : '')
+  const asrOptions = allModels.filter((model) => kindOf(model) === 'asr' && model.ready !== false)
+  const translateOptions = allModels.filter((model) => kindOf(model) === 'translate' && model.ready !== false)
+  // 当前存的值可能压根不在候选里（比如之前误存成翻译模型）：补一条，别让下拉框显示成别的模型。
+  const withCurrent = (options, current) => {
+    if (!current || options.some((model) => model.name === current)) return options
+    const known = allModels.find((model) => model.name === current)
+    return [{ name: current, ready: known ? known.ready !== false : false, kind: known?.kind || '', missing: true }, ...options]
+  }
+  const asrChoices = withCurrent(asrOptions.length ? asrOptions : modelOptions, asrModel)
+  const translateChoices = withCurrent(translateOptions.length ? translateOptions : modelOptions, translateModel)
   const saveUi = async () => {
     setSaving('ui')
     setError('')
@@ -1061,24 +1073,29 @@ export default function SettingsPage() {
             ) : null}
           </>
         ) : null}
+        {transcribeInfo?.modelProblem ? <p className="settings-stale">{transcribeInfo.modelProblem}</p> : null}
         <div className="settings-fields">
           <label className="field-row">
             <span>转写模型（ASR）</span>
             <select value={asrModel} onChange={(event) => setAsrModel(event.target.value)}>
-              {(asrOptions.length ? asrOptions : modelOptions).map((model) => (
+              {asrChoices.map((model) => (
                 <option key={model.name} value={model.name}>
-                  {model.name}{model.ready ? '' : '（未就绪）'}
+                  {model.name}
+                  {model.missing ? '（当前，不是转写模型）' : model.ready ? '' : '（未就绪）'}
                 </option>
               ))}
             </select>
-            <span className="settings-status">{transcribeInfo?.modelReady ? '就绪' : '未就绪'}</span>
+            <span className={`settings-status ${transcribeInfo?.modelProblem ? 'is-warn' : ''}`}>
+              {transcribeInfo?.modelProblem ? '不能用' : transcribeInfo?.modelReady ? '就绪' : '未就绪'}
+            </span>
           </label>
           <label className="field-row">
             <span>翻译模型</span>
             <select value={translateModel} onChange={(event) => setTranslateModel(event.target.value)}>
-              {(translateOptions.length ? translateOptions : modelOptions).map((model) => (
+              {translateChoices.map((model) => (
                 <option key={model.name} value={model.name}>
-                  {model.name}{model.ready ? '' : '（未就绪）'}
+                  {model.name}
+                  {model.missing ? '（当前，不是翻译模型）' : model.ready ? '' : '（未就绪）'}
                 </option>
               ))}
             </select>

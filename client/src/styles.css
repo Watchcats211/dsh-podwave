@@ -1194,6 +1194,8 @@ select:focus-visible {
 .podwave-settings .field-row input:focus { border-color: color-mix(in srgb, currentColor 34%, transparent); }
 .podwave-settings .field-row select option { color: var(--text); background: #2c2c2e; }
 .podwave-settings .settings-status { flex: none; font-size: 12.5px; color: color-mix(in srgb, currentColor 50%, transparent); }
+/* 模型选错用途（用翻译模型转写）这类硬错误，状态用警示色，别和「未就绪」混成一片灰 */
+.podwave-settings .settings-status.is-warn { color: var(--danger); }
 .podwave-settings .settings-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .podwave-settings .settings-btn { height: 30px; padding: 0 14px; border: 0; border-radius: 8px; color: inherit; background: color-mix(in srgb, currentColor 11%, transparent); font-size: 13.5px; font-weight: 500; cursor: pointer; }
 .podwave-settings .settings-btn:hover { background: color-mix(in srgb, currentColor 17%, transparent); }

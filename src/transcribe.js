@@ -8,7 +8,7 @@ import path from 'node:path'
 import { copyFile, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { DATA_DIR, getState } from './state.js'
-import { loadModelConfig, modelDir } from './models.js'
+import { loadModelConfig, localModelMeta, modelDir } from './models.js'
 import { ffmpegPath, ffprobePath, killTree, venvBin, venvPython } from './platform.js'
 import { getSection } from './config.js'
 import { API_CHUNK_SECONDS, REALTIME_CHUNK_SECONDS, asrApiConfig, asrProvider, buildApiLines, transcribeChunk } from './asr-api.js'
@@ -71,7 +71,19 @@ export function currentAsrModel() {
         // MOSS 是 transformers 权重 + 远程代码，config.json 在就说明目录下全了。
         ? fs.existsSync(path.join(dir, 'config.json'))
         : fs.existsSync(path.join(dir, 'model.safetensors'))
-  return { name, dir, ready, engine }
+  // 选成「翻译模型」也能通过上面的存在性检查（它确实有 model.safetensors），
+  // 然后在 mlx-qwen3-asr 里吐一屏 missing keys —— 用户只看到「转写失败」。
+  // 这里提前判死，并给出能照着做的说法。
+  const kind = artifact ? artifact.kind : localModelMeta(name)?.kind || ''
+  const problem = kind && kind !== 'asr' ? modelKindProblem(name, kind) : ''
+  return { name, dir, ready: ready && !problem, engine, problem, kind }
+}
+
+const MODEL_KIND_LABELS = { translate: '翻译', diarization: '说话人分离', asr: '转写' }
+
+function modelKindProblem(name, kind) {
+  const label = MODEL_KIND_LABELS[kind] || '别的用途'
+  return `「${name}」是${label}模型，不能用来转写。请到「设置 → 播客 → 转写」把转写模型换成真正的语音识别模型（例如 moss-transcribe-diarize / qwen3-asr），或者直接把转写方式切回云端 API。`
 }
 
 export function transcribeConfig() {
@@ -109,6 +121,8 @@ export function runtimeInfo() {
     engine: model.engine,
     installed,
     modelReady: model.ready,
+    // 模型选错用途时（拿翻译模型来转写）说清原因，前端和 startTranscription 都用它。
+    modelProblem: model.problem || '',
     model: model.dir,
     modelName: model.name,
     cli: cliPath,
@@ -1581,6 +1595,8 @@ export async function startTranscription(episode, { force = false, resume = fals
     }
   } else {
     if (!info.installed) throw Object.assign(new Error('转写运行环境未安装（~/.podwave/runtime），在设置里点「一键安装本地模型」'), { status: 503 })
+    // 选错模型用途（拿翻译模型来转写）要说清是哪个模型、怎么改，别让用户去猜一屏 missing keys。
+    if (info.modelProblem) throw Object.assign(new Error(info.modelProblem), { status: 409 })
     if (!info.modelReady) throw Object.assign(new Error('转写模型未下载，请在设置里安装或检查模型目录'), { status: 503 })
   }
 

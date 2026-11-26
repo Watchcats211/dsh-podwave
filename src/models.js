@@ -281,7 +281,8 @@ function artifactMeta() {
   return map
 }
 
-function localModelMeta(name) {
+/** 按目录名认本地模型（catalog 里没有自己转的模型时用它），返回 { kind, label } 或 null。 */
+export function localModelMeta(name) {
   for (const pattern of LOCAL_MODEL_PATTERNS) {
     if (pattern.re.test(name)) return { kind: pattern.kind, label: pattern.label(name) }
   }
