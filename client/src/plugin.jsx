@@ -36,6 +36,9 @@ function apply(ctx) {
   )
 
   let navEntry = null
+  let navWanted = true // 默认显示；配置回来之前不藏，免得整块入口消失
+  let navInjected = false
+  let navMounted = false
   const STYLE_ID = 'podwave-hide-nav'
   const applyNavCss = (hide) => {
     if (typeof document === 'undefined') return
@@ -49,13 +52,35 @@ function apply(ctx) {
       style.remove()
     }
   }
+  // 把「播客」放进 DSH 的侧栏面板列表。
+  //
+  // 必须在 inject('sidebar.panellist') 里注册：冷启动时插件的客户端半片可能比侧栏
+  // 那个槽先就绪，直接 register 会被静默丢掉 —— 表现就是重启后侧栏里没有播客，
+  // 而把插件关掉再打开（热重载）又会出现。这个 bug 在 0.11.57 上线后才暴露。
+  ctx.slots.inject('sidebar.panellist', () => {
+    navInjected = true
+    if (!navWanted || navEntry) return undefined
+    navEntry = ctx.slots.register(
+      { name: 'sidebar.panellist', id: 'podwave', order: 8, label: () => '播客' },
+      PodcastIcon,
+    )
+    navMounted = true
+    return () => {
+      navEntry = null
+      navMounted = false
+    }
+  })
+
   const syncNav = (show) => {
     applyNavCss(!show)
-    if (show && !navEntry) {
+    navWanted = show
+    // 槽已经就绪但之前因为配置没显示：现在补注册。
+    if (show && navInjected && !navEntry) {
       navEntry = ctx.slots.register(
         { name: 'sidebar.panellist', id: 'podwave', order: 8, label: () => '播客' },
         PodcastIcon,
       )
+      navMounted = true
     } else if (!show && navEntry) {
       const entry = navEntry
       navEntry = null
