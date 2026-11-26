@@ -59,8 +59,14 @@ export function startLiveSession({ target = 'zh' } = {}) {
     chain: Promise.resolve(),
   }
   sessions.set(session.id, session)
-  // 上一次如果宿主被强杀，.work 里会留几句 WAV；开新会话时顺手清掉（此时还没有任何写入）。
-  fs.promises.rm(WORK_DIR, { recursive: true, force: true }).catch(() => {})
+  // 上一次如果宿主被强杀，.work 里会留几句 WAV；开新会话时顺手清掉。
+  // 必须同步删：异步 rm 会和紧接着的第一段写入抢同一个目录，
+  // 结果是第一段音频刚写进去就被删掉 → ENOENT → 这次实时字幕一句都出不来。
+  try {
+    fs.rmSync(WORK_DIR, { recursive: true, force: true })
+  } catch {
+    /* 目录不存在或删不掉都不影响后面 */
+  }
   return session
 }
 

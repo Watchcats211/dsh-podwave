@@ -14,6 +14,13 @@ export default function LiveCaptionOverlay({
   count = 0,
   elapsed = 0,
   fontSize = 15,
+  native = false,
+  level = 0,
+  hint = '',
+  opacity = 0.78,
+  styleSize = 18,
+  width = 780,
+  onStyle,
   onStop,
   onSave,
   onClose,
@@ -91,8 +98,18 @@ export default function LiveCaptionOverlay({
         </button>
       </div>
 
+      {/* 电平条：判断「到底有没有声音进来」最直接的东西。
+          实时字幕没出字，九成是系统输出没走虚拟声卡，这时候电平是死的。 */}
+      <div className={`live-meter ${level > 0.004 ? 'is-live' : ''}`} title="输入电平（说话时会跳）">
+        <span style={{ width: `${Math.min(100, Math.max(2, level * 400))}%` }} />
+      </div>
+
       <div className="live-caption-body" ref={bodyRef}>
-        {visible.length ? (
+        {native ? (
+          <p className="live-caption-note">
+            字幕画在屏幕上的独立小窗里（置顶，不会被别的应用挡住）。这里留着控制：拖动标题栏可以挪这个面板，点「停止」结束。
+          </p>
+        ) : visible.length ? (
           visible.map((line) => {
             const translation = line.translations?.zh || line.translations?.en || ''
             return (
@@ -116,6 +133,48 @@ export default function LiveCaptionOverlay({
         )}
       </div>
 
+      {native ? (
+        <div className="live-style">
+          <label title="只改底板透明度，文字始终清晰">
+            <span>不透明度</span>
+            <input
+              type="range"
+              min="15"
+              max="100"
+              step="1"
+              value={Math.round(opacity * 100)}
+              onChange={(event) => onStyle?.({ opacity: Number(event.target.value) / 100 })}
+            />
+            <span className="live-style-value">{Math.round(opacity * 100)}%</span>
+          </label>
+          <label>
+            <span>字号</span>
+            <input
+              type="range"
+              min="12"
+              max="42"
+              step="1"
+              value={styleSize}
+              onChange={(event) => onStyle?.({ fontSize: Number(event.target.value) })}
+            />
+            <span className="live-style-value">{styleSize}</span>
+          </label>
+          <label>
+            <span>宽度</span>
+            <input
+              type="range"
+              min="380"
+              max="1200"
+              step="10"
+              value={width}
+              onChange={(event) => onStyle?.({ width: Number(event.target.value) })}
+            />
+            <span className="live-style-value">{width}</span>
+          </label>
+        </div>
+      ) : null}
+
+      {hint && !error ? <p className="live-caption-note">{hint}</p> : null}
       {error ? <p className="live-caption-error">{error}</p> : null}
 
       <div className="live-caption-foot">

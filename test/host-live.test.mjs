@@ -99,6 +99,10 @@ test('host: 实时字幕能识别、翻译、落盘，缺 key 时明确拒绝', 
     assert.equal(status.ready, true)
     assert.equal(status.hasKey, true)
     assert.equal(status.session, null)
+    // 独立字幕窗的外观默认值（前端滑块初始化用）
+    assert.equal(status.opacity, 0.78)
+    assert.equal(status.fontSize, 18)
+    assert.equal(status.width, 780)
 
     // 2. 开始一次会话
     const started = await (await fetch(api('live/start'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json()
@@ -147,6 +151,28 @@ test('host: 实时字幕能识别、翻译、落盘，缺 key 时明确拒绝', 
     ).json()
     assert.equal(savedSetting.deviceId, 'bh-id')
     assert.equal(savedSetting.saveOnStop, false)
+
+    // 外观：存的能读回来，离谱的值会被夹住（透明度不能到 0，否则整块看不见）
+    const styled = await (
+      await fetch(api('live/settings'), {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ opacity: 0.4, fontSize: 26, width: 1000 }),
+      })
+    ).json()
+    assert.equal(styled.opacity, 0.4)
+    assert.equal(styled.fontSize, 26)
+    assert.equal(styled.width, 1000)
+    const clamped = await (
+      await fetch(api('live/settings'), {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ opacity: 0.01, fontSize: 99, width: 10 }),
+      })
+    ).json()
+    assert.equal(clamped.opacity, 0.15)
+    assert.equal(clamped.fontSize, 42)
+    assert.equal(clamped.width, 380)
     status = await (await fetch(api('live'))).json()
     assert.equal(status.deviceLabel, 'BlackHole 2ch')
     assert.equal(status.session.count, 4, '读状态不会动会话')

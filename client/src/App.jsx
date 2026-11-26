@@ -266,6 +266,15 @@ export default function App() {
   const [liveDevice, setLiveDevice] = useState('')
   const [liveStartedAt, setLiveStartedAt] = useState(0)
   const [liveNow, setLiveNow] = useState(0)
+  // 输入电平（0~1 RMS）：用来判断「到底有没有声音进来」，静音是这条链路最常见的失败原因。
+  const [liveLevel, setLiveLevel] = useState(0)
+  const [liveHint, setLiveHint] = useState('')
+  // 独立置顶窗（macOS 原生小窗）是否开着：开着就把字幕画到屏幕上，页面里只留控制条。
+  const [liveNative, setLiveNative] = useState(false)
+  // 独立窗外观：不透明度（只作用于底板）、字号、宽度。都存在 config 的 live 段里。
+  const [liveOpacity, setLiveOpacity] = useState(0.78)
+  const [liveStyleSize, setLiveStyleSize] = useState(18)
+  const [liveWidth, setLiveWidth] = useState(780)
 
   const audioRef = useRef(null)
   const mediaBaseRef = useRef('')
@@ -286,6 +295,10 @@ export default function App() {
   const liveSendingRef = useRef(false)
   const liveSessionRef = useRef('')
   const liveLinesRef = useRef([])
+  const liveLevelRef = useRef(0)
+  // 最近一次「听到声音」的时刻：静音超过 6 秒就提示用户去检查系统输出。
+  const liveLastSoundRef = useRef(0)
+  const liveStyleTimerRef = useRef(0)
 
   useEffect(() => { setNotesOpen(false) }, [detailId])
   useEffect(() => { settingsRef.current = settings }, [settings])
@@ -490,6 +503,37 @@ export default function App() {
     return () => window.clearInterval(timer)
   }, [liveStatus])
 
+  // 电平条单独跑快一点，才有「有声音进来」的即时反馈。
+  useEffect(() => {
+    if (liveStatus !== 'listening') return undefined
+    const timer = window.setInterval(() => setLiveLevel(liveLevelRef.current), 200)
+    return () => window.clearInterval(timer)
+  }, [liveStatus])
+
+  // 静音看门狗：开了实时字幕却一直没声音，是「系统输出没走虚拟声卡」的典型表现。
+  // 不解释清楚的话，用户只会看到「一直在等着听」。
+  useEffect(() => {
+    if (liveStatus !== 'listening') return undefined
+    const timer = window.setInterval(() => {
+      const silent = Date.now() - (liveLastSoundRef.current || 0)
+      if (silent > 6000 && liveLinesRef.current.length === 0) {
+        setLiveHint('没收到声音。系统输出要选「多输出设备」（扬声器 + BlackHole 2ch），只选扬声器的话插件听不到')
+      } else if (silent < 1500) {
+        setLiveHint('')
+      }
+    }, 1200)
+    return () => window.clearInterval(timer)
+  }, [liveStatus])
+
+  // 往「独立置顶窗」推一屏内容；窗口没开时宿主会静默忽略。
+  const pushLiveWindow = useCallback((payload) => {
+    fetch(`${API}/live/window`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'update', payload }),
+    }).catch(() => {})
+  }, [])
+
   // 一段一段串行发给宿主：乱序到达会让字幕和译文错位，而且识别本身也吃不消并发。
   const pumpLive = useCallback(async () => {
     if (liveSendingRef.current) return
@@ -509,6 +553,18 @@ export default function App() {
           if (data.lines?.length) {
             liveLinesRef.current = [...liveLinesRef.current, ...data.lines]
             setLiveLines(liveLinesRef.current)
+            // 独立窗只显示「最新一句 + 上一句」，够读又不挡视线。
+            const all = liveLinesRef.current
+            const last = all[all.length - 1]
+            const prev = all[all.length - 2]
+            pushLiveWindow({
+              text: last?.text || '',
+              translation: last?.translations?.zh || last?.translations?.en || '',
+              previous: prev?.text || '',
+              previousTranslation: prev?.translations?.zh || prev?.translations?.en || '',
+              status: 'listening',
+              hint: '',
+            })
           }
           setLiveError(data.lastError || '')
         } catch (err) {
@@ -518,7 +574,19 @@ export default function App() {
     } finally {
       liveSendingRef.current = false
     }
-  }, [])
+  }, [pushLiveWindow])
+
+  // 拖滑块时立刻生效（推给原生窗），松手后再防抖存一次盘。
+  const changeLiveStyle = useCallback((patch) => {
+    if (Number.isFinite(Number(patch.opacity))) setLiveOpacity(Number(patch.opacity))
+    if (Number.isFinite(Number(patch.fontSize))) setLiveStyleSize(Number(patch.fontSize))
+    if (Number.isFinite(Number(patch.width))) setLiveWidth(Number(patch.width))
+    pushLiveWindow(patch)
+    window.clearTimeout(liveStyleTimerRef.current)
+    liveStyleTimerRef.current = window.setTimeout(() => {
+      sendJSON(`${API}/live/settings`, 'PUT', patch).catch(() => {})
+    }, 600)
+  }, [pushLiveWindow])
 
   const finishLive = useCallback(async (save) => {
     setLiveStatus('saving')
@@ -531,6 +599,13 @@ export default function App() {
     } catch (err) {
       flash(`结束实时字幕失败：${err.message || err}`)
     } finally {
+      // 独立字幕窗跟着这次监听一起收起（宿主的窗口进程也会因为管道关闭而退出）。
+      fetch(`${API}/live/window`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'close' }),
+      }).catch(() => {})
+      setLiveNative(false)
       liveQueueRef.current = []
       liveLinesRef.current = []
       setLiveStatus('idle')
@@ -582,6 +657,10 @@ export default function App() {
       liveSessionRef.current = started.session.id
       const capture = await startLiveCapture({
         deviceId,
+        onLevel: (value) => {
+          liveLevelRef.current = value
+          if (value > 0.004) liveLastSoundRef.current = Date.now()
+        },
         onSegment: (segment) => {
           // 识别跟不上时最多排 9 段（约 40 秒），再多就丢最老的 —— 积压越久字幕越没意义。
           if (liveQueueRef.current.length > 8) liveQueueRef.current.shift()
@@ -593,6 +672,34 @@ export default function App() {
       setLiveDevice(capture.label || label || '系统声音')
       setLiveStartedAt(Date.now())
       setLiveStatus('listening')
+      liveLastSoundRef.current = Date.now()
+      // 独立置顶窗：macOS 上开一个原生小窗，字幕画到屏幕上（盖在所有应用之上）。
+      // 打不开（非 macOS / 没有 swiftc / 编译失败）就退回页面里的浮层，并说明原因。
+      try {
+        const opacity = Number.isFinite(Number(info.opacity)) ? Number(info.opacity) : 0.78
+        const size = Number.isFinite(Number(info.fontSize)) ? Number(info.fontSize) : 18
+        const width = Number.isFinite(Number(info.width)) ? Number(info.width) : 780
+        setLiveOpacity(opacity)
+        setLiveStyleSize(size)
+        setLiveWidth(width)
+        const opened = await sendJSON(`${API}/live/window`, 'POST', { action: 'open' })
+        if (opened?.ok) {
+          setLiveNative(true)
+          pushLiveWindow({
+            text: '',
+            status: 'listening',
+            hint: '听着呢，播放声音就会出字幕',
+            opacity,
+            fontSize: size,
+            width,
+          })
+        } else {
+          setLiveNative(false)
+          if (opened?.error) flash(`独立字幕窗没打开，字幕显示在卡片里：${opened.error}`)
+        }
+      } catch {
+        setLiveNative(false)
+      }
       if (deviceId && (deviceId !== info.deviceId || (capture.label || label) !== info.deviceLabel)) {
         sendJSON(`${API}/live/settings`, 'PUT', { deviceId, deviceLabel: capture.label || label }).catch(() => {})
       }
@@ -608,7 +715,7 @@ export default function App() {
       setLiveError(message)
       flash(`实时字幕没起来：${message}`)
     }
-  }, [flash, liveStatus, pumpLive])
+  }, [flash, liveStatus, pumpLive, pushLiveWindow, subtitleSize])
 
   const loadLibrary = useCallback(async () => {
     const data = await getJSON(`${API}/episodes`)
@@ -2295,6 +2402,13 @@ export default function App() {
           count={liveLines.length}
           elapsed={liveStartedAt ? Math.max(0, Math.round((liveNow - liveStartedAt) / 1000)) : 0}
           fontSize={subtitleSize}
+          native={liveNative}
+          level={liveLevel}
+          hint={liveHint}
+          opacity={liveOpacity}
+          styleSize={liveStyleSize}
+          width={liveWidth}
+          onStyle={changeLiveStyle}
           onStop={stopLive}
           onSave={finishLive}
           onClose={() => finishLive(false)}

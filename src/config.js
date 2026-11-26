@@ -92,6 +92,10 @@ export const CONFIG_DEFAULTS = {
     deviceId: '',
     deviceLabel: '',
     saveOnStop: true,
+    // 独立字幕窗的外观：不透明度只管底板（文字始终不透明），宽度和字号决定「大小」。
+    opacity: 0.78,
+    fontSize: 18,
+    width: 780,
   },
 }
 

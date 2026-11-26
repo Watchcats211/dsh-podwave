@@ -77,6 +77,7 @@ import {
   validateTranscript,
 } from './transcribe.js'
 import { closeLiveSpeakers } from './live-speaker.js'
+import { captionWindowState, closeCaptionWindow, openCaptionWindow, pushCaption } from './caption-window.js'
 import {
   getLiveSession,
   liveReady,
@@ -273,6 +274,13 @@ function boot() {
     })
   }
   return booted
+}
+
+// 数值夹取：外观类设置都走它，免得前端拖出离谱的值（透明度 0 → 看不见，字号 300 → 撑爆屏幕）。
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return fallback
+  return Math.min(max, Math.max(min, number))
 }
 
 function json(res, status, body) {
@@ -536,7 +544,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.60',
+      version: '0.11.61',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -566,7 +574,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.60', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.61', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -1378,6 +1386,9 @@ async function route(ctx, req, res) {
       deviceId: config.deviceId || '',
       deviceLabel: config.deviceLabel || '',
       saveOnStop: config.saveOnStop !== false,
+      opacity: clampNumber(config.opacity, 0.15, 1, 0.78),
+      fontSize: clampNumber(config.fontSize, 12, 42, 18),
+      width: clampNumber(config.width, 380, 1600, 780),
       target: (getSection('translate') || {}).target || 'zh',
     })
   }
@@ -1388,6 +1399,9 @@ async function route(ctx, req, res) {
     if (typeof body?.deviceId === 'string') patch.deviceId = body.deviceId.slice(0, 300)
     if (typeof body?.deviceLabel === 'string') patch.deviceLabel = body.deviceLabel.slice(0, 300)
     if (typeof body?.saveOnStop === 'boolean') patch.saveOnStop = body.saveOnStop
+    if (Number.isFinite(Number(body?.opacity))) patch.opacity = clampNumber(body.opacity, 0.15, 1, 0.78)
+    if (Number.isFinite(Number(body?.fontSize))) patch.fontSize = clampNumber(body.fontSize, 12, 42, 18)
+    if (Number.isFinite(Number(body?.width))) patch.width = clampNumber(body.width, 380, 1600, 780)
     const next = updateSection('live', patch)
     return json(res, 200, next || {})
   }
@@ -1421,6 +1435,26 @@ async function route(ctx, req, res) {
     if (!session) return json(res, 409, { error: '实时字幕还没开始' })
     const result = await stopLiveSession(session, { save: body?.save === true })
     return json(res, 200, result)
+  }
+
+  // 独立置顶字幕窗（macOS 原生小窗，盖在所有应用之上）。
+  if (routePath === 'api/live/window') {
+    if (method === 'GET') return json(res, 200, captionWindowState())
+    if (method === 'POST') {
+      const body = await readJson(req).catch(() => ({}))
+      const action = String(body?.action || 'open')
+      if (action === 'open') {
+        const result = await openCaptionWindow()
+        if (!result.ok) return json(res, 200, { ok: false, error: result.error, ...captionWindowState() })
+        return json(res, 200, { ok: true, ...captionWindowState() })
+      }
+      if (action === 'update') return json(res, 200, { ok: pushCaption(body?.payload || {}) })
+      if (action === 'close') {
+        closeCaptionWindow()
+        return json(res, 200, { ok: true })
+      }
+      return json(res, 400, { error: '未知的窗口操作' })
+    }
   }
 
   return json(res, 404, { error: '接口不存在' })
@@ -1497,6 +1531,7 @@ export default {
       closeLiveSpeakers()
       // 插件重载/禁用：实时字幕的会话是内存里的，直接丢掉，别让新实例接到一个半死的会话。
       resetLiveSessions()
+      closeCaptionWindow()
     }, 'dsh-podwave: stop transcription workers')
   },
 }
