@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useTheme } from './lib/theme.js'
 import css from './styles.prefixed.css'
 import { CLIENT_VERSION } from './lib/version.js'
@@ -106,6 +106,11 @@ export default function SettingsPage() {
   const [liveSaveOnStop, setLiveSaveOnStop] = useState(true)
   const [liveSource, setLiveSource] = useState('auto')
   const [liveTapOk, setLiveTapOk] = useState(true)
+  // 字幕框外观：这三项只影响「屏幕上那块框」，拖动即时生效（不需要先保存）。
+  const [liveOpacity, setLiveOpacity] = useState(0.78)
+  const [liveStyleSize, setLiveStyleSize] = useState(18)
+  const [liveWidth, setLiveWidth] = useState(780)
+  const liveStyleTimer = useRef(0)
   const [liveNote, setLiveNote] = useState('')
 
   const [provider, setProvider] = useState('api')
@@ -151,6 +156,9 @@ export default function SettingsPage() {
       setLiveDeviceId(liveData?.deviceId || '')
       setLiveSaveOnStop(liveData?.saveOnStop !== false)
       setLiveSource(liveData?.source || 'auto')
+      if (Number.isFinite(Number(liveData?.opacity))) setLiveOpacity(Number(liveData.opacity))
+      if (Number.isFinite(Number(liveData?.fontSize))) setLiveStyleSize(Number(liveData.fontSize))
+      if (Number.isFinite(Number(liveData?.width))) setLiveWidth(Number(liveData.width))
       setLiveTapOk(liveData?.tap?.supported !== false)
       if (!liveData?.ready) setLiveNote('还没有 DeepSeek API key，实时字幕要先用云端识别')
       loadLiveDevices().then((inputs) => {
@@ -479,6 +487,16 @@ export default function SettingsPage() {
     setLiveNote(inputs.length ? `找到 ${inputs.length} 个音频输入，选虚拟声卡（BlackHole / VB-Cable）` : '没找到音频输入设备')
   }
 
+  const changeLiveStyle = (patch) => {
+    if (Number.isFinite(Number(patch.opacity))) setLiveOpacity(Number(patch.opacity))
+    if (Number.isFinite(Number(patch.fontSize))) setLiveStyleSize(Number(patch.fontSize))
+    if (Number.isFinite(Number(patch.width))) setLiveWidth(Number(patch.width))
+    window.clearTimeout(liveStyleTimer.current)
+    liveStyleTimer.current = window.setTimeout(() => {
+      sendJSON(`${API}/live/settings`, 'PUT', patch).catch((error) => setError(error.message))
+    }, 400)
+  }
+
   const saveLive = async () => {
     setSaving('live')
     setError('')
@@ -765,6 +783,50 @@ export default function SettingsPage() {
             <input type="checkbox" checked={liveSaveOnStop} onChange={(event) => setLiveSaveOnStop(event.target.checked)} />
             <span>停止时问我要不要把这次字幕存下来</span>
           </label>
+        </div>
+        <div className="settings-fields" style={{ marginTop: 10 }}>
+          <label className="field-row">
+            <span>框的不透明度</span>
+            <input
+              type="range"
+              min="15"
+              max="100"
+              step="1"
+              value={Math.round(liveOpacity * 100)}
+              onChange={(event) => changeLiveStyle({ opacity: Number(event.target.value) / 100 })}
+              style={{ flex: '1 1 auto', maxWidth: 320 }}
+            />
+            <span className="settings-status">{Math.round(liveOpacity * 100)}%</span>
+          </label>
+          <label className="field-row">
+            <span>字号</span>
+            <input
+              type="range"
+              min="12"
+              max="42"
+              step="1"
+              value={liveStyleSize}
+              onChange={(event) => changeLiveStyle({ fontSize: Number(event.target.value) })}
+              style={{ flex: '1 1 auto', maxWidth: 320 }}
+            />
+            <span className="settings-status">{liveStyleSize}</span>
+          </label>
+          <label className="field-row">
+            <span>框的宽度</span>
+            <input
+              type="range"
+              min="380"
+              max="1200"
+              step="10"
+              value={liveWidth}
+              onChange={(event) => changeLiveStyle({ width: Number(event.target.value) })}
+              style={{ flex: '1 1 auto', maxWidth: 320 }}
+            />
+            <span className="settings-status">{liveWidth}</span>
+          </label>
+          <p className="settings-hint" style={{ margin: 0 }}>
+            只影响屏幕上那块字幕框，拖动即时生效；文字始终不透明，只有底板会变通透。
+          </p>
         </div>
         <div className="settings-actions">
           <button className="settings-btn" onClick={probeLiveDevices}>

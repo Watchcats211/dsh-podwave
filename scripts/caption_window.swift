@@ -29,8 +29,6 @@ struct Payload: Decodable {
   var saveOnStop: Bool?
 }
 
-let SETTINGS_HEIGHT: CGFloat = 128
-
 func send(_ payload: [String: Any]) {
   guard let data = try? JSONSerialization.data(withJSONObject: payload),
         let text = String(data: data, encoding: .utf8) else { return }
@@ -72,21 +70,13 @@ final class Controller: NSObject, NSWindowDelegate {
   private var panelWidth: CGFloat = 780
   private var panelAlpha: CGFloat = 0.78
   private var fontSize: CGFloat = 20
-  private var saveOnStop = true
-  private var settingsOpen = false
   private var hovering = false
 
   private var window: NSWindow!
   private var panel: PanelView!
   private var label: NSTextField!
   private var controls: NSView!
-  private var gearButton: NSButton!
   private var stopButton: NSButton!
-  private var settingsView: NSView!
-  private var opacitySlider: NSSlider!
-  private var sizeSlider: NSSlider!
-  private var widthSlider: NSSlider!
-  private var saveCheck: NSButton!
   private var state = Payload()
   private var saveTimer: Timer?
 
@@ -127,13 +117,10 @@ final class Controller: NSObject, NSWindowDelegate {
 
     controls = NSView(frame: .zero)
     panel.addSubview(controls)
-    gearButton = makeIconButton("gearshape.fill", action: #selector(toggleSettings))
     stopButton = makeIconButton("xmark", action: #selector(requestStop))
-    controls.addSubview(gearButton)
     controls.addSubview(stopButton)
     controls.alphaValue = 0 // 平时隐藏，鼠标移上来才出现
 
-    buildSettings()
     apply(Payload(text: "", status: "idle", hint: "正在准备字幕…"))
     window.orderFrontRegardless()
     FileHandle.standardOutput.write("{\"ready\":true}\n".data(using: .utf8)!)
@@ -167,103 +154,10 @@ final class Controller: NSObject, NSWindowDelegate {
     return button
   }
 
-  // MARK: - 设置面板（同一块框内展开）
-
-  private func buildSettings() {
-    settingsView = NSView(frame: .zero)
-    settingsView.isHidden = true
-    panel.addSubview(settingsView)
-
-    func row(_ y: CGFloat, _ title: String, min: Double, max: Double, value: Double, action: Selector) -> (NSSlider, NSTextField) {
-      let name = NSTextField(labelWithString: title)
-      name.font = NSFont.systemFont(ofSize: 11.5)
-      name.textColor = NSColor(calibratedWhite: 1, alpha: 0.5)
-      name.frame = NSRect(x: 18, y: y, width: 60, height: 16)
-      settingsView.addSubview(name)
-
-      let slider = NSSlider(value: value, minValue: min, maxValue: max, target: self, action: action)
-      slider.isContinuous = true
-      slider.controlSize = .small
-      slider.frame = NSRect(x: 82, y: y - 4, width: panelWidth - 190, height: 20)
-      settingsView.addSubview(slider)
-
-      let valueLabel = NSTextField(labelWithString: "")
-      valueLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-      valueLabel.textColor = NSColor(calibratedWhite: 1, alpha: 0.45)
-      valueLabel.alignment = .right
-      valueLabel.frame = NSRect(x: panelWidth - 96, y: y, width: 78, height: 16)
-      settingsView.addSubview(valueLabel)
-      return (slider, valueLabel)
-    }
-
-    let opacity = row(90, "不透明度", min: 0.15, max: 1, value: 0.78, action: #selector(opacityChanged(_:)))
-    self.opacitySlider = opacity.0
-    opacity.1.identifier = NSUserInterfaceItemIdentifier("opacityValue")
-
-    let size = row(60, "字号", min: 12, max: 42, value: 20, action: #selector(sizeChanged(_:)))
-    self.sizeSlider = size.0
-    size.1.identifier = NSUserInterfaceItemIdentifier("sizeValue")
-
-    let width = row(30, "宽度", min: 380, max: 1200, value: 780, action: #selector(widthChanged(_:)))
-    self.widthSlider = width.0
-    width.1.identifier = NSUserInterfaceItemIdentifier("widthValue")
-
-    saveCheck = NSButton(checkboxWithTitle: "停止时保存字幕", target: self, action: #selector(saveChanged(_:)))
-    saveCheck.font = NSFont.systemFont(ofSize: 11.5)
-    saveCheck.contentTintColor = NSColor(calibratedWhite: 1, alpha: 0.55)
-    saveCheck.frame = NSRect(x: 18, y: 4, width: 150, height: 18)
-    saveCheck.state = .on
-    settingsView.addSubview(saveCheck)
-
-    refreshValueLabels()
-  }
-
-  private func refreshValueLabels() {
-    for view in settingsView.subviews {
-      guard let field = view as? NSTextField, let id = view.identifier?.rawValue else { continue }
-      switch id {
-      case "opacityValue": field.stringValue = "\(Int(panelAlpha * 100))%"
-      case "sizeValue": field.stringValue = "\(Int(fontSize))"
-      case "widthValue": field.stringValue = "\(Int(panelWidth))"
-      default: break
-      }
-    }
-  }
-
-  @objc private func toggleSettings() {
-    settingsOpen.toggle()
-    settingsView.isHidden = !settingsOpen
-    layoutWindow()
-    updateControlsVisibility(animated: true)
-  }
-
-  @objc private func opacityChanged(_ sender: NSSlider) {
-    panelAlpha = CGFloat(sender.doubleValue)
-    panel.panelAlpha = panelAlpha
-    refreshValueLabels()
-    send(["event": "style", "opacity": Double(panelAlpha)])
-  }
-
-  @objc private func sizeChanged(_ sender: NSSlider) {
-    fontSize = CGFloat(sender.doubleValue)
-    state.fontSize = Double(fontSize)
-    refreshValueLabels()
-    relayoutText()
-    send(["event": "style", "fontSize": Double(fontSize)])
-  }
-
-  @objc private func widthChanged(_ sender: NSSlider) {
-    let center = window.frame.midX
-    panelWidth = CGFloat(sender.doubleValue)
-    window.setFrame(NSRect(x: center - panelWidth / 2, y: window.frame.minY, width: panelWidth, height: window.frame.height), display: true)
-    refreshValueLabels()
-    layoutWindow()
-    send(["event": "style", "width": Double(panelWidth)])
-  }
-
-  @objc private func saveChanged(_ sender: NSButton) {
-    saveOnStop = sender.state == .on
-    send(["event": "saveOnStop", "value": saveOnStop])
+  /// 只给截图用：把悬停态强制显示出来。
+  @objc private func showControlsForDemo() {
+    hovering = true
+    updateControlsVisibility(animated: false)
   }
 
   @objc private func requestStop() {
@@ -273,7 +167,7 @@ final class Controller: NSObject, NSWindowDelegate {
   // MARK: - 鼠标悬停
 
   private func updateControlsVisibility(animated: Bool) {
-    let show = hovering || settingsOpen
+    let show = hovering
     let target: CGFloat = show ? 1 : 0
     guard animated else {
       controls.alphaValue = target
@@ -292,21 +186,14 @@ final class Controller: NSObject, NSWindowDelegate {
     if let value = payload.opacity, value >= 0.05, value <= 1 {
       panelAlpha = CGFloat(value)
       panel.panelAlpha = panelAlpha
-      opacitySlider?.doubleValue = value
     }
     if let value = payload.width, value >= 380, value <= 1600 {
       let center = window.frame.midX
       panelWidth = CGFloat(value)
       window.setFrame(NSRect(x: center - panelWidth / 2, y: window.frame.minY, width: panelWidth, height: window.frame.height), display: true)
-      widthSlider?.doubleValue = value
     }
     if let value = payload.fontSize, value > 6, value < 64 {
       fontSize = CGFloat(value)
-      sizeSlider?.doubleValue = value
-    }
-    if let value = payload.saveOnStop {
-      saveOnStop = value
-      saveCheck?.state = value ? .on : .off
     }
     if payload.text != nil || payload.translation != nil || payload.status != nil || payload.hint != nil {
       state.text = payload.text
@@ -318,7 +205,6 @@ final class Controller: NSObject, NSWindowDelegate {
     if payload.previousTranslation != nil { state.previousTranslation = payload.previousTranslation }
 
     relayoutText()
-    refreshValueLabels()
   }
 
   private func relayoutText() {
@@ -333,14 +219,14 @@ final class Controller: NSObject, NSWindowDelegate {
     layoutWindow()
   }
 
-  /// 窗口高度 = 文字 + 内边距（+ 设置面板）。展开设置时把上边缘固定，向下长；贴到屏幕底就整体上移。
+  /// 窗口高度 = 文字 + 内边距。上边缘固定，需要时整体上移避免出屏。
   private func layoutWindow() {
     let textWidth = panelWidth - 36
     let textHeight = max(56, label.attributedStringValue.boundingRect(
       with: NSSize(width: textWidth, height: .greatestFiniteMagnitude),
       options: [.usesLineFragmentOrigin, .usesFontLeading]
     ).height)
-    let total = textHeight + 36 + (settingsOpen ? SETTINGS_HEIGHT : 0)
+    let total = textHeight + 36
     let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
     let top = window.frame.maxY
     var y = top - total
@@ -348,15 +234,10 @@ final class Controller: NSObject, NSWindowDelegate {
     let frame = NSRect(x: window.frame.minX, y: y, width: panelWidth, height: total)
     window.setFrame(frame, display: true, animate: false)
 
-    // 设置面板贴在底部
-    settingsView.frame = NSRect(x: 0, y: 0, width: panelWidth, height: SETTINGS_HEIGHT)
-    // 文字区在顶部（相对 content view 从下往上的坐标）
-    label.frame = NSRect(x: 18, y: settingsOpen ? SETTINGS_HEIGHT + 18 : 18, width: textWidth, height: textHeight)
-
-    // 悬停按钮：右上角
-    controls.frame = NSRect(x: panelWidth - 56, y: total - 28, width: 44, height: 20)
-    gearButton.frame = NSRect(x: 0, y: 0, width: 20, height: 20)
-    stopButton.frame = NSRect(x: 24, y: 0, width: 20, height: 20)
+    label.frame = NSRect(x: 18, y: 18, width: textWidth, height: textHeight)
+    // 悬停按钮：右上角，只有一个 ✕
+    controls.frame = NSRect(x: panelWidth - 32, y: total - 28, width: 20, height: 20)
+    stopButton.frame = NSRect(x: 0, y: 0, width: 20, height: 20)
   }
 
   private func buildAttributed() -> NSAttributedString {
@@ -414,10 +295,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
     controller.start()
-    // 截图/演示用：直接把设置面板展开，方便看悬停态的完整样子。
+    // 截图/演示用：强制把悬停按钮显示出来。
     if ProcessInfo.processInfo.environment["PODWAVE_CAPTION_DEMO"] == "1" {
       DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-        self.controller.perform(Selector(("toggleSettings")))
+        self.controller.perform(Selector(("showControlsForDemo")))
       }
     }
   }

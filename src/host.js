@@ -545,7 +545,7 @@ async function route(ctx, req, res) {
     return json(res, 200, {
       ok: true,
       generatedAt: new Date().toISOString(),
-      version: '0.11.63',
+      version: '0.11.64',
       platform,
       engine: recommendEngine(platform),
       paths: {
@@ -575,7 +575,7 @@ async function route(ctx, req, res) {
   }
   if ((method === 'GET' || method === 'HEAD') && routePath === 'api/health') {
     await mediaReady
-    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.63', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
+    return json(res, 200, { ok: true, app: 'podwave', version: '0.11.64', mediaBase, transcribe: runtimeInfo(), diarize: diarizeInfo(), translate: publicConfig() })
   }
   if (method === 'GET' && routePath === 'api/state') {
     const state = getState()
@@ -1407,6 +1407,14 @@ async function route(ctx, req, res) {
     if (Number.isFinite(Number(body?.width))) patch.width = clampNumber(body.width, 380, 1600, 780)
     if (['auto', 'tap', 'browser'].includes(body?.source)) patch.source = body.source
     const next = updateSection('live', patch)
+    // 正在显示的字幕框要立刻用上新外观（设置页拖滑块就能看到变化）。
+    if (captionWindowState().open) {
+      const payload = {}
+      if (patch.opacity !== undefined) payload.opacity = next?.opacity
+      if (patch.fontSize !== undefined) payload.fontSize = next?.fontSize
+      if (patch.width !== undefined) payload.width = next?.width
+      if (Object.keys(payload).length) pushCaption(payload)
+    }
     return json(res, 200, next || {})
   }
 
