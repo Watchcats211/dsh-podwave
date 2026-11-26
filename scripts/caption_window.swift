@@ -35,6 +35,13 @@ func send(_ payload: [String: Any]) {
   FileHandle.standardOutput.write((text + "\n").data(using: .utf8)!)
 }
 
+/// 宿主用它来清掉上一次残留的窗口进程（插件重载后旧进程可能还挂在屏幕上）。
+func pidFile() -> URL {
+  let base = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".podwave/live")
+  try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+  return base.appendingPathComponent("window.pid")
+}
+
 func positionFile() -> URL {
   let base = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".podwave/live")
   try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
@@ -122,6 +129,7 @@ final class Controller: NSObject, NSWindowDelegate {
     controls.alphaValue = 0 // 平时隐藏，鼠标移上来才出现
 
     apply(Payload(text: "", status: "idle", hint: "正在准备字幕…"))
+    try? String(ProcessInfo.processInfo.processIdentifier).write(to: pidFile(), atomically: true, encoding: .utf8)
     window.orderFrontRegardless()
     FileHandle.standardOutput.write("{\"ready\":true}\n".data(using: .utf8)!)
 
@@ -292,6 +300,10 @@ final class Controller: NSObject, NSWindowDelegate {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
   let controller = Controller()
+
+  func applicationWillTerminate(_ notification: Notification) {
+    try? FileManager.default.removeItem(at: pidFile())
+  }
   func applicationDidFinishLaunching(_ notification: Notification) {
     NSApp.setActivationPolicy(.accessory)
     controller.start()

@@ -80,10 +80,28 @@ async function ensureBuilt() {
 }
 
 /** 打开（或复用）独立字幕窗。首次调用会编译，约 9 秒。 */
+/** 上一次的窗口进程如果还在（插件重载、宿主崩溃），先杀掉——否则会出现两个框。 */
+function killStrayWindow() {
+  try {
+    const file = path.join(DATA_DIR, 'live', 'window.pid')
+    if (!fs.existsSync(file)) return
+    const pid = Number(fs.readFileSync(file, 'utf8').trim())
+    if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid) return
+    try {
+      process.kill(pid, 'SIGTERM')
+    } catch {
+      /* 已经没了 */
+    }
+  } catch {
+    /* pid 文件坏了不影响开窗 */
+  }
+}
+
 export async function openCaptionWindow() {
   const support = captionWindowSupport()
   if (!support.supported) return { ok: false, error: support.reason }
   if (child && child.exitCode === null) return { ok: true, reused: true }
+  killStrayWindow()
   try {
     await ensureBuilt()
   } catch (error) {

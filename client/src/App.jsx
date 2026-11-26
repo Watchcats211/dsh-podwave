@@ -276,6 +276,9 @@ export default function App() {
   const [liveTapInfo, setLiveTapInfo] = useState(null)
   // 独立窗开着的时候不在页面里再画一块字幕；停止时按这个偏好直接存/丢，不再弹「保存吗」。
   const [liveSaveOnStop, setLiveSaveOnStop] = useState(true)
+  // 这次监听预期会用系统原生字幕框：那么在它出来之前，页面里也绝对不能先冒一块——
+  // 否则用户看到的就是「先一个框，再变成另一个框」。
+  const [liveExpectNative, setLiveExpectNative] = useState(false)
   // 独立窗外观：不透明度（只作用于底板）、字号、宽度。都存在 config 的 live 段里。
   const [liveOpacity, setLiveOpacity] = useState(0.78)
   const [liveStyleSize, setLiveStyleSize] = useState(18)
@@ -614,6 +617,7 @@ export default function App() {
       }).catch(() => {})
       setLiveNative(false)
       setLiveTapMode(false)
+      setLiveExpectNative(false)
       liveLastLineRef.current = 0
       liveQueueRef.current = []
       liveLinesRef.current = []
@@ -763,6 +767,7 @@ export default function App() {
       // 采集方式：能用系统音频就用（不需要装 BlackHole），起不来再退回浏览器采集。
       const wantTap = info.tap?.supported !== false && info.source !== 'browser'
       if (wantTap) {
+        setLiveExpectNative(true)
         try {
           const tapped = await sendJSON(`${API}/live/tap`, 'POST', { target: info.target || 'zh', chunkMs: 500 })
           if (tapped?.ok) {
@@ -773,11 +778,15 @@ export default function App() {
             setLiveStartedAt(Date.now())
             setLiveStatus('listening')
             liveLastSoundRef.current = Date.now()
-            await openNativeWindow(info)
+            const opened = await openNativeWindow(info)
+            // 原生框没起来（没有 swiftc / 系统太老）：退回页面浮层，别让屏幕上什么都没有。
+            if (!opened) setLiveExpectNative(false)
             return
           }
+          setLiveExpectNative(false)
           flash(`系统音频没起来，改用虚拟声卡：${tapped?.error || '未知原因'}`)
         } catch (error) {
+          setLiveExpectNative(false)
           flash(`系统音频没起来，改用虚拟声卡：${error.message || error}`)
         }
       }
@@ -1885,10 +1894,11 @@ export default function App() {
                 if (liveStatus === 'idle') startLive()
                 else if (liveStatus === 'listening') stopLive()
               }}
+              disabled={liveStatus === 'starting' || liveStatus === 'saving'}
               title="实时字幕：听系统正在播放的声音（YouTube、直播、会议都能用）"
             >
               <Icon name="wave" size={16} />
-              <span>实时字幕</span>
+              <span>{liveStatus === 'starting' ? '打开字幕窗…' : '实时字幕'}</span>
             </button>
             <button className={`tool-btn ${jobsOpen ? 'is-on' : ''}`} onClick={() => setJobsOpen((value) => !value)} title="转写任务">
               <Icon name="tasks" size={16} />
@@ -2498,7 +2508,7 @@ export default function App() {
         />
       ) : null}
 
-      {liveStatus !== 'idle' && !liveNative ? (
+      {liveStatus !== 'idle' && !liveNative && !liveExpectNative ? (
         <LiveCaptionOverlay
           lines={liveLines}
           status={liveStatus}
